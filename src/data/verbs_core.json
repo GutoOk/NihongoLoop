@@ -1,0 +1,61 @@
+[
+  { "id": "verb_taberu", "type": "verb", "pt": "comer", "ja": "食べる", "kana": "たべる", "romaji": "taberu", "tts_text": "たべる", "level": "N5", "category": "verbo", "tags": ["verbo", "ichidan", "comida"], "created_by_user": 0 },
+  { "id": "verb_taberu_ex", "type": "phrase", "pt": "Eu como arroz.", "ja": "ご飯を食べます。", "kana": "ごはんをたべます。", "romaji": "gohan o tabemasu", "tts_text": "ご飯を食べます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "食べる", "を"], "created_by_user": 0 },
+
+  { "id": "verb_nomu", "type": "verb", "pt": "beber", "ja": "飲む", "kana": "のむ", "romaji": "nomu", "tts_text": "のむ", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "bebida"], "created_by_user": 0 },
+  { "id": "verb_nomu_ex", "type": "phrase", "pt": "Bebo suco.", "ja": "ジュースを飲みます。", "kana": "じゅーすをのみます。", "romaji": "juusu o nomimasu", "tts_text": "ジュースを飲みます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "飲む", "を"], "created_by_user": 0 },
+
+  { "id": "verb_iku", "type": "verb", "pt": "ir", "ja": "行く", "kana": "いく", "romaji": "iku", "tts_text": "いく", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "movimento"], "created_by_user": 0 },
+  { "id": "verb_iku_ex", "type": "phrase", "pt": "Vou ao banco.", "ja": "銀行に行きます。", "kana": "ぎんこうにいきます。", "romaji": "ginkou ni ikimasu", "tts_text": "銀行に行きます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "行く", "に"], "created_by_user": 0 },
+
+  { "id": "verb_kuru", "type": "verb", "pt": "vir", "ja": "来る", "kana": "くる", "romaji": "kuru", "tts_text": "くる", "level": "N5", "category": "verbo", "tags": ["verbo", "irregular", "movimento"], "created_by_user": 0 },
+  { "id": "verb_kuru_ex", "type": "phrase", "pt": "O amigo vem amanhã.", "ja": "明日友達が来ます。", "kana": "あしたともだちがきます。", "romaji": "ashita tomodachi ga kimasu", "tts_text": "明日友達が来ます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "来る", "が"], "created_by_user": 0 },
+
+  { "id": "verb_kaeru", "type": "verb", "pt": "voltar / retornar", "ja": "帰る", "kana": "かえる", "romaji": "kaeru", "tts_text": "かえる", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "movimento"], "created_by_user": 0 },
+  { "id": "verb_kaeru_ex", "type": "phrase", "pt": "Vou voltar para casa.", "ja": "家へ帰ります。", "kana": "いえへかえります。", "romaji": "ie e kaerimasu", "tts_text": "家へ帰ります。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "帰る", "へ"], "created_by_user": 0 },
+
+  { "id": "verb_miru", "type": "verb", "pt": "ver / assistir", "ja": "見る", "kana": "みる", "romaji": "miru", "tts_text": "みる", "level": "N5", "category": "verbo", "tags": ["verbo", "ichidan", "lazer"], "created_by_user": 0 },
+  { "id": "verb_miru_ex", "type": "phrase", "pt": "Assisto televisão.", "ja": "テレビを見ます。", "kana": "てれびをみます。", "romaji": "terebi o mimasu", "tts_text": "テレビを見ます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "見る", "を"], "created_by_user": 0 },
+
+  { "id": "verb_kiku", "type": "verb", "pt": "ouvir / escutar", "ja": "聞く", "kana": "きく", "romaji": "kiku", "tts_text": "きく", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "lazer"], "created_by_user": 0 },
+  { "id": "verb_kiku_ex", "type": "phrase", "pt": "Escuto música.", "ja": "音楽を聞います。", "kana": "おんがくをききます。", "romaji": "ongaku o kikimasu", "tts_text": "音楽を聞きます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "聞く", "を"], "created_by_user": 0 },
+
+  { "id": "verb_yomu", "type": "verb", "pt": "ler", "ja": "読む", "kana": "よむ", "romaji": "yomu", "tts_text": "よむ", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "leitura"], "created_by_user": 0 },
+  { "id": "verb_yomu_ex", "type": "phrase", "pt": "Leio jornal.", "ja": "新聞を読みます。", "kana": "しんぶんをよみます。", "romaji": "shinbun o yomimasu", "tts_text": "新聞を読みます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "読む", "を"], "created_by_user": 0 },
+
+  { "id": "verb_kaku", "type": "verb", "pt": "escrever", "ja": "書く", "kana": "かく", "romaji": "kaku", "tts_text": "かく", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "estudo"], "created_by_user": 0 },
+  { "id": "verb_kaku_ex", "type": "phrase", "pt": "Escrevo japonês.", "ja": "日本語を書きます。", "kana": "にほんごをかきます。", "romaji": "nihongo o kakimasu", "tts_text": "日本語を書きます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "書く", "を"], "created_by_user": 0 },
+
+  { "id": "verb_hanasu", "type": "verb", "pt": "falar / conversar", "ja": "話す", "kana": "はなす", "romaji": "hanasu", "tts_text": "はなす", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "comunicação"], "created_by_user": 0 },
+  { "id": "verb_hanasu_ex", "type": "phrase", "pt": "Falo japonês.", "ja": "日本語を話します。", "kana": "にほんごをはなします。", "romaji": "nihongo o hanashimasu", "tts_text": "日本語を話します。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "話す", "を"], "created_by_user": 0 },
+
+  { "id": "verb_kau", "type": "verb", "pt": "comprar", "ja": "買う", "kana": "かう", "romaji": "kau", "tts_text": "かう", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "compras"], "created_by_user": 0 },
+  { "id": "verb_kau_ex", "type": "phrase", "pt": "Compro sapatos.", "ja": "靴を買います。", "kana": "くつをかいます。", "romaji": "kutsu o kaimasu", "tts_text": "靴を買います。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "買う", "を"], "created_by_user": 0 },
+
+  { "id": "verb_au", "type": "verb", "pt": "encontrar (pessoas)", "ja": "会う", "kana": "あう", "romaji": "au", "tts_text": "あう", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "social"], "created_by_user": 0 },
+  { "id": "verb_au_ex", "type": "phrase", "pt": "Encontro meu professor.", "ja": "先生に会います。", "kana": "せんせいにあいます。", "romaji": "sensei ni aimasu", "tts_text": "先生に会います。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "会う", "に"], "created_by_user": 0 },
+
+  { "id": "verb_okiru", "type": "verb", "pt": "acordar / levantar", "ja": "起きる", "kana": "おきる", "romaji": "okiru", "tts_text": "おきる", "level": "N5", "category": "verbo", "tags": ["verbo", "ichidan", "rotina"], "created_by_user": 0 },
+  { "id": "verb_okiru_ex", "type": "phrase", "pt": "Acordo às seis horas.", "ja": "六時に起きます。", "kana": "ろくじにおきます。", "romaji": "rokuji ni okimasu", "tts_text": "六時に起きます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "起きる", "に", "tempo"], "created_by_user": 0 },
+
+  { "id": "verb_neru", "type": "verb", "pt": "dormir / deitar", "ja": "寝る", "kana": "ねる", "romaji": "neru", "tts_text": "ねる", "level": "N5", "category": "verbo", "tags": ["verbo", "ichidan", "rotina"], "created_by_user": 0 },
+  { "id": "verb_neru_ex", "type": "phrase", "pt": "Durmo às dez horas.", "ja": "十時に寝ます。", "kana": "じゅうじにねます。", "romaji": "juuji ni nemasu", "tts_text": "十時に寝ます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "寝る", "に", "tempo"], "created_by_user": 0 },
+
+  { "id": "verb_suru", "type": "verb", "pt": "fazer", "ja": "する", "kana": "する", "romaji": "suru", "tts_text": "する", "level": "N5", "category": "verbo", "tags": ["verbo", "irregular", "básico"], "created_by_user": 0 },
+  { "id": "verb_suru_ex", "type": "phrase", "pt": "Eu faço esportes.", "ja": "スポーツをします。", "kana": "すぽーつをします。", "romaji": "supootsu o shimasu", "tts_text": "スポーツをします。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "する", "を"], "created_by_user": 0 },
+
+  { "id": "verb_benkyou", "type": "verb", "pt": "estudar", "ja": "勉強する", "kana": "べんきょうする", "romaji": "benkyou suru", "tts_text": "べんきょうする", "level": "N5", "category": "verbo", "tags": ["verbo", "irregular", "estudo"], "created_by_user": 0 },
+  { "id": "verb_benkyou_ex", "type": "phrase", "pt": "Estudo todos os dias.", "ja": "毎日勉強します。", "kana": "まいにちべんきょうします。", "romaji": "mainichi benkyou shimasu", "tts_text": "毎日勉強します。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "勉強する"], "created_by_user": 0 },
+
+  { "id": "verb_wakaru", "type": "verb", "pt": "compreender / entender", "ja": "分かる", "kana": "わかる", "romaji": "wakaru", "tts_text": "わかる", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "compreensão"], "created_by_user": 0 },
+  { "id": "verb_wakaru_ex", "type": "phrase", "pt": "Eu entendo bem o japonês.", "ja": "日本語がよく分かります。", "kana": "にほんごがよくわかります。", "romaji": "nihongo ga yoku wakarimasu", "tts_text": "日本語がよく分かります。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "分かる", "が"], "created_by_user": 0 },
+
+  { "id": "verb_motsu", "type": "verb", "pt": "ter / segurar / possuir", "ja": "持つ", "kana": "もつ", "romaji": "motsu", "tts_text": "もつ", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "posse"], "created_by_user": 0 },
+  { "id": "verb_motsu_ex", "type": "phrase", "pt": "Eu tenho uma bolsa.", "ja": "鞄を持っています。", "kana": "かばんをもっています。", "romaji": "kaban o motte imasu", "tts_text": "鞄を持っています。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "持つ", "を"], "created_by_user": 0 },
+
+  { "id": "verb_matsu", "type": "verb", "pt": "esperar", "ja": "待つ", "kana": "まつ", "romaji": "matsu", "tts_text": "まつ", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "rotina"], "created_by_user": 0 },
+  { "id": "verb_matsu_ex", "type": "phrase", "pt": "Espero o ônibus.", "ja": "バスを待ちます。", "kana": "ばすをまちます。", "romaji": "basu o machimasu", "tts_text": "バスを待ちます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "待つ", "を"], "created_by_user": 0 },
+
+  { "id": "verb_asobu", "type": "verb", "pt": "brincar / divertir-se", "ja": "遊ぶ", "kana": "あそぶ", "romaji": "asobu", "tts_text": "あそぶ", "level": "N5", "category": "verbo", "tags": ["verbo", "godan", "lazer"], "created_by_user": 0 },
+  { "id": "verb_asobu_ex", "type": "phrase", "pt": "Brinco no parque.", "ja": "公園で遊びます。", "kana": "こうえんであそびます。", "romaji": "kouen de asobimasu", "tts_text": "公園で遊びます。", "level": "N5", "category": "exemplo de verbo", "tags": ["verbo", "遊ぶ", "で"], "created_by_user": 0 }
+]

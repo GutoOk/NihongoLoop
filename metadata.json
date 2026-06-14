@@ -1,0 +1,6 @@
+{
+  "name": "Nihongo Loop",
+  "description": "Aplicativo mobile-first para estudo de japonês por repetição auditiva espacada.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

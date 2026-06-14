@@ -1,0 +1,37 @@
+[
+  { "id": "part_wa", "type": "particle", "pt": "Partícula de Tópico (は)", "ja": "は", "kana": "は", "romaji": "wa", "tts_text": "は", "level": "N5", "category": "partícula", "tags": ["partícula", "tópico"], "created_by_user": 0 },
+  { "id": "part_wa_ex", "type": "phrase", "pt": "Eu sou estudante.", "ja": "私は学生です。", "kana": "わたしはがくせいです。", "romaji": "watashi wa gakusei desu", "tts_text": "私は学生です。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "は", "tópico"], "created_by_user": 0 },
+  
+  { "id": "part_ga", "type": "particle", "pt": "Partícula de Sujeito (が)", "ja": "が", "kana": "が", "romaji": "ga", "tts_text": "が", "level": "N5", "category": "partícula", "tags": ["partícula", "sujeito"], "created_by_user": 0 },
+  { "id": "part_ga_ex", "type": "phrase", "pt": "O chá verde é bom.", "ja": "お茶が好きです。", "kana": "おちゃがすきです。", "romaji": "ocha ga suki desu", "tts_text": "お茶が好きです。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "が", "gostos"], "created_by_user": 0 },
+
+  { "id": "part_wo", "type": "particle", "pt": "Partícula de Objeto Direto (を)", "ja": "を", "kana": "を", "romaji": "o", "tts_text": "を", "level": "N5", "category": "partícula", "tags": ["partícula", "objeto"], "created_by_user": 0 },
+  { "id": "part_wo_ex", "type": "phrase", "pt": "Eu bebo água.", "ja": "水を飲みます。", "kana": "みずをのみます。", "romaji": "mizu o nomimasu", "tts_text": "水を飲みます。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "を", "objeto"], "created_by_user": 0 },
+
+  { "id": "part_mo", "type": "particle", "pt": "Partícula de Inclusão (também) (も)", "ja": "も", "kana": "も", "romaji": "mo", "tts_text": "も", "level": "N5", "category": "partícula", "tags": ["partícula", "inclusão"], "created_by_user": 0 },
+  { "id": "part_mo_ex", "type": "phrase", "pt": "Eu também vou.", "ja": "私も行きます。", "kana": "わたしもいきます。", "romaji": "watashi mo ikimasu", "tts_text": "私も行きます。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "も", "inclusão"], "created_by_user": 0 },
+
+  { "id": "part_ni", "type": "particle", "pt": "Partícula de Tempo / Alvo (に)", "ja": "に", "kana": "に", "romaji": "ni", "tts_text": "に", "level": "N5", "category": "partícula", "tags": ["partícula", "alvo"], "created_by_user": 0 },
+  { "id": "part_ni_ex1", "type": "phrase", "pt": "Acordo às sete horas.", "ja": "七時に起きます。", "kana": "しちじにおきます。", "romaji": "shichiji ni okimasu", "tts_text": "七時に起きます。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "に", "tempo"], "created_by_user": 0 },
+  { "id": "part_ni_ex2", "type": "phrase", "pt": "Vou me encontrar com amigo.", "ja": "友達に会います。", "kana": "ともだちにあいます。", "romaji": "tomodachi ni aimasu", "tts_text": "友達に会います。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "に", "alvo"], "created_by_user": 0 },
+
+  { "id": "part_de", "type": "particle", "pt": "Partícula de Instrumento / Local de Ação (で)", "ja": "で", "kana": "で", "romaji": "de", "tts_text": "で", "level": "N5", "category": "partícula", "tags": ["partícula", "local"], "created_by_user": 0 },
+  { "id": "part_de_ex1", "type": "phrase", "pt": "Eu como na escola.", "ja": "学校で食べます。", "kana": "がっこうでたべます。", "romaji": "gakkou de tabemasu", "tts_text": "学校で食べます。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "で", "local"], "created_by_user": 0 },
+  { "id": "part_de_ex2", "type": "phrase", "pt": "Vou de táxi.", "ja": "タクシーで行きます。", "kana": "たくしーでいきます。", "romaji": "takushii de ikimasu", "tts_text": "タクシーで行きます。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "で", "instrumento"], "created_by_user": 0 },
+
+  { "id": "part_e", "type": "particle", "pt": "Partícula de Direção (へ)", "ja": "へ", "kana": "へ", "romaji": "e", "tts_text": "へ", "level": "N5", "category": "partícula", "tags": ["partícula", "direção"], "created_by_user": 0 },
+  { "id": "part_e_ex", "type": "phrase", "pt": "Vou à casa.", "ja": "家へ帰ります。", "kana": "いえへかえります。", "romaji": "ie e kaerimasu", "tts_text": "家へ帰ります。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "へ", "direção"], "created_by_user": 0 },
+
+  { "id": "part_no", "type": "particle", "pt": "Partícula de Posse / Conexão (の)", "ja": "の", "kana": "の", "romaji": "no", "tts_text": "の", "level": "N5", "category": "partícula", "tags": ["partícula", "conexão"], "created_by_user": 0 },
+  { "id": "part_no_ex", "type": "phrase", "pt": "Este é o livro do professor.", "ja": "これは先生の本です。", "kana": "これはせんせいのほんです。", "romaji": "kore wa sensei no hon desu", "tts_text": "これは先生の本です。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "の", "posse"], "created_by_user": 0 },
+
+  { "id": "part_to", "type": "particle", "pt": "Partícula de Conjunção (e / com) (と)", "ja": "と", "kana": "と", "romaji": "to", "tts_text": "と", "level": "N5", "category": "partícula", "tags": ["partícula", "conjunção"], "created_by_user": 0 },
+  { "id": "part_to_ex", "type": "phrase", "pt": "Eu estudo com o amigo.", "ja": "友達と勉強します。", "kana": "ともだちとべんきょうします。", "romaji": "tomodachi to benkyou shimasu", "tts_text": "友達と勉強します。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "と", "companhia"], "created_by_user": 0 },
+
+  { "id": "part_ka", "type": "particle", "pt": "Partícula de Pergunta (か)", "ja": "か", "kana": "か", "romaji": "ka", "tts_text": "か", "level": "N5", "category": "partícula", "tags": ["partícula", "pergunta"], "created_by_user": 0 },
+  { "id": "part_ka_ex", "type": "phrase", "pt": "A água está boa?", "ja": "水ですか。", "kana": "みずですか。", "romaji": "mizu desu ka", "tts_text": "水ですか。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "か", "pergunta"], "created_by_user": 0 },
+
+  { "id": "part_kara", "type": "particle", "pt": "Partícula de Origem (desde / de) (から)", "ja": "から", "kana": "から", "romaji": "kara", "tts_text": "から", "level": "N5", "category": "partícula", "tags": ["partícula", "origem"], "created_by_user": 0 },
+  { "id": "part_kara_ex", "type": "phrase", "pt": "Vim do Brasil.", "ja": "ブラジルから来ました。", "kana": "ぶらじるからきました。", "romaji": "burajiru kara kimashitai", "tts_text": "ブラジルから来ました。", "level": "N5", "category": "exemplo de partícula", "tags": ["partícula", "から", "origem"], "created_by_user": 0 },
+  { "id": "part_made", "type": "particle", "pt": "Partícula de Limite (até) (まで)", "ja": "まで", "kana": "まで", "romaji": "made", "tts_text": "まで", "level": "N5", "category": "partícula", "tags": ["partícula", "limite"], "created_by_user": 0 }
+]
