@@ -11,19 +11,11 @@ import {
   Pause,
   Play,
   Database,
-  ArrowRight,
-  Layers,
   Clock,
-  ExternalLink,
-  HelpCircle,
   FileText,
   AlertTriangle,
-  PlayCircle,
 } from "lucide-react";
-import {
-  SourcePreparationService,
-  PreparationOptions,
-} from "../features/ai/SourcePreparationService";
+import { PreparationOptions } from "../features/ai/SourcePreparationService";
 import { ProcessingRunner } from "../features/ai/ProcessingRunner";
 import {
   ProcessingRunRepository,
@@ -59,7 +51,7 @@ export default function SourcePreparationPanel({
   const [showConfirm, setShowConfirm] = useState(false);
   const [stats, setStats] = useState<any>(null);
   const [jobs, setJobs] = useState<AiJob[]>([]);
-  const { showAlert } = useModal();
+  const { showAlert, showConfirm: showModalConfirm } = useModal();
 
   useEffect(() => {
     loadRun();
@@ -73,16 +65,8 @@ export default function SourcePreparationPanel({
     if (active) {
       setRun(active);
     } else {
-      // If not active, fetch latest run
-      const { supabase } = await import("../core/supabaseClient");
-      const { data } = await supabase!
-        .from("processing_runs")
-        .select("*")
-        .eq("source_id", sourceId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      setRun(data as ProcessingRun | null);
+      const latest = await ProcessingRunRepository.getLatestRunBySource(sourceId);
+      setRun(latest);
     }
 
     // Always load jobs in real-time
@@ -116,7 +100,14 @@ export default function SourcePreparationPanel({
         Array.from(dictIds) as string[],
       );
       dictPending = entries.filter(
-        (e) => !e.main_meaning && e.status === "pending",
+        (e) =>
+          e.status === "pending" &&
+          (!e.main_meaning ||
+            !e.kana ||
+            !e.romaji ||
+            !e.type ||
+            !Array.isArray(e.meanings) ||
+            e.meanings.length === 0),
       ).length;
     }
 
@@ -171,70 +162,49 @@ export default function SourcePreparationPanel({
     }
   };
 
-  const handleWipeJobs = async () => {
-    const confirmWipe = window.confirm(
+  const handleWipeJobs = () => {
+    showModalConfirm(
+      "Apagar Fila de IA",
       "Deseja mesmo apagar TODAS as tarefas de IA deste texto? Isso limpará a fila e permitirá que você refaça as solicitações do zero.",
+      async () => {
+        try {
+          await handleCancel();
+          ProcessingRunner.stop();
+          await AiJobRepository.deleteJobsByTarget(sourceId);
+          await ProcessingRunRepository.deleteRunsBySource(sourceId);
+          setRun(null);
+          setJobs([]);
+          showAlert("Sucesso", "Todas as tarefas de IA e execuções desta fonte foram apagadas. Você pode recomeçar do zero!");
+          loadRun();
+        } catch (e: any) {
+          showAlert("Erro", `Falha ao apagar tarefas: ${e.message}`);
+        }
+      },
+      "Apagar Tudo",
     );
-    if (!confirmWipe) return;
-    try {
-      // 1. Forçar cancelamento de qualquer runner/run pendente local ou globalmente
-      await handleCancel();
-      ProcessingRunner.isRunning = false;
-
-      // 2. Apagar do banco todas as tarefas (jobs) geradas para esta fonte
-      await AiJobRepository.deleteJobsByTarget(sourceId);
-
-      // 3. Apagar também todas as execuções de preparação gravadas no histórico
-      await ProcessingRunRepository.deleteRunsBySource(sourceId);
-
-      // 4. Resetar estados locais na hora para atualizar o painel
-      setRun(null);
-      setJobs([]);
-
-      showAlert(
-        "Sucesso",
-        "Todas as tarefas de IA e execuções desta fonte foram apagadas. Você pode recomeçar do zero!",
-      );
-      loadRun();
-    } catch (e: any) {
-      showAlert("Erro", `Falha ao apagar tarefas: ${e.message}`);
-    }
   };
 
   const handleResetFailed = async () => {
     try {
-      const { supabase } = await import("../core/supabaseClient");
-      if (supabase) {
-        const { error } = await supabase
-          .from("ai_jobs")
-          .update({
-            status: "pending",
-            error: null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("target_id", sourceId)
-          .eq("status", "error");
-        if (error) throw error;
+      const ok = await AiJobRepository.resetFailedJobsByTarget(sourceId);
+      if (!ok) throw new Error("Não foi possível resetar as tarefas com erro.");
 
-        showAlert(
-          "Sucesso",
-          "Todas as tarefas com erro foram resetadas para 'Pendente'. O executor local iniciará o processamento.",
-        );
-        if (!ProcessingRunner.isRunning) {
-          ProcessingRunner.startPreparation(sourceId, options, loadRun);
-        }
-        loadRun();
+      showAlert(
+        "Sucesso",
+        "Todas as tarefas com erro foram resetadas para 'Pendente'. O executor local iniciará o processamento.",
+      );
+      if (!ProcessingRunner.isRunning) {
+        ProcessingRunner.startPreparation(sourceId, options, loadRun);
       }
+      loadRun();
     } catch (e: any) {
       showAlert("Erro", `Falha ao resetar tarefas falhas: ${e.message}`);
     }
   };
 
   const handleWipeSingleJob = async (jobId: string) => {
-    const { supabase } = await import("../core/supabaseClient");
-    if (!supabase) return;
     try {
-      await supabase.from("ai_jobs").delete().eq("id", jobId);
+      await AiJobRepository.delete(jobId);
       loadRun();
     } catch (e: any) {
       showAlert("Erro", `Falha ao apagar tarefa: ${e.message}`);
@@ -242,18 +212,12 @@ export default function SourcePreparationPanel({
   };
 
   const handleRetrySingleJob = async (jobId: string) => {
-    const { supabase } = await import("../core/supabaseClient");
-    if (!supabase) return;
     try {
-      await supabase
-        .from("ai_jobs")
-        .update({
-          status: "pending",
-          error: null,
-          result: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", jobId);
+      await AiJobRepository.updateStatus(jobId, {
+        status: "pending",
+        error: null,
+        result: null,
+      });
 
       if (!ProcessingRunner.isRunning) {
         ProcessingRunner.startPreparation(sourceId, options, loadRun);

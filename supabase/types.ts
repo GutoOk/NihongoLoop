@@ -150,7 +150,7 @@ export interface AiJob {
 export interface StudySession {
   id: string;
   user_id: string;
-  type: 'phrases' | 'words' | 'word_context';
+  type: 'phrases' | 'words' | 'word_context' | 'source_offset';
   source_id: string | null;
   config: any;
   created_at: string;

@@ -3,11 +3,7 @@ import { motion } from "motion/react";
 import { Lock, Mail, Eye, EyeOff, UserPlus, LogIn } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "../core/supabaseClient";
 
-interface LoginScreenProps {
-  onLogin: () => void;
-}
-
-export default function LoginScreen({ onLogin }: LoginScreenProps) {
+export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSignUp, setIsSignUp] = useState(false);
@@ -43,7 +39,6 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
         
         if (data.session) {
           setSuccessMessage("Conta criada e login efetuado com sucesso!");
-          setTimeout(() => onLogin(), 1000);
         } else {
           setSuccessMessage("Cadastro realizado! Por favor, verifique sua caixa de e-mail para confirmar a conta.");
           setIsSignUp(false);
@@ -55,8 +50,6 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
         });
 
         if (error) throw error;
-
-        onLogin();
       }
     } catch (err: any) {
       setErrorMessage(err.message || "Ocorreu um erro ao processar sua solicitação.");

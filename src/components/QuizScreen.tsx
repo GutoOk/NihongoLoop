@@ -241,23 +241,19 @@ export default function QuizScreen({ onBack }: QuizScreenProps) {
   const currentQ = sessionQueue[currentIndex];
 
   return (
-    <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-      <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex flex-col shrink-0 sticky top-0 z-10 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {onBack && (
-              <button
-                onClick={onBack}
-                className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-            )}
-            <h1 className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
-              <Radio className="w-5 h-5 text-orange-500" /> Quiz de Fixação
-            </h1>
-          </div>
-        </div>
+    <div className="screen-gray">
+      <header className="screen-header">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="btn-back"
+            aria-label="Voltar"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+        )}
+        <h1 className="screen-title">Quiz de Fixação</h1>
       </header>
 
       <main className="flex-1 overflow-auto p-4 space-y-4">
@@ -408,8 +404,9 @@ export default function QuizScreen({ onBack }: QuizScreenProps) {
             <div className="pt-4 space-y-2">
               {isAnswered && (
                 <button
+                  type="button"
                   onClick={handleNext}
-                  className="w-full py-4 bg-indigo-600 text-white font-bold uppercase tracking-widest rounded-xl text-xs flex items-center justify-center gap-2 transition-all hover:bg-indigo-700 shadow-md transform hover:scale-[1.02]"
+                  className="btn btn-primary flex items-center justify-center gap-2"
                 >
                   {currentIndex + 1 >= sessionQueue.length
                     ? "Concluir"

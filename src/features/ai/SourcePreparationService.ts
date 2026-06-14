@@ -1,5 +1,5 @@
 import { ProcessingRunRepository, SentenceRepository, SourceRepository, TermRepository, DictionaryRepository, AiJobRepository } from '../../repositories';
-import { Sentence, SentenceTerm, AiJobType } from '../../types';
+import { Sentence } from '../../types';
 import { makeJapaneseKey } from '../../core/japaneseNormalize';
 import { stableHash } from '../../core/hash';
 import { chunkByCountAndChars } from './batching';
@@ -16,12 +16,23 @@ export interface PreparationOptions {
 }
 
 export class SourcePreparationService {
+  private static needsDictionaryEnrichment(entry: any): boolean {
+    return entry.status === 'pending' && (
+      !entry.main_meaning ||
+      !entry.kana ||
+      !entry.romaji ||
+      !entry.type ||
+      !Array.isArray(entry.meanings) ||
+      entry.meanings.length === 0
+    );
+  }
+
   static async prepareSource(sourceId: string, options: PreparationOptions, runId: string): Promise<void> {
     const run = await ProcessingRunRepository.getRun(runId);
     if (!run) return;
 
     try {
-      await ProcessingRunRepository.updateRun(run.id, { current_step: 'Carregando fonte...' });
+      await ProcessingRunRepository.updateRun(run.id, { status: 'running', started_at: run.started_at || new Date().toISOString(), current_step: 'Carregando fonte...' });
 
       // ETAPA 1 - carregar fonte
       const source = await SourceRepository.getById(sourceId);
@@ -40,11 +51,9 @@ export class SourcePreparationService {
       });
 
       // Garantir chaves em todas as frases do lote
-      let needsKeyFix = false;
       for (const sent of sentences) {
         if (!sent.japanese_key) {
            sent.japanese_key = makeJapaneseKey(sent.japanese);
-           needsKeyFix = true;
            await SentenceRepository.update(sent.id, { japanese_key: sent.japanese_key });
         }
       }
@@ -61,7 +70,7 @@ export class SourcePreparationService {
       const runTranslate = !options.runMode || options.runMode === 'all' || options.runMode === 'translate';
       if (runTranslate) {
          await ProcessingRunRepository.updateRun(run.id, { current_step: 'Identificando frases para tradução...' });
-                 const sentencesToTranslate = sentences.filter(s => !s.portuguese);
+         const sentencesToTranslate = sentences.filter(s => !s.portuguese);
          
          const allJobs = await AiJobRepository.getAll();
          const targetJobs = allJobs.filter(j => j.target_id === sourceId && (j.status === 'pending' || j.status === 'running' || j.status === 'error'));
@@ -101,6 +110,20 @@ export class SourcePreparationService {
                }
             }
          }
+      }
+
+      if ((options.runMode || 'all') === 'all') {
+        const pendingTranslateJobs = (await AiJobRepository.getAll()).some(
+          j => j.target_id === sourceId && j.type === 'batch_translate_sentences' && ['pending', 'running', 'error'].includes(j.status)
+        );
+        const stillMissingTranslations = (await SentenceRepository.getBySourceId(sourceId)).some(s => !s.portuguese);
+        if (pendingTranslateJobs || stillMissingTranslations) {
+          await ProcessingRunRepository.updateRun(run.id, {
+            completed_steps: 3,
+            current_step: 'Aguardando conclusão da tradução antes de iniciar a análise...'
+          });
+          return;
+        }
       }
 
       await ProcessingRunRepository.updateRun(run.id, { completed_steps: 3 });
@@ -161,6 +184,26 @@ export class SourcePreparationService {
          }
       }
 
+      if ((options.runMode || 'all') === 'all') {
+        const pendingAnalyzeJobs = (await AiJobRepository.getAll()).some(
+          j => j.target_id === sourceId && j.type === 'batch_analyze_sentences' && ['pending', 'running', 'error'].includes(j.status)
+        );
+        const currentSentences = await SentenceRepository.getBySourceId(sourceId);
+        const currentTerms = await TermRepository.getBySentences(currentSentences.map(s => s.id));
+        const termCountBySentId: Record<string, number> = {};
+        for (const t of currentTerms) {
+          termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
+        }
+        const stillMissingAnalysis = currentSentences.some(s => !s.kana || !termCountBySentId[s.id]);
+        if (pendingAnalyzeJobs || stillMissingAnalysis) {
+          await ProcessingRunRepository.updateRun(run.id, {
+            completed_steps: 4,
+            current_step: 'Aguardando conclusão da leitura/segmentação antes de enriquecer o dicionário...'
+          });
+          return;
+        }
+      }
+
       await ProcessingRunRepository.updateRun(run.id, { completed_steps: 4 });
 
       // ETAPA 5 - Dicionário -> Enriquecimento detalhado
@@ -173,7 +216,7 @@ export class SourcePreparationService {
          
          if (dictIds.size > 0) {
             const entries = await DictionaryRepository.getByIds(Array.from(dictIds) as string[]);
-            const missingEntries = entries.filter(e => !e.main_meaning && e.status === 'pending');
+            const missingEntries = entries.filter(e => this.needsDictionaryEnrichment(e));
             
             const allJobs = await AiJobRepository.getAll();
             const targetJobs = allJobs.filter(j => j.target_id === sourceId && (j.status === 'pending' || j.status === 'running' || j.status === 'error'));
@@ -223,7 +266,8 @@ export class SourcePreparationService {
 
     } catch (e: any) {
       if (e.message === 'Canceled') {
-        await ProcessingRunRepository.updateRun(run.id, { status: 'cancelled', log: [{ time: new Date().toISOString(), message: 'Preparação cancelada pelo usuário.' }] });
+        await ProcessingRunRepository.appendLog(run.id, 'Preparação cancelada pelo usuário.');
+        await ProcessingRunRepository.updateRun(run.id, { status: 'cancelled', finished_at: new Date().toISOString() });
       } else {
         await ProcessingRunRepository.failRun(run.id, e.message);
       }
@@ -250,6 +294,7 @@ export class SourcePreparationService {
 
     for (let i = 0; i < sentences.length; i++) {
        const target = sentences[i];
+       if (target.status === 'reviewed' && !overwriteReviewed) continue;
        const key = target.japanese_key;
        if (!key) continue;
        

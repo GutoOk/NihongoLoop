@@ -14,7 +14,7 @@ createRoot(document.getElementById('root')!).render(
 
 // Register service worker for offline capability
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-  if ((import.meta as any).env.DEV) {
+  if (import.meta.env.DEV) {
     navigator.serviceWorker.getRegistrations().then((registrations) => {
       for (const registration of registrations) {
         registration.unregister().then(() => {

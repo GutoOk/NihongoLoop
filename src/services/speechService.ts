@@ -34,9 +34,11 @@ export class SpeechService {
       utterance.rate = rate;
 
       let resolved = false;
+      let timerId: any = null;
       const finish = () => {
         if (resolved) return;
         resolved = true;
+        if (timerId) clearTimeout(timerId);
         if (onEnd) onEnd();
         resolve();
       };
@@ -56,9 +58,10 @@ export class SpeechService {
 
       window.speechSynthesis.speak(utterance);
 
-      // Fallback: If utterance doesn't fire onend after a reasonable time.
-      const safeTimeout = Math.max(4000, text.length * 350);
-      setTimeout(() => {
+      // Fallback: if utterance doesn't fire onend after a reasonable time.
+      // Japanese TTS is typically ~200ms/char but we add generous headroom.
+      const safeTimeout = Math.min(20000, Math.max(3000, text.length * 180));
+      timerId = setTimeout(() => {
         if (!resolved) {
           console.warn("SpeechSynthesis timeout: onend event didn't fire.");
           finish();
@@ -88,9 +91,11 @@ export class SpeechService {
       utterance.rate = rate;
 
       let resolved = false;
+      let timerId: any = null;
       const finish = () => {
         if (resolved) return;
         resolved = true;
+        if (timerId) clearTimeout(timerId);
         if (onEnd) onEnd();
         resolve();
       };
@@ -110,8 +115,10 @@ export class SpeechService {
 
       window.speechSynthesis.speak(utterance);
 
-      const safeTimeout = Math.max(4000, text.length * 250);
-      setTimeout(() => {
+      // Fallback: if utterance doesn't fire onend after a reasonable time.
+      // Portuguese TTS is typically ~130ms/char with a 3s minimum.
+      const safeTimeout = Math.min(20000, Math.max(3000, text.length * 130));
+      timerId = setTimeout(() => {
         if (!resolved) {
           console.warn("SpeechSynthesis pt timeout: onend event didn't fire.");
           finish();

@@ -173,21 +173,17 @@ export default function FlashcardScreen({ onBack }: FlashcardScreenProps) {
   const currentCard = queue[currentIndex];
 
   return (
-    <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-      <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex flex-col shrink-0 sticky top-0 z-10 space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onBack}
-              className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <h1 className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
-              <Layers className="w-5 h-5 text-indigo-500" /> Flashcards SRS
-            </h1>
-          </div>
-        </div>
+    <div className="screen-gray">
+      <header className="screen-header">
+        <button
+          type="button"
+          onClick={onBack}
+          className="btn-back"
+          aria-label="Voltar"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <h1 className="screen-title">Flashcards SRS</h1>
       </header>
 
       <main className="flex-1 overflow-auto p-4 space-y-4">
@@ -370,8 +366,9 @@ export default function FlashcardScreen({ onBack }: FlashcardScreenProps) {
 
             {!showAnswer ? (
               <button
+                type="button"
                 onClick={() => setShowAnswer(true)}
-                className="w-full py-5 bg-indigo-600 text-white font-bold uppercase tracking-widest rounded-2xl text-xs transition-all hover:bg-indigo-700 shadow-md"
+                className="btn btn-primary"
               >
                 Mostrar Resposta
               </button>

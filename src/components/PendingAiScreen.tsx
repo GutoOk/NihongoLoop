@@ -312,54 +312,54 @@ export default function PendingAiScreen({ onBack }: PendingAiScreenProps) {
   ).length;
 
   return (
-    <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F] relative">
-      <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex flex-col shrink-0 sticky top-0 z-10 space-y-3 shadow-xs">
+    <div className="screen-gray relative">
+      <header className="screen-header flex-col gap-2 items-stretch">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
+              type="button"
               onClick={onBack}
-              className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
+              className="btn-back"
+              aria-label="Voltar"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <h1 className="text-sm font-black uppercase tracking-widest text-[#1D1D1F]">
-              Central de IA
-            </h1>
+            <h1 className="screen-title">Central de IA</h1>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
             <button
+              type="button"
               onClick={clearJobs}
               disabled={jobs.length === 0 || processingId !== null}
-              className="text-rose-600 p-2 disabled:opacity-50 hover:bg-rose-50 rounded-full transition-colors"
-              title="Limpar todas as tarefas"
+              className="btn-back disabled:opacity-40 text-rose-500"
+              aria-label="Limpar todas as tarefas"
             >
-              <Trash2 className="w-4.5 h-4.5" />
+              <Trash2 className="w-4 h-4" />
             </button>
             <button
+              type="button"
               onClick={loadJobs}
-              className="text-indigo-600 p-2 hover:bg-indigo-50 rounded-full transition-colors"
-              title="Sincronizar fila"
+              className="btn-back text-indigo-600"
+              aria-label="Sincronizar fila"
             >
-              <RefreshCw
-                className={`w-4.5 h-4.5 ${loading ? "animate-spin" : ""}`}
-              />
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             </button>
           </div>
         </div>
 
-        {/* Header action selectors */}
-        <div className="grid grid-cols-1 gap-2 pt-1 pb-1">
+        <div>
           <button
+            type="button"
             onClick={processAllPending}
             disabled={
               processingId !== null ||
               jobs.filter((j) => j.status === "pending").length === 0
             }
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl shadow-sm font-black text-xs uppercase tracking-widest flex justify-center items-center gap-2 transition-all active:scale-98"
+            className="btn btn-primary"
           >
-            <Sparkles className="w-4 h-4 text-indigo-200" />
-            {processingId && processingId === "batch"
-              ? processingMessage || "Processando..."
+            <Sparkles className="w-4 h-4" />
+            {processingId === "batch"
+              ? processingMessage || "Processando…"
               : "Processar Todo o Restante"}
           </button>
         </div>

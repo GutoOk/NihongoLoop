@@ -103,7 +103,7 @@ export default function StandardStudyFlowContainer({
       limit: 10,
       offset: offset,
       order: "original",
-      studyMode: mode === "sentences" ? "pt-jp-jp" : "pt-jp-jp",
+      studyMode: "pt-jp-jp",
     };
 
     return (
@@ -128,7 +128,7 @@ export default function StandardStudyFlowContainer({
   }
 
   return (
-    <div className="flex flex-col h-full bg-white text-[#1D1D1F] items-center justify-center p-6 space-y-6">
+    <div className="screen items-center justify-center p-6 space-y-6">
       <h2 className="text-2xl font-black text-gray-900">Etapa Concluída</h2>
       <p className="text-center text-gray-600">
         Você finalizou o estudo deste bloco e do quiz correspondente. Se você
@@ -156,35 +156,37 @@ export default function StandardStudyFlowContainer({
 
       <div className="flex flex-col gap-3 w-full max-w-sm mt-4">
         <button
+          type="button"
           onClick={() => setStep("quiz")}
           disabled={quizTargetEntryIds.length === 0}
-          className="w-full py-4 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 disabled:opacity-50 font-bold rounded-xl transition-colors"
+          className="btn btn-secondary disabled:opacity-50"
         >
           Refazer Quiz (Mesmas Palavras)
         </button>
         <button
-          onClick={() => {
-            setStep("study");
-          }}
-          className="w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors"
+          type="button"
+          onClick={() => setStep("study")}
+          className="btn btn-secondary"
         >
           Rever Estudo (Mesmo Bloco)
         </button>
-         <button
+        <button
+          type="button"
           onClick={async () => {
             const finalOffset = offset + 10;
             setOffset(finalOffset);
             await StudySessionRepository.saveSourceOffset(sourceId, finalOffset);
             setStep("study");
           }}
-          className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md transition-colors"
+          className="btn btn-primary"
         >
           Próximo Bloco
         </button>
 
         <button
+          type="button"
           onClick={onBack}
-          className="w-full py-4 text-gray-500 hover:text-gray-900 font-bold uppercase tracking-wider text-xs mt-4 transition-colors"
+          className="w-full py-4 text-[#86868B] hover:text-[#1D1D1F] font-bold uppercase tracking-wider text-xs mt-4 transition-colors"
         >
           Sair do Estudo
         </button>

@@ -1,12 +1,6 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Home, PlayCircle, PlusCircle, Layers, Settings } from "lucide-react";
-import { Database } from "./database/db";
 import { AuthService } from "./core/authService";
 import { supabase, isSupabaseConfigured } from "./core/supabaseClient";
 
@@ -52,30 +46,26 @@ interface NavigationState {
 }
 
 export default function App() {
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<{ user: { id: string } } | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
 
-  const [nav, setNav] = useState<NavigationState>({
-    screen: "home",
-    params: {},
-  });
-
+  const [nav, setNav] = useState<NavigationState>({ screen: "home", params: {} });
   const [history, setHistory] = useState<NavigationState[]>([]);
 
   const allowAuthBypass =
-    (import.meta as any).env.VITE_E2E_AUTH_BYPASS === "true" ||
-    (typeof window !== "undefined" && (
-      (window as any).__E2E_TEST_BYPASS__ === true ||
-      window.localStorage.getItem("VITE_E2E_AUTH_BYPASS") === "true"
-    ));
+    import.meta.env.MODE !== "production" &&
+    (import.meta.env.VITE_E2E_AUTH_BYPASS === "true" ||
+      (typeof window !== "undefined" && (
+        (window as { __E2E_TEST_BYPASS__?: boolean }).__E2E_TEST_BYPASS__ === true ||
+        window.localStorage.getItem("VITE_E2E_AUTH_BYPASS") === "true"
+      )));
 
   useEffect(() => {
-    console.log("[App.tsx] Auth Bypass Status:", {
-      allowAuthBypass,
-      isSupabaseConfigured
-    });
     if (allowAuthBypass) {
+      if (import.meta.env.DEV) {
+        console.log("[App.tsx] Auth Bypass ativo - apenas em modo de desenvolvimento.");
+      }
       setIsAuthLoading(false);
       setIsAuthorized(true);
       setSession({ user: { id: "test-user-id" } });
@@ -88,47 +78,27 @@ export default function App() {
       return;
     }
 
-    // Fetch active session on mount
-    supabase!.auth.getSession().then(async ({ data: { session } }) => {
+    const applySession = async (session: { user: { id: string } } | null) => {
       setSession(session);
       if (session?.user) {
         AuthService.setUserId(session.user.id);
         const isAdmin = await AuthService.checkAppAdmin();
         setIsAuthorized(isAdmin);
-        if (isAdmin) {
-          Database.init();
-        }
-      } else {
-        setIsAuthorized(false);
-      }
-      setIsAuthLoading(false);
-    });
-
-    // Watch auth session changes
-    const { data: { subscription } } = supabase!.auth.onAuthStateChange(async (_event, session) => {
-      setSession(session);
-      if (session?.user) {
-        AuthService.setUserId(session.user.id);
-        const isAdmin = await AuthService.checkAppAdmin();
-        setIsAuthorized(isAdmin);
-        if (isAdmin) {
-          Database.init();
-        }
       } else {
         AuthService.setUserId(null);
         setIsAuthorized(false);
       }
       setIsAuthLoading(false);
+    };
+
+    supabase!.auth.getSession().then(({ data: { session } }) => applySession(session));
+
+    const { data: { subscription } } = supabase!.auth.onAuthStateChange((_event, session) => {
+      applySession(session);
     });
 
-    return () => {
-      subscription.unsubscribe();
-    };
+    return () => { subscription.unsubscribe(); };
   }, []);
-
-  const handleLogin = () => {
-    // The onAuthStateChange event will trigger the login automatically
-  };
 
   const handleNavigate = (screen: ScreenType, params: any = {}) => {
     const isMainTab = [
@@ -156,16 +126,6 @@ export default function App() {
     }
   };
 
-  const renderPlaceholder = (title: string, onBack: () => void) => (
-    <div className="flex flex-col h-full items-center justify-center space-y-4">
-      <h1 className="text-xl font-bold">{title}</h1>
-      <p className="text-gray-500">Tela em desenvolvimento (Etapas futuras)</p>
-      <button onClick={onBack} className="text-indigo-600 underline">
-        Voltar
-      </button>
-    </div>
-  );
-
   if (!isSupabaseConfigured && !allowAuthBypass) {
     return (
       <div className="min-h-screen bg-[#F5F5F7] flex flex-col items-center justify-center p-6 text-center">
@@ -188,7 +148,7 @@ export default function App() {
   }
 
   if (!session?.user) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen />;
   }
 
   if (!isAuthorized) {

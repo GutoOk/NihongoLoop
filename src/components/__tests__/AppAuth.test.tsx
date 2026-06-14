@@ -41,7 +41,8 @@ vi.mock("../../core/authService", () => ({
 
 vi.mock("../../database/db", () => ({
   Database: {
-    init: vi.fn(),
+    getSettings: vi.fn().mockReturnValue({}),
+    updateSettings: vi.fn(),
   },
 }));
 
@@ -78,9 +79,6 @@ describe("App Authentication Flow", () => {
     });
 
     expect(screen.getByText(/Acesso Restrito/i)).toBeInTheDocument();
-    // Verify Database.init is NOT called
-    const { Database } = await import("../../database/db");
-    expect(Database.init).not.toHaveBeenCalled();
   });
 
   it("usuário admin autenticado entra no app", async () => {
@@ -97,10 +95,6 @@ describe("App Authentication Flow", () => {
       render(<App />);
     });
 
-    // Assume the HomeScreen renders something like "Início" or "Fontes" in the nav
     expect(screen.getAllByText(/Início/i).length).toBeGreaterThan(0);
-    
-    const { Database } = await import("../../database/db");
-    expect(Database.init).toHaveBeenCalled();
   });
 });

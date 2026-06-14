@@ -152,27 +152,28 @@ export default function DictionaryScreen({
   };
 
   return (
-    <div className="flex flex-col h-full bg-white text-[#1D1D1F]">
-      <header className="px-4 py-4 border-b border-[#E5E5E7] flex flex-col shrink-0 sticky top-0 z-10 bg-white space-y-3">
+    <div className="screen">
+      <header className="screen-header flex-col gap-2 items-stretch">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <button
+              type="button"
               onClick={onBack}
-              className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
+              className="btn-back"
+              aria-label="Voltar"
             >
               <ArrowLeft className="w-5 h-5" />
             </button>
-            <h1 className="text-sm font-black uppercase tracking-widest text-[#1D1D1F]">
-              Dicionário
-            </h1>
+            <h1 className="screen-title">Dicionário</h1>
           </div>
 
           <button
+            type="button"
             onClick={handleClearDictionary}
-            className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 hover:text-rose-700 text-[11px] font-bold rounded-xl transition-all active:scale-95 shadow-sm"
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 text-[11px] font-bold rounded-xl transition-all"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Limpar Dicionário
+            Limpar
           </button>
         </div>
 
@@ -253,36 +254,41 @@ export default function DictionaryScreen({
 
       <main className="flex-1 overflow-auto p-4 space-y-2">
         {loading ? (
-          <div className="text-center py-10 text-xs text-gray-500">
-            Carregando...
+          <div className="empty-state">
+            <span className="spinner text-[#86868B]" />
+            <span className="text-sm text-[#86868B]">Carregando…</span>
           </div>
         ) : entries.length === 0 ? (
-          <div className="text-center py-10 text-xs text-gray-400">
-            Nenhum termo encontrado.
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <Search className="w-7 h-7 text-[#86868B]" />
+            </div>
+            <p className="text-sm text-[#86868B]">Nenhum termo encontrado.</p>
           </div>
         ) : (
           entries.map((entry) => (
             <button
               key={entry.id}
+              type="button"
               onClick={() => onSelectEntry(entry.id)}
               className="w-full bg-white border border-[#E5E5E7] p-3 text-left rounded-xl hover:border-indigo-300 transition-colors"
             >
-              <div className="flex justify-between items-start">
-                <div>
-                  <h3 className="text-base font-bold text-gray-900">
+              <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-[#1D1D1F]">
                     {entry.lemma}
                   </h3>
                   {entry.kana && (
-                    <p className="text-[10px] text-gray-500">{entry.kana}</p>
+                    <p className="text-[10px] text-[#86868B]">{entry.kana}</p>
                   )}
                 </div>
                 <span
-                  className={`text-[9px] uppercase font-bold px-1.5 py-0.5 rounded ${entry.status === "pending" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}
+                  className={`shrink-0 text-[9px] uppercase font-bold px-1.5 py-0.5 rounded ${entry.status === "pending" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}
                 >
                   {entry.status}
                 </span>
               </div>
-              <p className="text-[11px] text-gray-600 mt-2 truncate">
+              <p className="text-[11px] text-[#86868B] mt-1.5 truncate">
                 {entry.main_meaning || "Sem significado principal"}
               </p>
             </button>

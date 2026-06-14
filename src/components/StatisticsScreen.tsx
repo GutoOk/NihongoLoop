@@ -195,20 +195,28 @@ export default function StatisticsScreen({
     if (onNavigate) onNavigate(screen, params);
   };
 
+  const sharedHeader = (
+    <header className="screen-header">
+      <button
+        type="button"
+        onClick={onBack}
+        className="btn-back"
+        aria-label="Voltar"
+      >
+        <ArrowLeft className="w-5 h-5" />
+      </button>
+      <h1 className="screen-title">Estatísticas</h1>
+    </header>
+  );
+
   if (loading || !stats) {
     return (
-      <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-        <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex items-center gap-3">
-          <button onClick={onBack} className="p-2 -ml-2 text-[#86868B]">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <h1 className="text-sm font-black uppercase tracking-widest flex items-center gap-2">
-            <Target className="w-5 h-5 text-teal-500" /> Estatísticas
-          </h1>
-        </header>
+      <div className="screen-gray">
+        {sharedHeader}
         <main className="flex-1 flex justify-center items-center">
-          <div className="text-gray-400 font-bold text-xs uppercase">
-            Carregando métricas...
+          <div className="empty-state">
+            <span className="spinner text-[#86868B]" />
+            <span className="text-sm text-[#86868B]">Carregando métricas…</span>
           </div>
         </main>
       </div>
@@ -216,21 +224,8 @@ export default function StatisticsScreen({
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-      <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex flex-col shrink-0 sticky top-0 z-10 space-y-3">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onBack}
-            className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <h1 className="text-sm font-black uppercase tracking-widest text-[#1D1D1F] flex items-center gap-2">
-            <Target className="w-5 h-5 text-teal-500" /> Estatísticas e
-            Progresso
-          </h1>
-        </div>
-      </header>
+    <div className="screen-gray">
+      {sharedHeader}
 
       <main className="flex-1 overflow-auto p-4 space-y-6 pb-20">
         {/* Totais Gerais */}
@@ -474,14 +469,16 @@ export default function StatisticsScreen({
                 </div>
                 <div className="flex gap-2 pt-2 border-t border-gray-200">
                   <button
+                    type="button"
                     onClick={() =>
                       handleNavigate("reading", { sourceId: s.id })
                     }
-                    className="flex-1 py-1.5 bg-white border border-gray-300 text-gray-700 text-xs font-bold rounded-lg text-center shadow-sm"
+                    className="flex-1 py-1.5 bg-[#F5F5F7] border border-[#E5E5E7] text-[#1D1D1F] text-xs font-bold rounded-lg text-center"
                   >
                     Ler Fonte
                   </button>
                   <button
+                    type="button"
                     onClick={() =>
                       handleNavigate("study_player", {
                         config: {
@@ -491,7 +488,7 @@ export default function StatisticsScreen({
                         },
                       })
                     }
-                    className="flex-1 py-1.5 bg-slate-900 text-white text-xs font-bold rounded-lg text-center shadow-sm"
+                    className="flex-1 py-1.5 bg-indigo-600 text-white text-xs font-bold rounded-lg text-center"
                   >
                     Estudar
                   </button>

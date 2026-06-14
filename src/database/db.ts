@@ -1,5 +1,4 @@
 export const Database = {
-  init: () => {},
   getSettings: () => {
      try {
        const s = localStorage.getItem('nihongo_loop_settings');

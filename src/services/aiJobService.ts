@@ -11,7 +11,7 @@ const VALID_DICT_TYPES = [
   'número', 'tempo', 'lugar', 'conector', 'auxiliar', 'outro'
 ];
 
-const isDev = (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') || (import.meta as any).env?.DEV;
+const isDev = import.meta.env.DEV || (typeof process !== 'undefined' && process.env?.NODE_ENV === 'development');
 
 async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 0, initialDelay = 1000): Promise<Response> {
   const { supabase } = await import('../core/supabaseClient');
@@ -523,6 +523,26 @@ export class AiJobService {
      const sentenceIds = items.map(item => item.job_id);
      const sentences = await SentenceRepository.getByIds(sentenceIds);
      const sentenceMap = new Map(sentences.map(s => [s.id, s]));
+
+     // Salva kana/romaji imediatamente. A leitura não pode depender de a IA ter
+     // devolvido uma lista perfeita de termos; caso contrário o job parece
+     // concluído, mas a frase continua sem leitura.
+     for (const item of items) {
+        if (item.romaji && typeof item.romaji === 'string') {
+           item.romaji = item.romaji.toLowerCase();
+        }
+        const sentence = sentenceMap.get(item.job_id);
+        if (!sentence || sentence.status === 'reviewed') continue;
+        if (item.kana && item.romaji && typeof item.kana === 'string' && typeof item.romaji === 'string') {
+           const newStatus = (sentence.portuguese || item.portuguese) ? 'reading_ready' : sentence.status;
+           await SentenceRepository.update(item.job_id, {
+              kana: item.kana,
+              romaji: item.romaji,
+              status: newStatus,
+              reading_source: 'ai'
+           });
+        }
+     }
      
      // 2. Extract and sanitize all term candidates
      const allTempTerms: any[] = [];
@@ -774,39 +794,19 @@ export class AiJobService {
         }
         const finalTermsToInsert = Array.from(uniqueTermsMap.values());
         if (finalTermsToInsert.length > 0) {
-           // Delete existing terms for these specific sentences right before insertion
+           // Delete all existing terms for these sentences in a single batch operation
            const sentenceIdsToClear = Array.from(new Set(finalTermsToInsert.map(t => t.sentence_id)));
-           for (const sId of sentenceIdsToClear) {
-              const existingTerms = await TermRepository.getBySentence(sId);
-              for (const t of existingTerms) {
-                 await TermRepository.delete(t.id);
-              }
-           }
+           await TermRepository.deleteBySentenceIds(sentenceIdsToClear);
            
            await TermRepository.addBatch(finalTermsToInsert);
         }
      }
      
-     // 9. Update sentence reading fields and status only AFTER terms are safely inserted
+     // 9. Marca a origem dos termos depois que eles foram inseridos com sucesso.
      for (const item of items) {
-        if (item.romaji && typeof item.romaji === 'string') {
-           item.romaji = item.romaji.toLowerCase();
-        }
         const sentence = sentenceMap.get(item.job_id);
-        if (sentence) {
-           if (sentence.status === 'reviewed') {
-              // Protected: do not overwrite manual edits
-              continue;
-           }
-           const newStatus = (sentence.portuguese || item.portuguese) ? 'reading_ready' : sentence.status;
-           await SentenceRepository.update(item.job_id, { 
-              kana: item.kana, 
-              romaji: item.romaji, 
-              status: newStatus,
-              reading_source: 'ai',
-              terms_source: 'ai'
-           });
-        }
+        if (!sentence || sentence.status === 'reviewed') continue;
+        await SentenceRepository.update(item.job_id, { terms_source: 'ai' });
      }
   }
 
@@ -866,82 +866,6 @@ export class AiJobService {
                  errors_by_item[item.job_id] = itemErr.message;
               }
            }
-        }
-        
-        result.applied_count = applied_count;
-        result.failed_count = failed_count;
-        result.errors_by_item = errors_by_item;
-    } else if ((job.type as any) === 'batch_analyze_sentences_OBSOLETE') {
-        let applied_count = 0;
-        let failed_count = 0;
-        const errors_by_item: any = {};
-        
-        const allDicts = await DictionaryRepository.getAll();
-        const dictMap = new Map<string, any>();
-        const dictByLemma = new Map<string, any[]>();
-        for (const d of allDicts) {
-           dictMap.set(d.unique_key, d);
-           if (!dictByLemma.has(d.lemma)) dictByLemma.set(d.lemma, []);
-           dictByLemma.get(d.lemma)!.push(d);
-        }
-        
-        const newDictsToInsertMap = new Map<string, any>();
-        for (const item of result.items || []) {
-           if (item.terms && Array.isArray(item.terms)) {
-              for (const term of item.terms) {
-                 if (!term.surface || !term.lemma) continue;
-                 const entryType = term.type || 'outro';
-                 const uniqueKey = generateDictionaryUniqueKey(term.lemma, term.kana || null, entryType);
-                 let existing = dictMap.get(uniqueKey);
-                 if (!existing && dictByLemma.has(term.lemma)) {
-                    existing = dictByLemma.get(term.lemma)!.find(e => e.type === entryType);
-                 }
-                 if (!existing && !newDictsToInsertMap.has(uniqueKey)) {
-                    newDictsToInsertMap.set(uniqueKey, {
-                       user_id: AuthService.getCurrentUserId(),
-                       lemma: term.lemma,
-                       kana: term.kana || null,
-                       romaji: term.romaji || null,
-                       type: entryType,
-                       main_meaning: null,
-                       meanings: [],
-                       tags: [],
-                       jlpt_level: null,
-                       status: 'pending',
-                       unique_key: uniqueKey
-                    });
-                 }
-              }
-           }
-        }
-        
-        if (newDictsToInsertMap.size > 0) {
-           const inserted = await DictionaryRepository.addBatch(Array.from(newDictsToInsertMap.values()));
-           for (const d of inserted) {
-              dictMap.set(d.unique_key, d);
-              if (!dictByLemma.has(d.lemma)) dictByLemma.set(d.lemma, []);
-              dictByLemma.get(d.lemma)!.push(d);
-           }
-        }
-        
-        const sentenceIds = (result.items || []).map((i: any) => i.job_id);
-        const sentences = await SentenceRepository.getByIds(sentenceIds);
-        const sentenceMap = new Map<string, any>(sentences.map(s => [s.id, s]));
-        const ctx = { dictMap, dictByLemma, sentenceMap, insertQueue: [] as any[] };
-        
-        for (const item of result.items || []) {
-           try {
-              await this.applyJobResult({ type: 'generate_sentence_reading', target_id: item.job_id } as any, item, ctx);
-              await SentenceRepository.update(item.job_id, { reading_source: 'ai', terms_source: 'ai' });
-              applied_count++;
-           } catch (err: any) {
-              failed_count++;
-              errors_by_item[item.job_id] = err.message;
-           }
-        }
-        
-        if (ctx.insertQueue.length > 0) {
-           await TermRepository.addBatch(ctx.insertQueue);
         }
         
         result.applied_count = applied_count;
@@ -1058,7 +982,8 @@ export class AiJobService {
            if (supabase) {
               await supabase.from('sentence_terms')
                 .update({ dictionary_entry_id: existingConflict.id })
-                .eq('dictionary_entry_id', job.target_id);
+                .eq('dictionary_entry_id', job.target_id)
+                .eq('user_id', AuthService.getCurrentUserId());
 
               if (!existingConflict.main_meaning) {
                  await DictionaryRepository.update(existingConflict.id, {
@@ -1077,7 +1002,10 @@ export class AiJobService {
                     status: 'ai_enriched'
                  });
               }
-              const { error: deleteErr } = await supabase.from('dictionary_entries').delete().eq('id', job.target_id);
+              const { error: deleteErr } = await supabase.from('dictionary_entries')
+                .delete()
+                .eq('id', job.target_id)
+                .eq('user_id', AuthService.getCurrentUserId());
               if (deleteErr) console.error("Erro ao deletar verbete colidido:", deleteErr);
            }
            return;

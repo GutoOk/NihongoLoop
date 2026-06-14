@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
@@ -18,7 +17,9 @@ const supabaseAuthClient = isSupabaseConfigured
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
 
 function ipRateLimit(req: any, res: any, next: any) {
-  const ip = req.ip || req.headers["x-forwarded-for"] || "unknown";
+  // x-forwarded-for may contain a comma-separated list; take the first (real client IP)
+  const forwardedFor = req.headers["x-forwarded-for"];
+  const ip = (typeof forwardedFor === 'string' ? forwardedFor.split(',')[0].trim() : null) || req.ip || "unknown";
   const now = Date.now();
   const windowMs = 60000; // 1 minute
   const maxLimit = 60; // Max 60 requests/min per IP
@@ -39,10 +40,19 @@ function ipRateLimit(req: any, res: any, next: any) {
   }
 }
 
+// Periodically purge expired rate limit entries to prevent memory leak in long-running processes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, data] of requestCounts.entries()) {
+    if (now > data.resetAt) {
+      requestCounts.delete(key);
+    }
+  }
+}, 5 * 60 * 1000); // every 5 minutes
+
 const allowAuthBypass =
-  process.env.NODE_ENV === "test" ||
-  process.env.ALLOW_AUTH_BYPASS === "true" ||
-  process.env.VITE_E2E_AUTH_BYPASS === "true";
+  (process.env.NODE_ENV === "test" || process.env.NODE_ENV === "development" || !process.env.NODE_ENV) &&
+  (process.env.ALLOW_AUTH_BYPASS === "true" || process.env.VITE_E2E_AUTH_BYPASS === "true");
 
 async function authenticateRequest(req: any, res: any, next: any) {
   if (!isSupabaseConfigured || !supabaseAuthClient) {
@@ -51,7 +61,6 @@ async function authenticateRequest(req: any, res: any, next: any) {
       next();
       return;
     }
-
     res.status(500).json({
       error: "Servidor sem Supabase configurado. Autenticação bloqueada por segurança.",
     });
@@ -61,6 +70,11 @@ async function authenticateRequest(req: any, res: any, next: any) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      if (allowAuthBypass) {
+        req.user = { id: "test-user-id" };
+        next();
+        return;
+      }
       res.status(401).json({ error: "Não autorizado: token de autenticação ausente." });
       return;
     }
@@ -69,6 +83,11 @@ async function authenticateRequest(req: any, res: any, next: any) {
     const { data: { user }, error } = await supabaseAuthClient.auth.getUser(token);
 
     if (error || !user) {
+      if (allowAuthBypass) {
+        req.user = { id: "test-user-id" };
+        next();
+        return;
+      }
       res.status(401).json({ error: "Não autorizado: token de autenticação inválido ou expirado." });
       return;
     }
@@ -84,6 +103,12 @@ async function authenticateRequest(req: any, res: any, next: any) {
     const { data: isAdmin, error: adminError } = await userSupabase.rpc("is_app_admin");
 
     if (adminError || !isAdmin) {
+      if (allowAuthBypass) {
+        req.user = user;
+        req.supabase = userSupabase;
+        next();
+        return;
+      }
       res.status(403).json({ error: "Não autorizado: usuário não é administrador do sistema." });
       return;
     }
@@ -290,10 +315,7 @@ Identifique e retorne detalhadamente:
       res.json({ result: parsedJSON });
 
     } catch (e: any) {
-      console.error(e);
-      try {
-        fs.appendFileSync('server_errors.log', `[${new Date().toISOString()}] Single job error: ${e.message}\nStack: ${e.stack}\n\n`);
-      } catch (logErr) {}
+      console.error('[process-job]', e);
       res.status(500).json({ error: formatGenAiError(e) });
     }
   });
@@ -315,6 +337,11 @@ Identifique e retorne detalhadamente:
 
       const firstJob = jobs[0];
       const jobType = firstJob.type;
+
+      if (!jobs.every((j: any) => j.type === jobType)) {
+        res.status(400).json({ error: "Todos os jobs do lote precisam ser do mesmo tipo." });
+        return;
+      }
 
       console.log(`Processing batch of ${jobs.length} jobs of type ${jobType}`);
 
@@ -520,10 +547,7 @@ Identifique para cada um:
       }
 
     } catch (e: any) {
-      console.error(e);
-      try {
-        fs.appendFileSync('server_errors.log', `[${new Date().toISOString()}] Batch job error: ${e.message}\nStack: ${e.stack}\n\n`);
-      } catch (logErr) {}
+      console.error('[process-jobs-batch]', e);
       res.status(500).json({ error: formatGenAiError(e) });
     }
   });
@@ -539,7 +563,8 @@ Identifique para cada um:
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.use((req, res, next) => {
-      if (req.method === 'GET') {
+      // Only serve index.html for non-API GET requests (SPA routing)
+      if (req.method === 'GET' && !req.path.startsWith('/api')) {
         res.sendFile(path.join(distPath, 'index.html'));
       } else {
         next();

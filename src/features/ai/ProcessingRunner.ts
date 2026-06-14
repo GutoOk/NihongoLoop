@@ -1,11 +1,19 @@
 import { ProcessingRunRepository, AiJobRepository, SentenceRepository, TermRepository, DictionaryRepository } from '../../repositories';
 import { SourcePreparationService, PreparationOptions } from './SourcePreparationService';
 import { AiJobService } from '../../services/aiJobService';
-import { stableHash } from '../../core/hash';
 
 export class ProcessingRunner {
-  public static isRunning = false;
+  private static _isRunning = false;
   private static currentRunId: string | null = null;
+
+  static get isRunning(): boolean {
+    return this._isRunning;
+  }
+
+  static stop(): void {
+    this._isRunning = false;
+    this.currentRunId = null;
+  }
   private static activeControllers = new Map<string, AbortController>();
   private static runnerId = Math.random().toString(36).substring(2, 11);
   
@@ -27,24 +35,14 @@ export class ProcessingRunner {
       run = await ProcessingRunRepository.createRun(sourceId, options.runMode || "all");
       if (run) {
         await SourcePreparationService.prepareSource(sourceId, options, run.id);
+        run = await ProcessingRunRepository.getRun(run.id);
       }
     }
     
     if (run && run.status !== 'completed' && run.status !== 'error') {
-       // Reset stuck running jobs of this source to pending so they can be processed
-       const { supabase } = await import('../../core/supabaseClient');
-       if (supabase) {
-          try {
-             await supabase.from('ai_jobs')
-               .update({ status: 'pending', error: null, updated_at: new Date().toISOString() })
-               .eq('target_id', sourceId)
-               .eq('status', 'running');
-          } catch (e) {
-             console.error("Erro ao resetar jobs travados:", e);
-          }
-       }
+       await AiJobRepository.resetRunningJobsByTarget(sourceId);
 
-       this.isRunning = true;
+       this._isRunning = true;
        this.currentRunId = run.id;
        this.loop(run.id, sourceId, options, onProgress);
     }
@@ -59,7 +57,7 @@ export class ProcessingRunner {
     if (this.activeControllers.has(runId)) {
         this.activeControllers.get(runId)?.abort();
     }
-    this.isRunning = false;
+    this._isRunning = false;
     this.currentRunId = null;
   }
   
@@ -91,7 +89,7 @@ export class ProcessingRunner {
          let hasMissingEnrichment = false;
          if (dictIds.length > 0) {
             const entries = await DictionaryRepository.getByIds(dictIds);
-            hasMissingEnrichment = entries.some(e => !e.main_meaning && e.status === 'pending');
+            hasMissingEnrichment = entries.some(e => e.status === 'pending' && (!e.main_meaning || !e.kana || !e.romaji || !e.type || !Array.isArray(e.meanings) || e.meanings.length === 0));
          }
 
          // Fetch current job queues for this source
@@ -169,7 +167,8 @@ export class ProcessingRunner {
                      break;
                   }
                   
-                  if (pool.length >= concurrencyLimit) {
+                  // Wait until pool has a free slot before launching next job
+                  while (pool.length >= concurrencyLimit) {
                      await Promise.race(pool);
                   }
                   
@@ -179,7 +178,11 @@ export class ProcessingRunner {
                      continue;
                   }
 
-                  const promise = (async () => {
+                  // Wrap the job promise so it self-removes from pool on completion (avoids race on pool.length)
+                  let resolveTracked!: () => void;
+                  const tracked: Promise<void> = new Promise<void>(res => { resolveTracked = res; });
+
+                  const jobPromise = (async () => {
                      // Dynamic periodic heartbeat (every 15 seconds)
                      const heartbeatInterval = setInterval(async () => {
                         try {
@@ -210,16 +213,16 @@ export class ProcessingRunner {
                      } finally {
                         clearInterval(heartbeatInterval);
                         if (onProgress) onProgress();
+                        // Remove self from pool synchronously before resolving tracked
+                        const idx = pool.indexOf(tracked);
+                        if (idx > -1) pool.splice(idx, 1);
+                        resolveTracked();
                       }
                   })();
                   
-                  pool.push(promise);
-                  promise.then(() => {
-                     const idx = pool.indexOf(promise);
-                     if (idx > -1) {
-                        pool.splice(idx, 1);
-                     }
-                  });
+                  pool.push(tracked);
+                  // Propagate unhandled rejections from jobPromise (tracked never rejects itself)
+                  jobPromise.catch(() => {});
                }
                
                await Promise.all(pool);
@@ -248,7 +251,7 @@ export class ProcessingRunner {
       await ProcessingRunRepository.failRun(runId, e.message);
       if (onProgress) onProgress();
     } finally {
-      this.isRunning = false;
+      this._isRunning = false;
       this.currentRunId = null;
       this.activeControllers.delete(runId);
     }

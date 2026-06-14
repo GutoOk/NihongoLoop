@@ -27,7 +27,6 @@ VITE_SUPABASE_URL=seu_supabase_url
 VITE_SUPABASE_ANON_KEY=seu_supabase_anon_key
 GEMINI_API_KEY=sua_gemini_api_key
 GEMINI_MODEL=gemini-2.5-flash
-ALLOW_AUTH_BYPASS=false
 ```
 
 ---
@@ -57,11 +56,6 @@ O build compila o frontend para o diretório `/dist` e empacota o backend como u
 npm start
 ```
 
-### 🧪 Testes de Qualidade
-Para executar a suíte completa de testes unitários e de integração via Vitest:
-```bash
-npm run test
-```
 
 ---
 

@@ -1,5 +1,5 @@
 import { DictionaryRepository, TermRepository, SentenceRepository } from '../repositories';
-import { Sentence, SentenceTerm, DictionaryEntry } from '../types';
+import { Sentence } from '../types';
 import { AuthService } from '../core/authService';
 
 export function normalizeJapaneseKey(value: string): string {
@@ -18,91 +18,17 @@ export function generateDictionaryUniqueKey(lemma: string, kana: string | null, 
 }
 
 export class TermDetectionService {
-  static async detectWordsInSource(sourceId: string) {
+  static async detectWordsInSource(sourceId: string): Promise<number> {
     const sentences = await SentenceRepository.getBySourceId(sourceId);
-    let matchedCount = 0;
-
-    for (const sent of sentences) {
-      const candidates = this.extractCandidates(sent.japanese);
-      if (candidates.length === 0) continue;
-
-      const existingTerms = await TermRepository.getBySentence(sent.id);
-
-      for (const { surface, startIndex, endIndex } of candidates) {
-        // Prevent parsing the entire sentence as a word
-        if (surface === sent.japanese || surface.length >= sent.japanese.length * 0.9) continue;
-        
-        // Prevent empty or spaces
-        if (!surface.trim()) continue;
-
-        // Check for exact physical duplicates
-        if (existingTerms.some(t => t.start_index === startIndex && t.end_index === endIndex)) continue;
-
-        const uniqueKey = generateDictionaryUniqueKey(surface, null, 'outro');
-        let entryId: string | null = null;
-        let entryType = 'outro';
-        
-        let existingEntry = await DictionaryRepository.getByUniqueKey(uniqueKey);
-        
-        if (!existingEntry) {
-          const sameLemmas = await DictionaryRepository.getByLemma(surface);
-          if (sameLemmas && sameLemmas.length > 0) {
-             existingEntry = sameLemmas.find(e => e.type === 'outro') || sameLemmas[0];
-          }
-        }
-        
-        if (existingEntry) {
-          entryId = existingEntry.id;
-          entryType = existingEntry.type;
-        } else {
-           const newEntry = await DictionaryRepository.addBatch([{
-             user_id: AuthService.getCurrentUserId(),
-             lemma: surface,
-             kana: null,
-             romaji: null,
-             type: 'outro',
-             main_meaning: null,
-             meanings: [],
-             tags: [],
-             jlpt_level: null,
-             status: 'pending',
-             unique_key: uniqueKey
-           }]);
-           // @ts-ignore
-           if (newEntry && newEntry.length > 0) {
-             entryId = newEntry[0].id;
-           }
-        }
-
-        if (entryId) {
-           await TermRepository.addBatch([{
-             user_id: AuthService.getCurrentUserId(),
-             sentence_id: sent.id,
-             dictionary_entry_id: entryId,
-             surface: surface,
-             lemma: surface,
-             kana: null,
-             romaji: null,
-             start_index: startIndex,
-             end_index: endIndex,
-             type: entryType,
-             confidence: 0.5,
-             status: 'detected'
-           }]);
-           // Add to cache to prevent checking in same sentence loop if multiple same words appear
-           existingTerms.push({
-             start_index: startIndex, end_index: endIndex
-           } as any);
-           matchedCount++;
-        }
-      }
-    }
-    
-    return matchedCount;
+    return this.detectWordsInSentenceList(sentences);
   }
 
-  static async detectWordsInSentences(sentenceIds: string[]) {
+  static async detectWordsInSentences(sentenceIds: string[]): Promise<number> {
     const sentences = await SentenceRepository.getByIds(sentenceIds);
+    return this.detectWordsInSentenceList(sentences);
+  }
+
+  private static async detectWordsInSentenceList(sentences: Sentence[]): Promise<number> {
     let matchedCount = 0;
 
     for (const sent of sentences) {
@@ -113,95 +39,80 @@ export class TermDetectionService {
       const existingTerms = await TermRepository.getBySentence(sent.id);
 
       for (const { surface, startIndex, endIndex } of candidates) {
-        // Prevent parsing the entire sentence as a word
         if (surface === sent.japanese || surface.length >= sent.japanese.length * 0.9) continue;
-        
-        // Prevent empty or spaces
         if (!surface.trim()) continue;
-
-        // Check for exact physical duplicates
         if (existingTerms.some(t => t.start_index === startIndex && t.end_index === endIndex)) continue;
 
         const uniqueKey = generateDictionaryUniqueKey(surface, null, 'outro');
         let entryId: string | null = null;
         let entryType = 'outro';
-        
+
         let existingEntry = await DictionaryRepository.getByUniqueKey(uniqueKey);
-        
+
         if (!existingEntry) {
           const sameLemmas = await DictionaryRepository.getByLemma(surface);
-          if (sameLemmas && sameLemmas.length > 0) {
-             existingEntry = sameLemmas.find(e => e.type === 'outro') || sameLemmas[0];
+          if (sameLemmas.length > 0) {
+            existingEntry = sameLemmas.find(e => e.type === 'outro') ?? sameLemmas[0];
           }
         }
-        
+
         if (existingEntry) {
           entryId = existingEntry.id;
           entryType = existingEntry.type;
         } else {
-           const newEntry = await DictionaryRepository.addBatch([{
-             user_id: AuthService.getCurrentUserId(),
-             lemma: surface,
-             kana: null,
-             romaji: null,
-             type: 'outro',
-             main_meaning: null,
-             meanings: [],
-             tags: [],
-             jlpt_level: null,
-             status: 'pending',
-             unique_key: uniqueKey
-           }]);
-           // @ts-ignore
-           if (newEntry && newEntry.length > 0) {
-             entryId = newEntry[0].id;
-           }
+          const newEntry = await DictionaryRepository.addBatch([{
+            user_id: AuthService.getCurrentUserId(),
+            lemma: surface,
+            kana: null,
+            romaji: null,
+            type: 'outro',
+            main_meaning: null,
+            meanings: [],
+            tags: [],
+            jlpt_level: null,
+            status: 'pending',
+            unique_key: uniqueKey
+          }]);
+          if (newEntry.length > 0) {
+            entryId = newEntry[0].id;
+          }
         }
 
         if (entryId) {
-           await TermRepository.addBatch([{
-             user_id: AuthService.getCurrentUserId(),
-             sentence_id: sent.id,
-             dictionary_entry_id: entryId,
-             surface: surface,
-             lemma: surface,
-             kana: null,
-             romaji: null,
-             start_index: startIndex,
-             end_index: endIndex,
-             type: entryType,
-             confidence: 0.5,
-             status: 'detected'
-           }]);
-           // Add to cache to prevent checking in same sentence loop if multiple same words appear
-           existingTerms.push({
-             start_index: startIndex, end_index: endIndex
-           } as any);
-           matchedCount++;
+          await TermRepository.addBatch([{
+            user_id: AuthService.getCurrentUserId(),
+            sentence_id: sent.id,
+            dictionary_entry_id: entryId,
+            surface,
+            lemma: surface,
+            kana: null,
+            romaji: null,
+            start_index: startIndex,
+            end_index: endIndex,
+            type: entryType,
+            confidence: 0.5,
+            status: 'detected'
+          }]);
+          existingTerms.push({ start_index: startIndex, end_index: endIndex } as never);
+          matchedCount++;
         }
       }
     }
-    
+
     return matchedCount;
   }
 
-  static extractCandidates(text: string) {
-    const results: { surface: string, startIndex: number, endIndex: number }[] = [];
-    if (!text || text.length === 0) return results;
+  static extractCandidates(text: string): { surface: string; startIndex: number; endIndex: number }[] {
+    const results: { surface: string; startIndex: number; endIndex: number }[] = [];
+    if (!text) return results;
 
-    const regex = /([\u30A0-\u30FF]+)|([\u4E00-\u9FAF]+[\u3040-\u309F]{0,3})|([\u3040-\u309F]{1,3})/g;
-    
+    const regex = /([゠-ヿ]+)|([一-龯]+[぀-ゟ]{0,3})|([぀-ゟ]{1,3})/g;
     let match;
     while ((match = regex.exec(text)) !== null) {
-       if (/^[\s、。！？\u3000]+$/.test(match[0])) continue;
-       results.push({
-         surface: match[0],
-         startIndex: match.index,
-         endIndex: match.index + match[0].length
-       });
+      if (/^[\s、。！？　]+$/.test(match[0])) continue;
+      results.push({ surface: match[0], startIndex: match.index, endIndex: match.index + match[0].length });
     }
 
     return results;
   }
 }
-

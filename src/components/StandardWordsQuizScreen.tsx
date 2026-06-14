@@ -225,22 +225,23 @@ export default function StandardWordsQuizScreen({
 
   if (isLoading || queue.length === 0) {
     return (
-      <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F] items-center justify-center p-6 text-center">
+      <div className="screen-gray items-center justify-center p-6 text-center">
         {!isLoading && loadingError ? (
           <div className="space-y-4">
-            <p className="text-rose-600 font-bold">{loadingError}</p>
+            <p className="text-rose-600 font-bold text-sm">{loadingError}</p>
             <button
+              type="button"
               onClick={() => onBack(0)}
-              className="py-2 px-4 bg-gray-200 rounded-xl text-sm font-bold"
+              className="py-2 px-4 btn-secondary w-auto"
             >
               Voltar
             </button>
           </div>
         ) : (
-          <div className="space-y-4">
-            <div className="w-8 h-8 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin mx-auto" />
-            <p className="font-bold text-slate-500 uppercase tracking-widest text-xs">
-              Preparando quiz...
+          <div className="empty-state">
+            <span className="spinner text-indigo-500" />
+            <p className="text-xs font-bold text-[#86868B] uppercase tracking-widest">
+              Preparando quiz…
             </p>
           </div>
         )}
@@ -250,17 +251,17 @@ export default function StandardWordsQuizScreen({
 
   if (!isActive && !isFinished) {
     return (
-      <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-        <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex items-center gap-3 shrink-0">
+      <div className="screen-gray">
+        <header className="screen-header">
           <button
+            type="button"
             onClick={() => onBack(0)}
-            className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
+            className="btn-back"
+            aria-label="Voltar"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <h1 className="text-sm font-black uppercase tracking-widest">
-            Quiz de Vocabulário
-          </h1>
+          <h1 className="screen-title">Quiz de Vocabulário</h1>
         </header>
         <main className="flex-1 p-6 flex flex-col justify-center max-w-lg mx-auto w-full">
           <div className="bg-white p-8 rounded-2xl shadow-sm text-center space-y-6">
@@ -273,8 +274,9 @@ export default function StandardWordsQuizScreen({
               neste bloco.
             </p>
             <button
+              type="button"
               onClick={handleStart}
-              className="w-full py-4 bg-indigo-600 font-bold text-white rounded-xl shadow-md uppercase tracking-widest text-xs mt-4"
+              className="btn btn-primary mt-4"
             >
               Começar
             </button>
@@ -287,11 +289,9 @@ export default function StandardWordsQuizScreen({
   if (isFinished) {
     const accuracy = queue.length > 0 ? stats.successes / queue.length : 0;
     return (
-      <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-        <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex items-center gap-3 shrink-0">
-          <h1 className="text-sm font-black uppercase tracking-widest mx-auto">
-            Quiz Concluído
-          </h1>
+      <div className="screen-gray">
+        <header className="screen-header justify-center">
+          <h1 className="screen-title">Quiz Concluído</h1>
         </header>
         <main className="flex-1 p-6 flex flex-col justify-center max-w-lg mx-auto w-full">
           <div className="bg-white p-8 rounded-2xl shadow-sm text-center space-y-6">
@@ -324,8 +324,9 @@ export default function StandardWordsQuizScreen({
             </div>
 
             <button
+              type="button"
               onClick={() => onBack(accuracy)}
-              className="w-full py-4 bg-indigo-600 text-white font-bold rounded-xl uppercase tracking-widest text-xs"
+              className="btn btn-primary"
             >
               Continuar
             </button>
@@ -344,8 +345,8 @@ export default function StandardWordsQuizScreen({
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-      <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex flex-col shrink-0 sticky top-0 z-10 space-y-3">
+    <div className="screen-gray">
+      <header className="screen-header flex-col gap-1 items-stretch">
         <div className="flex items-center gap-3">
           <div className="flex-1 overflow-hidden h-1.5 bg-gray-100 rounded-full">
             <div
@@ -419,8 +420,9 @@ export default function StandardWordsQuizScreen({
         {isAnswered && (
           <div className="pt-8">
             <button
+              type="button"
               onClick={handleNext}
-              className="w-full py-4 bg-indigo-600 text-white font-bold uppercase tracking-widest rounded-xl text-xs flex items-center justify-center gap-2 transition-all hover:bg-indigo-700 shadow-md"
+              className="btn btn-primary flex items-center justify-center gap-2"
             >
               {currentIndex + 1 >= queue.length
                 ? "Finalizar Quiz"

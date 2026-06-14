@@ -77,17 +77,17 @@ export default function WordSentencesQuizScreen({
 
   if (!isActive && !isFinished) {
     return (
-      <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-        <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex items-center gap-3">
+      <div className="screen-gray">
+        <header className="screen-header">
           <button
+            type="button"
             onClick={onBack}
-            className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
+            className="btn-back"
+            aria-label="Voltar"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <h1 className="text-sm font-black uppercase tracking-widest">
-            Quiz de Frases Relacionadas
-          </h1>
+          <h1 className="screen-title">Quiz de Frases Relacionadas</h1>
         </header>
         <main className="flex-1 p-6 flex flex-col justify-center max-w-lg mx-auto w-full">
           <div className="bg-white p-8 rounded-2xl shadow-sm text-center space-y-6">
@@ -114,8 +114,9 @@ export default function WordSentencesQuizScreen({
             </div>
 
             <button
+              type="button"
               onClick={handleStart}
-              className="w-full py-4 bg-indigo-600 font-bold text-white rounded-xl shadow-md uppercase tracking-widest text-xs mt-4"
+              className="btn btn-primary mt-4"
             >
               Começar
             </button>
@@ -127,17 +128,17 @@ export default function WordSentencesQuizScreen({
 
   if (isFinished) {
     return (
-      <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-        <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex items-center gap-3">
+      <div className="screen-gray">
+        <header className="screen-header">
           <button
+            type="button"
             onClick={onBack}
-            className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
+            className="btn-back"
+            aria-label="Voltar"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <h1 className="text-sm font-black uppercase tracking-widest">
-            Quiz Concluído
-          </h1>
+          <h1 className="screen-title">Quiz Concluído</h1>
         </header>
         <main className="flex-1 p-6 flex flex-col justify-center max-w-lg mx-auto w-full">
           <div className="bg-white p-8 rounded-2xl shadow-sm text-center space-y-6">
@@ -201,12 +202,14 @@ export default function WordSentencesQuizScreen({
   const optionsText = shuffleArray([correctText, ...distractors]);
 
   return (
-    <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-      <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex flex-col shrink-0 sticky top-0 z-10 space-y-3">
+    <div className="screen-gray">
+      <header className="screen-header flex-col gap-2 items-stretch">
         <div className="flex items-center gap-3">
           <button
+            type="button"
             onClick={onBack}
-            className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
+            className="btn-back"
+            aria-label="Voltar"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -271,8 +274,9 @@ export default function WordSentencesQuizScreen({
         {isAnswered && (
           <div className="pt-8">
             <button
+              type="button"
               onClick={handleNext}
-              className="w-full py-4 bg-indigo-600 text-white font-bold uppercase tracking-widest rounded-xl text-xs flex items-center justify-center gap-2 transition-all hover:bg-indigo-700 shadow-md"
+              className="btn btn-primary flex items-center justify-center gap-2"
             >
               {currentIndex + 1 >= queue.length
                 ? "Finalizar Quiz"

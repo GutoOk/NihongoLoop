@@ -22,77 +22,85 @@ export default function StudySourceSelectorScreen({
   }, []);
 
   return (
-    <div className="flex flex-col h-full bg-white text-[#1D1D1F]">
-      <header className="px-4 py-4 border-b border-[#E5E5E7] flex items-center gap-3 shrink-0">
+    <div className="screen">
+      <header className="screen-header">
         <button
+          type="button"
           onClick={onBack}
-          className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
+          className="btn-back"
+          aria-label="Voltar"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="text-sm font-black uppercase tracking-widest text-[#1D1D1F]">
-          Estudar
-        </h1>
+        <h1 className="screen-title">Estudar</h1>
       </header>
 
       <main className="flex-1 overflow-auto p-6 space-y-6">
+        {/* Standard study */}
         <div className="space-y-4">
-          <div className="text-center space-y-2 mb-8">
-            <h2 className="text-2xl font-black text-gray-900">Estudo Padrão</h2>
-            <p className="text-sm text-gray-500">
+          <div className="text-center space-y-1.5 mb-6">
+            <h2 className="text-lg font-black text-[#1D1D1F]">Estudo Padrão</h2>
+            <p className="text-xs text-[#86868B] leading-relaxed max-w-xs mx-auto">
               O sistema guia você fonte por fonte, de 10 em 10 frases,
               garantindo a fixação do vocabulário através de flashcards gerados
               automaticamente.
             </p>
           </div>
 
-          <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider block">
-            Escolha uma Fonte para Estudar
-          </label>
-          <select
-            value={selectedSource}
-            onChange={(e) => setSelectedSource(e.target.value)}
-            className="w-full p-4 bg-[#F5F5F7] border border-[#E5E5E7] rounded-2xl text-sm font-bold outline-none text-slate-800"
-          >
-            <option value="">Selecione uma fonte...</option>
-            {sources.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title || "Fonte sem título"}
-              </option>
-            ))}
-          </select>
+          <div className="space-y-1.5">
+            <label className="field-label">Escolha uma Fonte para Estudar</label>
+            <select
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value)}
+              className="form-select"
+            >
+              <option value="">Selecione uma fonte…</option>
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title || "Fonte sem título"}
+                </option>
+              ))}
+            </select>
+          </div>
 
           <div className="flex flex-col gap-3">
             <button
+              type="button"
               onClick={() => onStartStandard(selectedSource, "sentences")}
               disabled={!selectedSource}
-              className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 focus:ring-4 ring-indigo-500/20 text-white font-bold rounded-2xl flex items-center justify-center gap-2 uppercase text-[11px] tracking-wider transition-all disabled:opacity-50"
+              className="btn btn-primary"
             >
-              <Play className="w-4 h-4 fill-current" /> Frases (Pt→Jp) + Quiz
+              <Play className="w-4 h-4 fill-current" />
+              Frases (Pt→Jp) + Quiz
             </button>
             <button
+              type="button"
               onClick={() => onStartStandard(selectedSource, "words")}
               disabled={!selectedSource}
-              className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 focus:ring-4 ring-emerald-500/20 text-white font-bold rounded-2xl flex items-center justify-center gap-2 uppercase text-[11px] tracking-wider transition-all disabled:opacity-50"
+              className="btn bg-emerald-600 hover:bg-emerald-700 text-white"
             >
-              <BookOpen className="w-4 h-4 fill-current" /> Palavras (Pt→Jp) + Quiz Rev.
+              <BookOpen className="w-4 h-4 fill-current" />
+              Palavras (Pt→Jp) + Quiz
             </button>
           </div>
         </div>
 
-        <div className="pt-8 mt-8 border-t border-gray-100">
-          <div className="text-center space-y-2 mb-6">
-            <h2 className="text-xl font-bold text-gray-900">Modo Livre</h2>
-            <p className="text-xs text-gray-500">
-              Crie uma sessão de estudos personalizada escolhendo o que estudar
-              e o modo de reprodução. Sem quizzes.
+        {/* Free mode */}
+        <div className="pt-6 border-t border-[#E5E5E7] space-y-4">
+          <div className="text-center space-y-1.5">
+            <h2 className="text-base font-bold text-[#1D1D1F]">Modo Livre</h2>
+            <p className="text-xs text-[#86868B] leading-relaxed max-w-xs mx-auto">
+              Crie uma sessão personalizada escolhendo o que estudar e o modo de
+              reprodução. Sem quizzes.
             </p>
           </div>
           <button
+            type="button"
             onClick={onStartCustom}
-            className="w-full py-4 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-2xl flex items-center justify-center gap-2 uppercase text-[11px] tracking-wider transition-all"
+            className="btn btn-secondary"
           >
-            <Settings2 className="w-4 h-4" /> Estudo Personalizado
+            <Settings2 className="w-4 h-4" />
+            Estudo Personalizado
           </button>
         </div>
       </main>

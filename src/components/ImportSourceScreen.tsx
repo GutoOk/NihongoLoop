@@ -156,7 +156,7 @@ export default function ImportSourceScreen({
       onImportComplete(source.id);
     } catch (err: any) {
       if (err.message === "Canceled") {
-        if ((import.meta as any).env?.DEV) {
+        if (import.meta.env.DEV) {
           console.log("Importação cancelada.");
         }
         setProgressMsg("Limpando registros...");
@@ -196,11 +196,9 @@ export default function ImportSourceScreen({
 
   if (isProcessing) {
     return (
-      <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-        <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex items-center shrink-0">
-          <h1 className="text-sm font-black uppercase tracking-widest text-[#1D1D1F]">
-            Status de Importação
-          </h1>
+      <div className="screen-gray">
+        <header className="screen-header">
+          <h1 className="screen-title">Status de Importação</h1>
         </header>
 
         <main className="flex-1 flex flex-col justify-center items-center p-6 space-y-8 max-w-md mx-auto">
@@ -293,51 +291,49 @@ export default function ImportSourceScreen({
   }
 
   return (
-    <div className="flex flex-col h-full bg-white text-[#1D1D1F]">
-      <header className="px-4 py-4 border-b border-[#E5E5E7] flex items-center gap-3 shrink-0">
+    <div className="screen">
+      <header className="screen-header">
         <button
+          type="button"
           onClick={onBack}
           disabled={isProcessing}
-          className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors disabled:opacity-50"
+          className="btn-back disabled:opacity-50"
+          aria-label="Voltar"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="text-sm font-black uppercase tracking-widest text-[#1D1D1F]">
-          Importar Fonte
-        </h1>
+        <h1 className="screen-title">Importar Fonte</h1>
       </header>
 
-      <main className="flex-1 overflow-auto p-6 space-y-6 relative">
+      <main className="flex-1 overflow-auto p-6 space-y-6">
         <div className="space-y-1.5">
-          <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider">
-            Título da Fonte
-          </label>
+          <label className="field-label">Título da Fonte</label>
           <input
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             disabled={isProcessing}
-            placeholder="Ex: Diálogo 01, Episódio 5..."
-            className="w-full p-3 bg-[#F5F5F7] border border-[#E5E5E7] rounded-xl text-sm focus:border-indigo-500 outline-none disabled:opacity-50"
+            placeholder="Ex: Diálogo 01, Episódio 5…"
+            className="form-input disabled:opacity-50"
           />
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider">
-            Tipo de Conteúdo
-          </label>
+          <label className="field-label">Tipo de Conteúdo</label>
           <div className="flex gap-2">
             <button
+              type="button"
               onClick={() => setType("text")}
               disabled={isProcessing}
-              className={`flex-1 py-3 text-xs font-bold rounded-xl border flex items-center justify-center gap-2 transition-all disabled:opacity-50 ${type === "text" ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-[#E5E5E7] text-[#86868B]"}`}
+              className={`flex-1 py-3 text-xs font-bold rounded-xl border flex items-center justify-center gap-2 transition-all disabled:opacity-50 ${type === "text" ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-[#E5E5E7] text-[#86868B] hover:border-[#1D1D1F]"}`}
             >
               <FileText className="w-4 h-4" /> Texto Puro
             </button>
             <button
+              type="button"
               onClick={() => setType("srt")}
               disabled={isProcessing}
-              className={`flex-1 py-3 text-xs font-bold rounded-xl border flex items-center justify-center gap-2 transition-all disabled:opacity-50 ${type === "srt" ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-[#E5E5E7] text-[#86868B]"}`}
+              className={`flex-1 py-3 text-xs font-bold rounded-xl border flex items-center justify-center gap-2 transition-all disabled:opacity-50 ${type === "srt" ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-[#E5E5E7] text-[#86868B] hover:border-[#1D1D1F]"}`}
             >
               <Upload className="w-4 h-4" /> Legendas (SRT)
             </button>
@@ -345,27 +341,26 @@ export default function ImportSourceScreen({
         </div>
 
         <div className="space-y-1.5 flex-1 flex flex-col min-h-[250px]">
-          <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider">
-            Conteúdo (Cole o texto ou legenda)
-          </label>
+          <label className="field-label">Conteúdo (Cole o texto ou legenda)</label>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             disabled={isProcessing}
-            className="w-full flex-1 min-h-[200px] p-3 bg-[#F5F5F7] border border-[#E5E5E7] rounded-xl text-sm focus:border-indigo-500 outline-none resize-none font-mono disabled:opacity-50"
+            className="form-input flex-1 min-h-[200px] resize-none font-mono disabled:opacity-50"
             placeholder={
               type === "srt"
                 ? "1\n00:00:01,000 --> 00:00:04,000\n[Exemplo]"
-                : "Japonês aqui..."
+                : "Japonês aqui…"
             }
           />
         </div>
 
         {!isProcessing && (
           <button
+            type="button"
             onClick={handleImport}
             disabled={!title.trim() || !content.trim()}
-            className="w-full py-4 bg-indigo-600 hover:bg-slate-900 focus:ring-4 ring-indigo-500/20 text-white font-bold rounded-xl flex items-center justify-center gap-2 uppercase text-[11px] tracking-wider transition-all disabled:opacity-50"
+            className="btn btn-primary"
           >
             <Check className="w-4 h-4" /> Importar e Fatiar Frases
           </button>

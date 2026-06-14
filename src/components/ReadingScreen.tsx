@@ -105,13 +105,13 @@ const TERM_COLORS: Record<
   tempo: {
     name: "Tempo",
     text: "text-blue-700",
-    bg: "bg-blue-50 border border-blue-200 hover:bg-blue-105",
+    bg: "bg-blue-50 border border-blue-200 hover:bg-blue-100",
     border: "border-blue-200",
   },
   lugar: {
     name: "Lugar",
     text: "text-yellow-700",
-    bg: "bg-yellow-50 border border-yellow-200 hover:bg-yellow-105",
+    bg: "bg-yellow-50 border border-yellow-200 hover:bg-yellow-100",
     border: "border-yellow-200",
   },
   outro: {
@@ -266,7 +266,7 @@ export default function ReadingScreen({
       const src = await SourceRepository.getById(sourceId);
       if (src) setSource(src);
 
-      const sents = await SentenceRepository.getBySource(sourceId);
+      const sents = await SentenceRepository.getBySourceId(sourceId);
       setSentences(sents);
 
       const pMap: Record<string, SentenceProgress | null> = {};
@@ -455,9 +455,12 @@ export default function ReadingScreen({
   };
 
   const loadMore = () => {
-    if (visibleCount < sentences.length) {
-      setVisibleCount((prev) => Math.min(prev + 25, sentences.length));
-    }
+    setVisibleCount((prev) => {
+      if (prev < sentences.length) {
+        return Math.min(prev + 25, sentences.length);
+      }
+      return prev;
+    });
   };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -467,6 +470,10 @@ export default function ReadingScreen({
     }
   };
 
+  // Use a stable ref so the event listener doesn't need to be re-registered on every state change
+  const loadMoreRef = React.useRef(loadMore);
+  loadMoreRef.current = loadMore;
+
   useEffect(() => {
     const handleWindowScroll = () => {
       const scrollHeight = document.documentElement.scrollHeight;
@@ -474,7 +481,7 @@ export default function ReadingScreen({
       const clientHeight = window.innerHeight;
       
       if (scrollHeight - scrollTop - clientHeight < 300) {
-        loadMore();
+        loadMoreRef.current();
       }
     };
 
@@ -482,7 +489,8 @@ export default function ReadingScreen({
     return () => {
       window.removeEventListener("scroll", handleWindowScroll);
     };
-  }, [visibleCount, sentences.length]);
+  }, []); // Empty deps: listener registered once and uses stable ref internally
+
 
   if (loading) {
     return (
@@ -497,45 +505,46 @@ export default function ReadingScreen({
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-      <header className="px-4 py-4 bg-white border-b border-[#E5E5E7] flex flex-col shrink-0 sticky top-0 z-10 shadow-sm">
-        <div className="flex items-center justify-between mb-2">
+    <div className="screen-gray">
+      <header className="screen-header flex-col gap-2 items-stretch">
+        <div className="flex items-center justify-between">
           <button
+            type="button"
             onClick={onBack}
-            className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors flex items-center gap-1 text-sm font-semibold"
+            className="btn-back"
+            aria-label="Voltar"
           >
-            <ArrowLeft className="w-5 h-5" /> Voltar
+            <ArrowLeft className="w-5 h-5" />
           </button>
-          <div className="flex gap-1.5 overflow-x-auto pb-1 items-center max-w-[280px]">
+          <div className="flex gap-1.5 items-center">
             <button
+              type="button"
               onClick={() => setShowPrep(!showPrep)}
-              className={`flex-none px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all whitespace-nowrap flex items-center gap-1 shadow-sm border ${showPrep ? "bg-indigo-50 text-indigo-700 border-indigo-200" : "bg-indigo-600 hover:bg-indigo-700 text-white border-transparent"}`}
+              className={`flex-none px-3 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all whitespace-nowrap flex items-center gap-1 border ${showPrep ? "bg-indigo-50 text-indigo-700 border-indigo-200" : "bg-indigo-600 hover:bg-indigo-700 text-white border-transparent"}`}
             >
-              <Sparkles
-                className={`w-3 h-3 ${showPrep ? "text-indigo-600" : "text-white"}`}
-              />
-              {showPrep ? "Ocultar Inteligência" : "Preparar tudo com IA"}
+              <Sparkles className={`w-3 h-3 ${showPrep ? "text-indigo-600" : "text-white"}`} />
+              {showPrep ? "Ocultar IA" : "Preparar com IA"}
             </button>
             <button
+              type="button"
               onClick={handleExportCSV}
-              className="flex-none bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all hover:bg-gray-200 whitespace-nowrap"
+              className="flex-none bg-[#F5F5F7] text-[#86868B] px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase transition-all hover:bg-[#EBEBED] whitespace-nowrap"
             >
-              Exportar CSV
+              CSV
             </button>
           </div>
         </div>
-        <h1 className="text-sm font-black uppercase tracking-widest text-[#1D1D1F] mb-1">
-          {source.title}
-        </h1>
-        <div className="flex justify-between items-center text-[10px] text-gray-500 font-mono">
-          <span>Modo de Leitura • {sentences.length} frases</span>
+        <div className="flex justify-between items-center">
+          <h1 className="screen-title">{source.title}</h1>
           <button
+            type="button"
             onClick={() => setShowLegendModal(true)}
-            className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 px-2.5 py-1 rounded-lg font-bold uppercase transition-colors"
+            className="flex items-center gap-1 text-[#86868B] text-[10px] font-bold uppercase hover:text-[#1D1D1F] transition-colors"
           >
-            <Info className="w-3.5 h-3.5" /> Legenda de Cores
+            <Info className="w-3.5 h-3.5" /> Cores
           </button>
         </div>
+        <p className="text-[10px] text-[#86868B] font-mono">{sentences.length} frases</p>
       </header>
 
       {selectedIds.size > 0 && (
@@ -831,7 +840,7 @@ export default function ReadingScreen({
                       setActiveTermHover(null);
                     }
                   }}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black py-3.5 rounded-xl uppercase tracking-widest transition-all shadow-md active:scale-98 flex items-center justify-center gap-2"
+                  className="btn btn-primary flex items-center justify-center gap-2"
                 >
                   <BookOpen className="w-4 h-4 text-white" />
                   <span>Ver Ficha Completa</span>

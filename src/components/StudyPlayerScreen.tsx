@@ -260,7 +260,7 @@ export default function StudyPlayerScreen({
     ctx.fillStyle = "#FFFFFF";
     ctx.font = "bold 11px system-ui, sans-serif";
     ctx.fillText(
-      isPlaying ? "● TOCANDO AUTOMÁTICO • SESSÃO DE ESTHDO ATIVA" : "■ SESSÃO PAUSADA (CLIQUE PLAY PARA CONTINUAR)",
+      isPlaying ? "● TOCANDO AUTOMÁTICO • SESSÃO DE ESTUDO ATIVA" : "■ SESSÃO PAUSADA (CLIQUE PLAY PARA CONTINUAR)",
       canvas.width / 2,
       canvas.height - 26
     );

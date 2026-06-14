@@ -171,22 +171,19 @@ export default function DictionaryEntryScreen({
       : [];
 
   return (
-    <div className="flex flex-col h-full bg-[#F5F5F7] text-[#1D1D1F]">
-      <header className="px-4 py-4 border-b border-[#E5E5E7] flex flex-col shrink-0 sticky top-0 bg-white z-10 shadow-sm">
-        <div className="flex items-center justify-between">
-          <button
-            onClick={onBack}
-            className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors flex items-center gap-1 text-sm font-semibold"
-          >
-            <ArrowLeft className="w-5 h-5" /> Voltar
-          </button>
-          <div className="flex items-center gap-1.5">
-            <Bookmark className="w-4 h-4 text-indigo-500" />
-            <span className="text-xs font-black text-slate-800 uppercase tracking-widest">
-              Ficha de Vocabulário
-            </span>
-          </div>
-        </div>
+    <div className="screen-gray">
+      <header className="screen-header justify-between">
+        <button
+          type="button"
+          onClick={onBack}
+          className="btn-back"
+          aria-label="Voltar"
+        >
+          <ArrowLeft className="w-5 h-5" />
+        </button>
+        <h1 className="screen-title flex items-center gap-1.5">
+          <Bookmark className="w-4 h-4 text-indigo-500" /> Ficha de Vocabulário
+        </h1>
       </header>
 
       <main className="flex-1 overflow-auto p-4 md:p-6 space-y-6 max-w-2xl mx-auto w-full pb-20">
@@ -653,15 +650,16 @@ export default function DictionaryEntryScreen({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <button
+              type="button"
               onClick={onStudyContext}
-              className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest transition-all active:scale-97 shadow-md"
+              className="btn btn-primary flex items-center justify-center gap-2"
             >
               <Play className="w-4 h-4 fill-current text-white" />
               <span>Estudar Frases (Repetição)</span>
             </button>
             <button
               onClick={() => setShowSentencesQuiz(true)}
-              className="w-full py-4 bg-emerald-600 hover:bg-emerald-505 text-white hover:bg-emerald-500 text-xs font-black uppercase tracking-widest rounded-2xl flex items-center justify-center gap-2 transition-all active:scale-97 shadow-sm"
+              className="btn bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-2"
             >
               <BrainCircuit className="w-4 h-4" />
               <span>Quiz das Frases Relacionadas</span>

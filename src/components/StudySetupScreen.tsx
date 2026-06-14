@@ -65,23 +65,23 @@ export default function StudySetupScreen({
   };
 
   return (
-    <div className="flex flex-col h-full bg-white text-[#1D1D1F]">
-      <header className="px-4 py-4 border-b border-[#E5E5E7] flex items-center gap-3 shrink-0">
+    <div className="screen">
+      <header className="screen-header">
         <button
+          type="button"
           onClick={onBack}
-          className="p-2 -ml-2 text-[#86868B] hover:text-[#1D1D1F] transition-colors"
+          className="btn-back"
+          aria-label="Voltar"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
-        <h1 className="text-sm font-black uppercase tracking-widest text-[#1D1D1F]">
-          Configurar Sessão
-        </h1>
+        <h1 className="screen-title">Configurar Sessão</h1>
       </header>
 
       <main className="flex-1 overflow-auto p-6 space-y-6">
         {/* O que estudar: Frases ou Palavras */}
         <div className="space-y-2">
-          <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider">
+          <label className="field-label">
             Modo de Entidade
           </label>
           <div className="flex bg-[#F5F5F7] p-1 rounded-xl gap-1">
@@ -108,7 +108,7 @@ export default function StudySetupScreen({
 
         {/* Filtros */}
         <div className="space-y-2">
-          <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider">
+          <label className="field-label">
             Filtro de Conteúdo
           </label>
 
@@ -251,7 +251,7 @@ export default function StudySetupScreen({
 
         {/* Quantidade */}
         <div className="space-y-2">
-          <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider">
+          <label className="field-label">
             Quantidade
           </label>
           <div className="grid grid-cols-4 gap-2">
@@ -269,7 +269,7 @@ export default function StudySetupScreen({
 
         {/* Ordem */}
         <div className="space-y-2">
-          <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider">
+          <label className="field-label">
             Ordem
           </label>
           <div className="grid grid-cols-2 gap-2">
@@ -290,7 +290,7 @@ export default function StudySetupScreen({
 
         {/* Modo */}
         <div className="space-y-2">
-          <label className="text-[10px] font-bold text-[#86868B] uppercase tracking-wider">
+          <label className="field-label">
             Modo de Estudo / Áudio
           </label>
           <div className="grid grid-cols-1 gap-2">
@@ -320,7 +320,7 @@ export default function StudySetupScreen({
             (targetType === "source" && !selectedSource) ||
             (entityType === "word_context" && !selectedWordId)
           }
-          className="w-full py-4 bg-slate-900 hover:bg-black focus:ring-4 ring-slate-500/20 text-white font-bold rounded-xl flex items-center justify-center gap-2 uppercase text-[11px] tracking-wider transition-all disabled:opacity-50"
+          className="btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
         >
           <Play className="w-4 h-4 fill-current" /> Iniciar Sessão
         </button>
