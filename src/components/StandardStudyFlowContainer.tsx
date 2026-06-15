@@ -3,12 +3,13 @@ import StudyPlayerScreen from "./StudyPlayerScreen";
 import StandardWordsQuizScreen from "./StandardWordsQuizScreen";
 import { SentenceRepository, TermRepository, StudySessionRepository } from "../repositories";
 import { Sentence, SentenceTerm } from "../types";
+import { AppNavigate } from "../navigation";
 
 interface StandardStudyFlowContainerProps {
   sourceId: string;
   mode?: "sentences" | "words";
   onBack: () => void;
-  onNavigate: (screen: string, params?: any) => void;
+  onNavigate: AppNavigate;
 }
 
 export default function StandardStudyFlowContainer({

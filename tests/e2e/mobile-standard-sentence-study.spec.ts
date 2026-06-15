@@ -10,7 +10,9 @@ test.describe('Mobile Standard Study Flow', () => {
     // Inject the E2E bypass flag securely for the test environment before the page loads
     await page.addInitScript(() => {
       window.localStorage.setItem("VITE_E2E_AUTH_BYPASS", "true");
+      window.localStorage.setItem("VITE_E2E_DATA_MOCK", "true");
       (window as any).__E2E_TEST_BYPASS__ = true;
+      (window as any).__E2E_DATA_MOCK__ = true;
     });
   });
 
@@ -19,7 +21,8 @@ test.describe('Mobile Standard Study Flow', () => {
     await page.goto('/');
     
     // Click to render study sources setup
-    await page.getByText('Estudar').first().click();
+    await page.getByRole('button', { name: /Estudar Sessões de repetição/i }).click();
+    await expect(page.locator('select').first()).toBeVisible();
 
     // Select the "Fonte de Teste E2E" source option in the dropdown list
     await page.locator('select').first().selectOption({ label: 'Fonte de Teste E2E' });

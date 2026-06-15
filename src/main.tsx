@@ -4,6 +4,8 @@ import App from './App.tsx';
 import './index.css';
 import { ModalProvider } from './components/ModalProvider.tsx';
 
+declare const __BUILD_VERSION__: string;
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ModalProvider>
@@ -24,7 +26,7 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
     });
   } else {
     window.addEventListener('load', () => {
-      navigator.serviceWorker.register('/sw.js')
+      navigator.serviceWorker.register(`/sw.js?v=${encodeURIComponent(__BUILD_VERSION__)}`)
         .then((reg) => {
           console.log('Service Worker registered with scope:', reg.scope);
         })
@@ -34,4 +36,3 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
     });
   }
 }
-

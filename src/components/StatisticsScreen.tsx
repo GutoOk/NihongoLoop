@@ -16,10 +16,11 @@ import {
 } from "../repositories";
 import { supabase, isSupabaseConfigured } from "../core/supabaseClient";
 import { AuthService } from "../core/authService";
+import { AppNavigate, NavigationParams, ScreenType } from "../navigation";
 
 interface StatisticsScreenProps {
   onBack: () => void;
-  onNavigate?: (screen: string, params: any) => void;
+  onNavigate?: AppNavigate;
 }
 
 export default function StatisticsScreen({
@@ -191,7 +192,7 @@ export default function StatisticsScreen({
     setLoading(false);
   };
 
-  const handleNavigate = (screen: string, params: any) => {
+  const handleNavigate = (screen: ScreenType, params?: NavigationParams) => {
     if (onNavigate) onNavigate(screen, params);
   };
 

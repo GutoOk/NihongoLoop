@@ -6,6 +6,9 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    define: {
+      __BUILD_VERSION__: JSON.stringify(process.env.VITE_APP_VERSION || Date.now().toString()),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
@@ -26,8 +29,7 @@ export default defineConfig(() => {
         output: {
           manualChunks: {
             vendor: ['react', 'react-dom'],
-            icons: ['lucide-react'],
-            motion: ['motion/react']
+            icons: ['lucide-react']
           }
         }
       }

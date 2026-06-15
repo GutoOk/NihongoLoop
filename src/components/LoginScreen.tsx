@@ -1,5 +1,4 @@
 import React, { useState } from "react";
-import { motion } from "motion/react";
 import { Lock, Mail, Eye, EyeOff, UserPlus, LogIn } from "lucide-react";
 import { supabase, isSupabaseConfigured } from "../core/supabaseClient";
 
@@ -60,11 +59,7 @@ export default function LoginScreen() {
 
   return (
     <div className="min-h-screen bg-[#F0F0F3] flex flex-col items-center justify-center p-6 text-[#1D1D1F]">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-8"
-      >
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
         <div className="flex justify-center mb-6">
           <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center shadow-sm text-white">
             {isSignUp ? <UserPlus className="w-8 h-8" /> : <LogIn className="w-8 h-8" />}
@@ -166,7 +161,7 @@ export default function LoginScreen() {
             {isSignUp ? "Já tem uma conta? Faça login" : "Não tem conta? Cadastre-se gratuitamente"}
           </button>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }
