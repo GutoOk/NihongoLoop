@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Sparkles,
   Loader2,
@@ -19,13 +19,13 @@ import { PreparationOptions } from "../features/ai/SourcePreparationService";
 import { ProcessingRunner } from "../features/ai/ProcessingRunner";
 import {
   ProcessingRunRepository,
-  SentenceRepository,
-  DictionaryRepository,
-  TermRepository,
   AiJobRepository,
+  SourcePreparationRepository,
+  SourcePreparationStats,
 } from "../repositories";
 import { ProcessingRun, AiJob } from "../types";
 import { useModal } from "./ModalProvider";
+import { countJobsByStatus, getJobHumanName } from "./sourcePreparation/jobDisplay";
 
 interface SourcePreparationPanelProps {
   sourceId: string;
@@ -49,9 +49,11 @@ export default function SourcePreparationPanel({
   });
   const [showOptions, setShowOptions] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<SourcePreparationStats | null>(null);
   const [jobs, setJobs] = useState<AiJob[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { showAlert, showConfirm: showModalConfirm } = useModal();
+  const loadRunInFlightRef = useRef(false);
 
   useEffect(() => {
     loadRun();
@@ -60,64 +62,32 @@ export default function SourcePreparationPanel({
   }, [sourceId]);
 
   const loadRun = async () => {
-    setLocalRunnerActive(ProcessingRunner.isRunning);
-    const active = await ProcessingRunRepository.getActiveRun(sourceId);
-    if (active) {
-      setRun(active);
-    } else {
-      const latest = await ProcessingRunRepository.getLatestRunBySource(sourceId);
-      setRun(latest);
+    if (loadRunInFlightRef.current) return;
+    loadRunInFlightRef.current = true;
+    try {
+      setLocalRunnerActive(ProcessingRunner.isRunning);
+      const [active, targetJobs, nextStats] = await Promise.all([
+        ProcessingRunRepository.getActiveRun(sourceId),
+        AiJobRepository.getByTarget(sourceId),
+        SourcePreparationRepository.getStats(sourceId),
+      ]);
+
+      if (active) {
+        setRun(active);
+      } else {
+        const latest = await ProcessingRunRepository.getLatestRunBySource(sourceId);
+        setRun(latest);
+      }
+
+      setJobs(targetJobs);
+      setStats(nextStats);
+      setLoadError(null);
+    } catch (e: any) {
+      console.error("Falha ao atualizar painel de preparação:", e);
+      setLoadError(e?.message || "Não foi possível atualizar o status da preparação.");
+    } finally {
+      loadRunInFlightRef.current = false;
     }
-
-    // Always load jobs in real-time
-    const allJobs = await AiJobRepository.getAll();
-    const targetJobs = allJobs.filter((j) => j.target_id === sourceId);
-    setJobs(targetJobs);
-
-    // Compute stats
-    const sentences = await SentenceRepository.getBySourceId(sourceId);
-    const withTrans = sentences.filter((s) => !!s.portuguese).length;
-    const withReading = sentences.filter((s) => !!s.kana && !!s.romaji).length;
-
-    const allTerms = await TermRepository.getBySentences(
-      sentences.map((s) => s.id),
-    );
-    const termCountBySentId: Record<string, number> = {};
-    for (const t of allTerms) {
-      termCountBySentId[t.sentence_id] =
-        (termCountBySentId[t.sentence_id] || 0) + 1;
-    }
-    const withTerms = sentences.filter(
-      (s) => (termCountBySentId[s.id] || 0) > 0,
-    ).length;
-
-    const dictIds = new Set(
-      allTerms.map((t) => t.dictionary_entry_id).filter(Boolean),
-    );
-    let dictPending = 0;
-    if (dictIds.size > 0) {
-      const entries = await DictionaryRepository.getByIds(
-        Array.from(dictIds) as string[],
-      );
-      dictPending = entries.filter(
-        (e) =>
-          e.status === "pending" &&
-          (!e.main_meaning ||
-            !e.kana ||
-            !e.romaji ||
-            !e.type ||
-            !Array.isArray(e.meanings) ||
-            e.meanings.length === 0),
-      ).length;
-    }
-
-    setStats({
-      sTotal: sentences.length,
-      sNoTrans: sentences.length - withTrans,
-      sNoRead: sentences.length - withReading,
-      sNoTerms: sentences.length - withTerms,
-      dictPending: dictPending,
-    });
   };
 
   const handleStartIsolated = async (
@@ -228,26 +198,15 @@ export default function SourcePreparationPanel({
     }
   };
 
-  const getJobHumanName = (type: string) => {
-    if (type === "batch_translate_sentences") return "Tradução de Frases";
-    if (type === "batch_analyze_sentences")
-      return "Análise & Geração de Leitura/Furigana";
-    if (type.includes("dictionary_entries_fast"))
-      return "Dicionário (Modo Rápido)";
-    if (type.includes("dictionary_entries_full"))
-      return "Dicionário (Modo Completo)";
-    return type;
-  };
-
   const isRunning = run?.status === "pending" || run?.status === "running";
 
   // Queue summary stats
-  const pendingJobsCount = jobs.filter((j) => j.status === "pending").length;
-  const runningJobsCount = jobs.filter((j) => j.status === "running").length;
-  const errorJobsCount = jobs.filter((j) => j.status === "error").length;
-  const completedJobsCount = jobs.filter(
-    (j) => j.status === "completed",
-  ).length;
+  const {
+    pending: pendingJobsCount,
+    running: runningJobsCount,
+    error: errorJobsCount,
+    completed: completedJobsCount,
+  } = countJobsByStatus(jobs);
 
   return (
     <div className="bg-white border-b border-[#E5E5E7] p-6 flex flex-col items-center">
@@ -294,6 +253,15 @@ export default function SourcePreparationPanel({
             ajustar os filtros e retentar pontualmente pelo painel abaixo.
           </div>
         </div>
+
+        {loadError && (
+          <div className="mb-6 p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-2 text-xs text-amber-900">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <strong>Atualização automática instável:</strong> {loadError}
+            </div>
+          </div>
+        )}
 
         {/* Options box */}
         {showOptions && !isRunning && (

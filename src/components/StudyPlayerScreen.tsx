@@ -23,94 +23,14 @@ import {
 import { Sentence, DictionaryEntry } from "../types";
 import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // for TTS settings
-
-const TERM_COLORS: Record<
-  string,
-  { name: string; text: string; bg: string; border: string }
-> = {
-  substantivo: {
-    name: "Substantivo",
-    text: "text-indigo-700",
-    bg: "bg-indigo-50 border border-indigo-200 hover:bg-indigo-100",
-    border: "border-indigo-200",
-  },
-  verbo: {
-    name: "Verbo",
-    text: "text-amber-700",
-    bg: "bg-amber-50 border border-amber-200 hover:bg-amber-100",
-    border: "border-amber-200",
-  },
-  adjetivo: {
-    name: "Adjetivo",
-    text: "text-rose-700",
-    bg: "bg-rose-50 border border-rose-200 hover:bg-rose-100",
-    border: "border-rose-200",
-  },
-  advérbio: {
-    name: "Advérbio",
-    text: "text-teal-700",
-    bg: "bg-teal-50 border border-teal-200 hover:bg-teal-100",
-    border: "border-teal-200",
-  },
-  partícula: {
-    name: "Partícula",
-    text: "text-emerald-700",
-    bg: "bg-emerald-50 border border-emerald-200 hover:bg-emerald-100",
-    border: "border-emerald-200",
-  },
-  pronome: {
-    name: "Pronome",
-    text: "text-sky-700",
-    bg: "bg-sky-50 border border-sky-200 hover:bg-sky-100",
-    border: "border-sky-200",
-  },
-  expressão: {
-    name: "Expressão",
-    text: "text-purple-700",
-    bg: "bg-purple-50 border border-purple-200 hover:bg-purple-100",
-    border: "border-purple-200",
-  },
-  conector: {
-    name: "Conector",
-    text: "text-cyan-700",
-    bg: "bg-cyan-50 border border-cyan-200 hover:bg-cyan-100",
-    border: "border-cyan-200",
-  },
-  auxiliar: {
-    name: "Auxiliar",
-    text: "text-pink-700",
-    bg: "bg-pink-50 border border-pink-200 hover:bg-pink-100",
-    border: "border-pink-200",
-  },
-  tempo: {
-    name: "Tempo",
-    text: "text-blue-700",
-    bg: "bg-blue-50 border border-blue-200 hover:bg-blue-105",
-    border: "border-blue-200",
-  },
-  lugar: {
-    name: "Lugar",
-    text: "text-yellow-700",
-    bg: "bg-yellow-50 border border-yellow-200 hover:bg-yellow-105",
-    border: "border-yellow-200",
-  },
-  outro: {
-    name: "Outro",
-    text: "text-slate-600",
-    bg: "bg-slate-50 border border-slate-200 hover:bg-slate-100",
-    border: "border-slate-200",
-  },
-};
-
-function getTermColor(type?: string | null) {
-  const t = (type || "outro").toLowerCase().trim();
-  return TERM_COLORS[t] || TERM_COLORS["outro"];
-}
+import { TERM_COLORS, getTermColor } from "../ui/termColors";
+import { AppNavigate } from "../navigation";
+import { drawStudyPipCanvas } from "./studyPlayer/pipCanvas";
 
 interface StudySetupScreenProps {
   config: any;
   onBack: () => void;
-  onNavigate?: (screen: string, params?: any) => void;
+  onNavigate?: AppNavigate;
   onFinishStandardFlow?: (sentenceIds: string[]) => void;
   isFinishingStandardFlow?: boolean;
 }
@@ -245,121 +165,20 @@ export default function StudyPlayerScreen({
   const pipVideoRef = useRef<HTMLVideoElement | null>(null);
   const pipCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const drawWrappedText = (
-    ctx: CanvasRenderingContext2D,
-    text: string,
-    x: number,
-    y: number,
-    maxWidth: number,
-    lineHeight: number
-  ): number => {
-    const isSpaceToken = text.includes(" ");
-    const tokens = isSpaceToken ? text.split(" ") : text.split("");
-    let line = "";
-    let currentY = y;
-    
-    for (let n = 0; n < tokens.length; n++) {
-      const testLine = line + tokens[n] + (isSpaceToken ? " " : "");
-      const metrics = ctx.measureText(testLine);
-      const testWidth = metrics.width;
-      if (testWidth > maxWidth && n > 0) {
-        ctx.fillText(line, x, currentY);
-        line = tokens[n] + (isSpaceToken ? " " : "");
-        currentY += lineHeight;
-      } else {
-        line = testLine;
-      }
-    }
-    ctx.fillText(line, x, currentY);
-    return currentY;
-  };
-
   const drawPipCanvas = () => {
     const canvas = pipCanvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
 
     const currentItem = items[currentIndex];
     if (!currentItem) return;
 
-    ctx.fillStyle = "#1E293B"; // slate-800 border
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.fillStyle = "#0F172A"; // slate-900 background area
-    ctx.fillRect(12, 12, canvas.width - 24, canvas.height - 24);
-
-    // Decorative top bar
-    ctx.fillStyle = "#1E293B";
-    ctx.fillRect(12, 12, canvas.width - 24, 38);
-
-    // App header labels
-    ctx.fillStyle = "#94A3B8";
-    ctx.font = "bold 12px system-ui, sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText("NIHONGO LOOP • PIP STUDY", 26, 36);
-
-    ctx.textAlign = "right";
-    ctx.fillText(`${currentIndex + 1} / ${items.length}`, canvas.width - 26, 36);
-
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#FFFFFF";
-
-    let yPos = 110;
-
-    // Japanese kanji text
-    ctx.font = "bold 28px sans-serif";
-    yPos = drawWrappedText(ctx, currentItem.japanese || "", canvas.width / 2, yPos, canvas.width - 70, 36);
-
-    // Kana pronunciation assistance
-    if (currentItem.kana) {
-      yPos += 26;
-      ctx.fillStyle = "#A78BFA"; // purple violet
-      ctx.font = "bold 15px sans-serif";
-      yPos = drawWrappedText(ctx, currentItem.kana, canvas.width / 2, yPos, canvas.width - 70, 20);
-    }
-
-    // Romaji
-    if (currentItem.romaji) {
-      yPos += 22;
-      ctx.fillStyle = "#94A3B8";
-      ctx.font = "italic 12px system-ui, monospace";
-      yPos = drawWrappedText(ctx, currentItem.romaji.toUpperCase(), canvas.width / 2, yPos, canvas.width - 70, 16);
-    }
-
-    // Divider
-    yPos += 14;
-    ctx.strokeStyle = "#334155";
-    ctx.beginPath();
-    ctx.moveTo(80, yPos);
-    ctx.lineTo(canvas.width - 80, yPos);
-    ctx.stroke();
-
-    // Portuguese translation
-    if (currentItem.portuguese) {
-      yPos += 26;
-      ctx.fillStyle = "#FDE047"; // bright translation yellow
-      ctx.font = "bold 16px system-ui, sans-serif";
-      drawWrappedText(ctx, currentItem.portuguese, canvas.width / 2, yPos, canvas.width - 90, 20);
-    } else {
-      yPos += 22;
-      ctx.fillStyle = "#475569";
-      ctx.font = "italic 12px system-ui, sans-serif";
-      ctx.fillText("Sem tradução disponível", canvas.width / 2, yPos);
-    }
-
-    // Active playing status bar at the bottom
-    ctx.fillStyle = isPlaying ? "#059669" : "#334155";
-    ctx.fillRect(12, canvas.height - 48, canvas.width - 24, 36);
-    
-    ctx.textAlign = "center";
-    ctx.fillStyle = "#FFFFFF";
-    ctx.font = "bold 11px system-ui, sans-serif";
-    ctx.fillText(
-      isPlaying ? "● TOCANDO AUTOMÁTICO • SESSÃO DE ESTUDO ATIVA" : "■ SESSÃO PAUSADA (CLIQUE PLAY PARA CONTINUAR)",
-      canvas.width / 2,
-      canvas.height - 26
-    );
+    drawStudyPipCanvas({
+      canvas,
+      item: currentItem,
+      currentIndex,
+      totalItems: items.length,
+      isPlaying,
+    });
   };
 
   const togglePictureInPicture = async () => {

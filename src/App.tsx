@@ -1,56 +1,74 @@
-import React, { useState, useEffect } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import React, { lazy, Suspense, useState, useEffect } from "react";
 import { Home, PlayCircle, PlusCircle, Layers, Settings } from "lucide-react";
 import { AuthService } from "./core/authService";
 import { supabase, isSupabaseConfigured } from "./core/supabaseClient";
 
-// Component imports
-import HomeScreen from "./components/HomeScreen";
-import SettingsScreen from "./components/SettingsScreen";
-import ImportSourceScreen from "./components/ImportSourceScreen";
-import SourcesScreen from "./components/SourcesScreen";
-import ReadingScreen from "./components/ReadingScreen";
-import StudySetupScreen from "./components/StudySetupScreen";
-import StudySourceSelectorScreen from "./components/StudySourceSelectorScreen";
-import StandardStudyFlowContainer from "./components/StandardStudyFlowContainer";
-import StudyPlayerScreen from "./components/StudyPlayerScreen";
-import DictionaryScreen from "./components/DictionaryScreen";
-import DictionaryEntryScreen from "./components/DictionaryEntryScreen";
-import PendingAiScreen from "./components/PendingAiScreen";
-import StatisticsScreen from "./components/StatisticsScreen";
-import QuizScreen from "./components/QuizScreen";
-import FlashcardScreen from "./components/FlashcardScreen";
 import LoginScreen from "./components/LoginScreen";
 import UnauthorizedScreen from "./components/UnauthorizedScreen";
+import {
+  AppNavigate,
+  NavigationState,
+  ScreenType,
+  createNavigationState,
+} from "./navigation";
 
-type ScreenType =
-  | "home"
-  | "import_source"
-  | "sources"
-  | "reading"
-  | "study"
-  | "standard_study"
-  | "study_setup"
-  | "study_player"
-  | "dictionary"
-  | "dictionary_entry"
-  | "pending_ai"
-  | "statistics"
-  | "quiz"
-  | "flashcards"
-  | "settings";
+const HomeScreen = lazy(() => import("./components/HomeScreen"));
+const SettingsScreen = lazy(() => import("./components/SettingsScreen"));
+const ImportSourceScreen = lazy(() => import("./components/ImportSourceScreen"));
+const SourcesScreen = lazy(() => import("./components/SourcesScreen"));
+const ReadingScreen = lazy(() => import("./components/ReadingScreen"));
+const StudySetupScreen = lazy(() => import("./components/StudySetupScreen"));
+const StudySourceSelectorScreen = lazy(() => import("./components/StudySourceSelectorScreen"));
+const StandardStudyFlowContainer = lazy(() => import("./components/StandardStudyFlowContainer"));
+const StudyPlayerScreen = lazy(() => import("./components/StudyPlayerScreen"));
+const DictionaryScreen = lazy(() => import("./components/DictionaryScreen"));
+const DictionaryEntryScreen = lazy(() => import("./components/DictionaryEntryScreen"));
+const PendingAiScreen = lazy(() => import("./components/PendingAiScreen"));
+const StatisticsScreen = lazy(() => import("./components/StatisticsScreen"));
+const QuizScreen = lazy(() => import("./components/QuizScreen"));
+const FlashcardScreen = lazy(() => import("./components/FlashcardScreen"));
 
-interface NavigationState {
-  screen: ScreenType;
-  params: any;
+function ScreenLoadingFallback() {
+  return (
+    <div className="flex-1 flex items-center justify-center bg-white">
+      <span className="w-6 h-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
 }
+
+const FULLSCREEN_STUDY_SCREENS: ScreenType[] = [
+  "study_player",
+  "standard_study",
+  "quiz",
+  "flashcards",
+];
+
+const MAIN_TAB_SCREENS: ScreenType[] = [
+  "home",
+  "sources",
+  "study",
+  "import_source",
+  "settings",
+];
+
+const BOTTOM_NAV_ITEMS: Array<{
+  screen: ScreenType;
+  label: string;
+  Icon: typeof Home;
+}> = [
+  { screen: "home", label: "Início", Icon: Home },
+  { screen: "sources", label: "Fontes", Icon: Layers },
+  { screen: "study", label: "Estudar", Icon: PlayCircle },
+  { screen: "import_source", label: "Importar", Icon: PlusCircle },
+  { screen: "settings", label: "Config", Icon: Settings },
+];
 
 export default function App() {
   const [session, setSession] = useState<{ user: { id: string } } | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
 
-  const [nav, setNav] = useState<NavigationState>({ screen: "home", params: {} });
+  const [nav, setNav] = useState<NavigationState>({ screen: "home" });
   const [history, setHistory] = useState<NavigationState[]>([]);
 
   const allowAuthBypass =
@@ -100,20 +118,14 @@ export default function App() {
     return () => { subscription.unsubscribe(); };
   }, []);
 
-  const handleNavigate = (screen: ScreenType, params: any = {}) => {
-    const isMainTab = [
-      "home",
-      "sources",
-      "study",
-      "import_source",
-      "settings",
-    ].includes(screen);
+  const handleNavigate: AppNavigate = (screen, ...args) => {
+    const isMainTab = MAIN_TAB_SCREENS.includes(screen);
     if (isMainTab) {
       setHistory([]);
     } else {
       setHistory((prev) => [...prev, nav]);
     }
-    setNav({ screen, params });
+    setNav(createNavigationState(screen, ...args));
   };
 
   const handleGoBack = () => {
@@ -122,7 +134,7 @@ export default function App() {
       setHistory((prevHistory) => prevHistory.slice(0, -1));
       setNav(prev);
     } else {
-      setNav({ screen: "home", params: {} });
+      setNav({ screen: "home" });
     }
   };
 
@@ -162,7 +174,7 @@ export default function App() {
     >
       {/* Device containment frame simulation for desktop and full-fluid flow globally */}
       <div
-        className={`w-full max-w-lg min-h-screen bg-white relative border-x border-[#E5E5E7] flex flex-col justify-stretch overflow-hidden ${!["study_player", "standard_study", "quiz", "flashcards"].includes(nav.screen) ? 'pb-16' : ''}`}
+        className={`w-full max-w-lg min-h-screen bg-white relative border-x border-[#E5E5E7] flex flex-col justify-stretch overflow-hidden ${!FULLSCREEN_STUDY_SCREENS.includes(nav.screen) ? 'pb-16' : ''}`}
       >
         {!isSupabaseConfigured && (
           <div className="bg-amber-100 text-amber-900 px-4 py-2 text-xs font-bold text-center border-b border-amber-200 shrink-0">
@@ -171,38 +183,33 @@ export default function App() {
           </div>
         )}
 
-        <AnimatePresence mode="wait">
-          {/* Main conditional screen outputs */}
-          {nav.screen === "home" && (
-            <motion.div
+        <Suspense fallback={<ScreenLoadingFallback />}>
+          <>
+            {/* Main conditional screen outputs */}
+            {nav.screen === "home" && (
+            <div
               key="home"
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 10 }}
-              transition={{ duration: 0.18, ease: "easeInOut" }}
               className="flex-1 flex flex-col"
             >
               <HomeScreen
-                onNavigate={(screen, params) =>
-                  handleNavigate(screen as ScreenType, params)
-                }
+                onNavigate={handleNavigate}
               />
-            </motion.div>
-          )}
+            </div>
+            )}
 
           {nav.screen === "import_source" && (
-            <motion.div key="import_source" className="flex-1 flex flex-col">
+            <div key="import_source" className="flex-1 flex flex-col">
               <ImportSourceScreen
                 onBack={handleGoBack}
                 onImportComplete={(sourceId) =>
                   handleNavigate("reading", { sourceId })
                 }
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "sources" && (
-            <motion.div key="sources" className="flex-1 flex flex-col">
+            <div key="sources" className="flex-1 flex flex-col">
               <SourcesScreen
                 onBack={handleGoBack}
                 onNavigateImport={() => handleNavigate("import_source")}
@@ -210,23 +217,21 @@ export default function App() {
                   handleNavigate("reading", { sourceId })
                 }
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "reading" && (
-            <motion.div key="reading" className="flex-1 flex flex-col">
+            <div key="reading" className="flex-1 flex flex-col">
               <ReadingScreen
                 sourceId={nav.params.sourceId}
                 onBack={handleGoBack}
-                onNavigate={(screen, params) =>
-                  handleNavigate(screen as ScreenType, params)
-                }
+                onNavigate={handleNavigate}
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "study" && (
-            <motion.div key="study" className="flex-1 flex flex-col">
+            <div key="study" className="flex-1 flex flex-col">
               <StudySourceSelectorScreen
                 onBack={handleGoBack}
                 onStartStandard={(sourceId, mode) =>
@@ -234,54 +239,54 @@ export default function App() {
                 }
                 onStartCustom={() => handleNavigate("study_setup")}
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "standard_study" && (
-            <motion.div key="standard_study" className="flex-1 flex flex-col">
+            <div key="standard_study" className="flex-1 flex flex-col">
               <StandardStudyFlowContainer
                 sourceId={nav.params.sourceId}
                 mode={nav.params.mode}
                 onBack={handleGoBack}
                 onNavigate={handleNavigate}
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "study_setup" && (
-            <motion.div key="study_setup" className="flex-1 flex flex-col">
+            <div key="study_setup" className="flex-1 flex flex-col">
               <StudySetupScreen
                 onBack={handleGoBack}
                 onStartSession={(config) =>
                   handleNavigate("study_player", { config })
                 }
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "study_player" && (
-            <motion.div key="study_player" className="flex-1 flex flex-col">
+            <div key="study_player" className="flex-1 flex flex-col">
               <StudyPlayerScreen
                 config={nav.params.config}
                 onBack={handleGoBack}
                 onNavigate={handleNavigate}
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "dictionary" && (
-            <motion.div key="dictionary" className="flex-1 flex flex-col">
+            <div key="dictionary" className="flex-1 flex flex-col">
               <DictionaryScreen
                 onBack={handleGoBack}
                 onSelectEntry={(entryId) =>
                   handleNavigate("dictionary_entry", { entryId })
                 }
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "dictionary_entry" && (
-            <motion.div key="dictionary_entry" className="flex-1 flex flex-col">
+            <div key="dictionary_entry" className="flex-1 flex flex-col">
               <DictionaryEntryScreen
                 entryId={nav.params.entryId}
                 onBack={handleGoBack}
@@ -317,117 +322,69 @@ export default function App() {
                   })
                 }
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "pending_ai" && (
-            <motion.div key="pending_ai" className="flex-1 flex flex-col">
+            <div key="pending_ai" className="flex-1 flex flex-col">
               <PendingAiScreen onBack={handleGoBack} />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "statistics" && (
-            <motion.div key="statistics" className="flex-1 flex flex-col">
+            <div key="statistics" className="flex-1 flex flex-col">
               <StatisticsScreen
                 onBack={handleGoBack}
-                onNavigate={(screen, params) =>
-                  handleNavigate(screen as ScreenType, params)
-                }
+                onNavigate={handleNavigate}
               />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "quiz" && (
-            <motion.div key="quiz" className="flex-1 flex flex-col">
+            <div key="quiz" className="flex-1 flex flex-col">
               <QuizScreen onBack={handleGoBack} />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "flashcards" && (
-            <motion.div key="flashcards" className="flex-1 flex flex-col">
+            <div key="flashcards" className="flex-1 flex flex-col">
               <FlashcardScreen onBack={handleGoBack} />
-            </motion.div>
+            </div>
           )}
 
           {nav.screen === "settings" && (
-            <motion.div
+            <div
               key="settings"
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-              transition={{ duration: 0.18, ease: "easeInOut" }}
               className="flex-1 flex flex-col"
             >
               <SettingsScreen onBack={handleGoBack} />
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
+          </>
+        </Suspense>
 
         {/* Persistent Bottom Bar */}
-        {!["study_player", "standard_study", "quiz", "flashcards"].includes(nav.screen) && (
+        {!FULLSCREEN_STUDY_SCREENS.includes(nav.screen) && (
           <nav className="absolute bottom-0 inset-x-0 h-16 bg-white border-t border-[#E5E5E7] flex px-2 z-50">
-            <button
-              type="button"
-              onClick={() => handleNavigate("home")}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors ${
-                nav.screen === "home" ? "text-[#1D1D1F]" : "text-[#86868B]"
-              }`}
-            >
-              <Home className="w-4 h-4" />
-              <span className="text-[9px] font-bold uppercase tracking-widest">
-                Início
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavigate("sources")}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors ${
-                nav.screen === "sources" ? "text-[#1D1D1F]" : "text-[#86868B]"
-              }`}
-            >
-              <Layers className="w-4 h-4" />
-              <span className="text-[9px] font-bold uppercase tracking-widest">
-                Fontes
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavigate("study")}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors ${
-                nav.screen === "study" ? "text-[#1D1D1F]" : "text-[#86868B]"
-              }`}
-            >
-              <PlayCircle className="w-4 h-4" />
-              <span className="text-[9px] font-bold uppercase tracking-widest">
-                Estudar
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavigate("import_source")}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors ${
-                nav.screen === "import_source"
-                  ? "text-[#1D1D1F]"
-                  : "text-[#86868B]"
-              }`}
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span className="text-[9px] font-bold uppercase tracking-widest">
-                Importar
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavigate("settings")}
-              className={`flex-1 flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors ${
-                nav.screen === "settings" ? "text-[#1D1D1F]" : "text-[#86868B]"
-              }`}
-            >
-              <Settings className="w-4 h-4" />
-              <span className="text-[9px] font-bold uppercase tracking-widest">
-                Config
-              </span>
-            </button>
+            {BOTTOM_NAV_ITEMS.map(({ screen, label, Icon }) => {
+              const isActive = nav.screen === screen;
+              return (
+                <button
+                  key={screen}
+                  type="button"
+                  onClick={() => handleNavigate(screen)}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`flex-1 flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors ${
+                    isActive ? "text-[#1D1D1F]" : "text-[#86868B]"
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="text-[9px] font-bold uppercase tracking-widest">
+                    {label}
+                  </span>
+                </button>
+              );
+            })}
           </nav>
         )}
       </div>

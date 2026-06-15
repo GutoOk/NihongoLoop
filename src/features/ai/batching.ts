@@ -1,14 +1,15 @@
 export function chunkByCountAndChars<T>(
   items: T[],
   getText: (item: T) => string,
-  options: { maxItems: number; maxChars: number }
+  options: { maxItems: number; maxChars: number; perItemOverhead?: number }
 ): T[][] {
   const chunks: T[][] = [];
   let current: T[] = [];
   let currentChars = 0;
+  const overhead = options.perItemOverhead || 0;
 
   for (const item of items) {
-    const len = getText(item).length;
+    const len = getText(item).length + overhead;
     if (
       current.length > 0 &&
       (current.length >= options.maxItems || currentChars + len > options.maxChars)

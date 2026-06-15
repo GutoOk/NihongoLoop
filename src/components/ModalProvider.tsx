@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, ReactNode } from "react";
-import { motion, AnimatePresence } from "motion/react";
 import { AlertCircle, Info } from "lucide-react";
 
 type ModalType = "alert" | "confirm";
@@ -65,15 +64,9 @@ export const ModalProvider: React.FC<{ children: ReactNode }> = ({
   return (
     <ModalContext.Provider value={{ showAlert, showConfirm }}>
       {children}
-      <AnimatePresence>
-        {modal && (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden"
-            >
+      {modal && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden">
               <div className="p-6 space-y-4">
                 <div className="flex items-start gap-4">
                   <div
@@ -119,10 +112,9 @@ export const ModalProvider: React.FC<{ children: ReactNode }> = ({
                     : "OK"}
                 </button>
               </div>
-            </motion.div>
           </div>
-        )}
-      </AnimatePresence>
+        </div>
+      )}
     </ModalContext.Provider>
   );
 };

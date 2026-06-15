@@ -11,26 +11,14 @@ import {
 } from "lucide-react";
 import { SourceRepository } from "../repositories";
 import { Source } from "../types";
+import { AppNavigate, ScreenType } from "../navigation";
 
 interface HomeScreenProps {
-  onNavigate: (
-    screen:
-      | "import_source"
-      | "sources"
-      | "reading"
-      | "study"
-      | "dictionary"
-      | "pending_ai"
-      | "statistics"
-      | "quiz"
-      | "settings"
-      | "flashcards",
-    params?: any,
-  ) => void;
+  onNavigate: AppNavigate;
 }
 
 interface NavCard {
-  screen: Parameters<HomeScreenProps["onNavigate"]>[0];
+  screen: ScreenType;
   icon: React.ReactNode;
   label: string;
   description: string;

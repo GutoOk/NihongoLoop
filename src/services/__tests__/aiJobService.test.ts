@@ -8,10 +8,20 @@ vi.mock('../../repositories', () => ({
   AiJobRepository: {
     getPendingByTarget: vi.fn(),
     add: vi.fn(),
+    updateStatus: vi.fn(),
+    getByTargetAndStatuses: vi.fn(),
   },
-  SentenceRepository: {},
-  DictionaryRepository: {},
-  TermRepository: {}
+  SentenceRepository: {
+    getByIds: vi.fn(),
+    update: vi.fn(),
+  },
+  DictionaryRepository: {
+    getAll: vi.fn().mockResolvedValue([]),
+    getByIds: vi.fn(),
+  },
+  TermRepository: {
+    getBySentences: vi.fn().mockResolvedValue([]),
+  }
 }));
 
 vi.mock('../../core/authService', () => ({
@@ -23,6 +33,9 @@ vi.mock('../../core/authService', () => ({
 describe('AiJobService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('fetch', vi.fn());
+    vi.mocked(AiJobRepository.updateStatus).mockResolvedValue({} as any);
+    vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
   });
 
   describe('requestSentenceTranslation', () => {
@@ -63,6 +76,136 @@ describe('AiJobService', () => {
         user_id: 'user-123'
       }));
       expect(result.id).toBe('job-2');
+    });
+  });
+
+  describe('processJobsBatch optimization', () => {
+    it('does not call the AI API when every translation item is already resolved', async () => {
+      const job = {
+        id: 'batch-1',
+        user_id: 'user-123',
+        type: 'batch_translate_sentences',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: { items: [{ id: 'sent-1', japanese: '待て' }] },
+      } as any;
+
+      const { SentenceRepository } = await import('../../repositories');
+      vi.mocked(SentenceRepository.getByIds).mockResolvedValue([
+        { id: 'sent-1', portuguese: 'Espere', status: 'translated' },
+      ] as any);
+
+      const result = await AiJobService.processJobsBatch([job]);
+
+      expect(fetch).not.toHaveBeenCalled();
+      expect(result.successCount).toBe(1);
+      expect(AiJobRepository.updateStatus).toHaveBeenCalledWith(
+        'batch-1',
+        expect.objectContaining({
+          status: 'completed',
+          result: expect.objectContaining({ optimization: 'skipped_resolved_batch' }),
+        }),
+      );
+    });
+
+    it('sends only unresolved items from a mixed translation batch', async () => {
+      const job = {
+        id: 'batch-2',
+        user_id: 'user-123',
+        type: 'batch_translate_sentences',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: {
+          items: [
+            { id: 'sent-ready', japanese: '待て' },
+            { id: 'sent-missing', japanese: '行くぞ' },
+          ],
+        },
+      } as any;
+
+      const { SentenceRepository } = await import('../../repositories');
+      vi.mocked(SentenceRepository.getByIds)
+        .mockResolvedValueOnce([
+          { id: 'sent-ready', portuguese: 'Espere', status: 'translated' },
+          { id: 'sent-missing', japanese: '行くぞ', portuguese: null, status: 'raw', kana: null, romaji: null },
+        ] as any)
+        .mockResolvedValueOnce([
+          { id: 'sent-missing', japanese: '行くぞ', portuguese: null, status: 'raw', kana: null, romaji: null },
+        ] as any);
+
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'batch-2',
+            type: 'batch_translate_sentences',
+            items: [{ job_id: 'sent-missing', translation: 'Vamos.' }],
+          }],
+        }),
+      } as any);
+
+      await AiJobService.processJobsBatch([job]);
+
+      const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string);
+      expect(body.jobs[0].input.items).toEqual([{ id: 'sent-missing', japanese: '行くぞ' }]);
+      expect(SentenceRepository.update).toHaveBeenCalledWith(
+        'sent-missing',
+        expect.objectContaining({ portuguese: 'Vamos.', translation_source: 'ai' }),
+      );
+    });
+
+    it('splits failed batch items into smaller retry jobs', async () => {
+      const job = {
+        id: 'batch-3',
+        user_id: 'user-123',
+        type: 'batch_translate_sentences',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: {
+          items: [
+            { id: 's1', japanese: '一' },
+            { id: 's2', japanese: '二' },
+            { id: 's3', japanese: '三' },
+          ],
+        },
+      } as any;
+
+      const { SentenceRepository } = await import('../../repositories');
+      vi.mocked(SentenceRepository.getByIds)
+        .mockResolvedValueOnce([
+          { id: 's1', japanese: '一', portuguese: null, status: 'raw' },
+          { id: 's2', japanese: '二', portuguese: null, status: 'raw' },
+          { id: 's3', japanese: '三', portuguese: null, status: 'raw' },
+        ] as any)
+        .mockResolvedValueOnce([
+          { id: 's1', japanese: '一', portuguese: null, status: 'raw' },
+          { id: 's2', japanese: '二', portuguese: null, status: 'raw' },
+          { id: 's3', japanese: '三', portuguese: null, status: 'raw' },
+        ] as any);
+
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'batch-3',
+            type: 'batch_translate_sentences',
+            items: [
+              { job_id: 's1', translation: '' },
+              { job_id: 's2', translation: '' },
+              { job_id: 's3', translation: '' },
+            ],
+          }],
+        }),
+      } as any);
+
+      await AiJobService.processJobsBatch([job]);
+
+      expect(AiJobRepository.add).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(AiJobRepository.add).mock.calls[0][0].input.items).toHaveLength(2);
+      expect(vi.mocked(AiJobRepository.add).mock.calls[1][0].input.items).toHaveLength(1);
     });
   });
 });

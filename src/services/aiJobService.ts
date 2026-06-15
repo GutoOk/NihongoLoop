@@ -346,22 +346,28 @@ export class AiJobService {
           return false;
         }
 
-        const newJobInput = {
-           ...(inputObj || {}),
-           items: failedOriginalItems,
-           retry_count: currentRetry + 1
-        };
-        const newHash = await stableHash({ type: job.type, input: newJobInput });
+        const matchingJobs = await AiJobRepository.getByTargetAndStatuses(job.target_id, ['pending', 'running']);
+        const splitSize = Math.max(1, Math.ceil(failedOriginalItems.length / 2));
+        const retryChunks: any[][] = [];
+        for (let i = 0; i < failedOriginalItems.length; i += splitSize) {
+          retryChunks.push(failedOriginalItems.slice(i, i + splitSize));
+        }
 
-        // Check if copy has been already added to avoid duplication
-        const allJobs = await AiJobRepository.getAll();
-        const alreadyExists = allJobs.some(j => j.input_hash === newHash && (j.status === 'pending' || j.status === 'running'));
-        
-        if (!alreadyExists) {
+        let scheduledCount = 0;
+        for (const chunk of retryChunks) {
+          const newJobInput = {
+             ...(inputObj || {}),
+             items: chunk,
+             retry_count: currentRetry + 1
+          };
+          const newHash = await stableHash({ type: job.type, input: newJobInput });
+          const alreadyExists = matchingJobs.some(j => j.input_hash === newHash);
+          if (alreadyExists) continue;
+
           if (isDev) {
-            console.log(`[Auto-Recovery] Re-scheduling ${failedOriginalItems.length} failed items for job type ${job.type} from parent job ${job.id} (Attempt ${currentRetry + 1}/3)`);
+            console.log(`[Auto-Recovery] Re-scheduling ${chunk.length} failed items for job type ${job.type} from parent job ${job.id} (Attempt ${currentRetry + 1}/3)`);
           }
-          
+
           await AiJobRepository.add({
              user_id: AuthService.getCurrentUserId(),
              type: job.type,
@@ -374,8 +380,10 @@ export class AiJobService {
              result: null
           } as any);
 
-          return true;
+          scheduledCount += chunk.length;
         }
+
+        return scheduledCount > 0;
       }
     } catch (e) {
       console.error("[Auto-Recovery] Failed to split and recreate batch job:", e);
@@ -383,8 +391,161 @@ export class AiJobService {
     return false;
   }
 
+  private static getJobInput(job: AiJob): any {
+    if (typeof job.input === 'string') {
+      try {
+        return JSON.parse(job.input);
+      } catch {
+        return {};
+      }
+    }
+    return job.input || {};
+  }
+
+  private static needsDictionaryEnrichment(entry: any): boolean {
+    return entry && entry.status !== 'reviewed' && (
+      entry.status === 'pending' ||
+      !entry.main_meaning ||
+      !entry.kana ||
+      !entry.romaji ||
+      !entry.type ||
+      !Array.isArray(entry.meanings) ||
+      entry.meanings.length === 0
+    );
+  }
+
+  private static async addKnownWordsToAnalysisItems(items: any[]): Promise<any[]> {
+    if (items.length === 0) return items;
+
+    const allDict = await DictionaryRepository.getAll();
+    if (allDict.length === 0) return items;
+
+    const particles = new Set(['は', 'が', 'を', 'に', 'で', 'と', 'も', 'の', 'か', 'や', 'よ', 'ね']);
+
+    return items.map((item) => {
+      if (Array.isArray(item.known_words) && item.known_words.length > 0) {
+        return { ...item, known_words: item.known_words.slice(0, 12) };
+      }
+
+      const japanese = String(item.japanese || item.sentence || '').trim();
+      if (!japanese) return item;
+
+      const matchedWords = allDict.filter((entry) => {
+        if (!entry.lemma) return false;
+        const lemma = entry.lemma.trim();
+        if (!lemma || !japanese.includes(lemma)) return false;
+
+        if (lemma.length === 1 && /^[\u3040-\u309F\u30A0-\u30FF]$/.test(lemma) && !particles.has(lemma)) {
+          return false;
+        }
+
+        return true;
+      });
+
+      if (matchedWords.length === 0) return item;
+
+      return {
+        ...item,
+        known_words: matchedWords.slice(0, 12).map((word) => ({
+          lemma: word.lemma,
+          kana: word.kana,
+          type: word.type,
+          meaning: word.main_meaning,
+        })),
+      };
+    });
+  }
+
+  private static async tryOptimizeBatchJob(job: AiJob): Promise<boolean> {
+    const input = this.getJobInput(job);
+    const items = Array.isArray(input.items) ? input.items : [];
+    if (items.length === 0) {
+      await AiJobRepository.updateStatus(job.id, {
+        status: 'completed',
+        result: { optimization: 'empty_batch', applied_count: 0, skipped_count: 0 },
+        completed_at: new Date().toISOString()
+      });
+      return true;
+    }
+
+    let remainingItems = items;
+    let skippedCount = 0;
+
+    if (job.type === 'batch_translate_sentences') {
+      const sentenceIds = items.map((item: any) => item.id).filter(Boolean);
+      const sentences = await SentenceRepository.getByIds(sentenceIds);
+      const sentenceMap = new Map(sentences.map((sentence) => [sentence.id, sentence]));
+
+      remainingItems = items.filter((item: any) => {
+        const sentence = sentenceMap.get(item.id);
+        return Boolean(sentence && !sentence.portuguese && sentence.status !== 'reviewed');
+      });
+      skippedCount = items.length - remainingItems.length;
+    } else if (job.type === 'batch_analyze_sentences') {
+      const sentenceIds = items.map((item: any) => item.id).filter(Boolean);
+      const sentences = await SentenceRepository.getByIds(sentenceIds);
+      const sentenceMap = new Map(sentences.map((sentence) => [sentence.id, sentence]));
+      const terms = await TermRepository.getBySentences(sentenceIds);
+      const termCountBySentenceId = new Map<string, number>();
+
+      for (const term of terms) {
+        termCountBySentenceId.set(term.sentence_id, (termCountBySentenceId.get(term.sentence_id) || 0) + 1);
+      }
+
+      remainingItems = items.filter((item: any) => {
+        const sentence = sentenceMap.get(item.id);
+        if (!sentence || sentence.status === 'reviewed') return false;
+        const termsWereAttempted = sentence.terms_source === 'ai' || sentence.terms_source === 'ai_empty';
+        const hasTerms = (termCountBySentenceId.get(sentence.id) || 0) > 0;
+        return !sentence.kana || (!hasTerms && !termsWereAttempted);
+      });
+      remainingItems = await this.addKnownWordsToAnalysisItems(remainingItems);
+      skippedCount = items.length - remainingItems.length;
+    } else if (job.type === 'batch_enrich_dictionary_entries_fast' || job.type === 'batch_enrich_dictionary_entries_full') {
+      const entryIds = items.map((item: any) => item.id).filter(Boolean);
+      const entries = await DictionaryRepository.getByIds(entryIds);
+      const entryMap = new Map(entries.map((entry) => [entry.id, entry]));
+
+      remainingItems = items.filter((item: any) => this.needsDictionaryEnrichment(entryMap.get(item.id)));
+      skippedCount = items.length - remainingItems.length;
+    }
+
+    if (remainingItems.length === 0) {
+      await AiJobRepository.updateStatus(job.id, {
+        status: 'completed',
+        result: {
+          optimization: 'skipped_resolved_batch',
+          original_count: items.length,
+          skipped_count: skippedCount,
+          applied_count: skippedCount,
+        },
+        completed_at: new Date().toISOString()
+      });
+      return true;
+    }
+
+    if (remainingItems.length < items.length || remainingItems.some((item: any) => Array.isArray(item.known_words))) {
+      job.input = {
+        ...input,
+        items: remainingItems,
+        optimization: {
+          original_count: items.length,
+          skipped_count: skippedCount,
+          sent_count: remainingItems.length,
+        },
+      };
+    }
+
+    return false;
+  }
+
   private static async tryOptimizeJob(job: AiJob): Promise<boolean> {
-    const input = job.input;
+    if (job.type.startsWith('batch_')) {
+      return this.tryOptimizeBatchJob(job);
+    }
+
+    const input = this.getJobInput(job);
+    job.input = input;
     const sentenceJapanese = input.sentence;
     if (!sentenceJapanese) return false;
 

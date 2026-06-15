@@ -72,8 +72,7 @@ export class SourcePreparationService {
          await ProcessingRunRepository.updateRun(run.id, { current_step: 'Identificando frases para tradução...' });
          const sentencesToTranslate = sentences.filter(s => !s.portuguese);
          
-         const allJobs = await AiJobRepository.getAll();
-         const targetJobs = allJobs.filter(j => j.target_id === sourceId && (j.status === 'pending' || j.status === 'running' || j.status === 'error'));
+         const targetJobs = await AiJobRepository.getByTargetAndStatuses(sourceId, ['pending', 'running', 'error']);
          
          const pendingTranslateSet = new Set<string>();
          targetJobs.filter(j => j.type === 'batch_translate_sentences').forEach(j => {
@@ -86,7 +85,7 @@ export class SourcePreparationService {
          if (translationJobs.length > 0) {
             await ProcessingRunRepository.appendLog(run.id, `Criando lotes de tradução para ${translationJobs.length} frases.`);
             const translateChunks = chunkByCountAndChars(translationJobs, s => s.japanese, {
-               maxItems: options.translateBatchSize, maxChars: 6000
+               maxItems: options.translateBatchSize, maxChars: 5200, perItemOverhead: 80
             });
             
             for (const chunk of translateChunks) {
@@ -113,8 +112,10 @@ export class SourcePreparationService {
       }
 
       if ((options.runMode || 'all') === 'all') {
-        const pendingTranslateJobs = (await AiJobRepository.getAll()).some(
-          j => j.target_id === sourceId && j.type === 'batch_translate_sentences' && ['pending', 'running', 'error'].includes(j.status)
+        const pendingTranslateJobs = await AiJobRepository.hasTargetJobByTypeAndStatuses(
+          sourceId,
+          'batch_translate_sentences',
+          ['pending', 'running', 'error'],
         );
         const stillMissingTranslations = (await SentenceRepository.getBySourceId(sourceId)).some(s => !s.portuguese);
         if (pendingTranslateJobs || stillMissingTranslations) {
@@ -146,8 +147,7 @@ export class SourcePreparationService {
             return lacksKana || (hasNoTerms && !termsWereAttempted);
          });
          
-         const allJobs = await AiJobRepository.getAll();
-         const targetJobs = allJobs.filter(j => j.target_id === sourceId && (j.status === 'pending' || j.status === 'running' || j.status === 'error'));
+         const targetJobs = await AiJobRepository.getByTargetAndStatuses(sourceId, ['pending', 'running', 'error']);
          const pendingAnalyzeSet = new Set<string>();
          targetJobs.filter(j => j.type === 'batch_analyze_sentences').forEach(j => {
             const input = j.input || j.result || {};
@@ -159,7 +159,7 @@ export class SourcePreparationService {
          if (analyzeJobs.length > 0) {
             await ProcessingRunRepository.appendLog(run.id, `Criando lotes de análise para ${analyzeJobs.length} frases.`);
             const analyzeChunks = chunkByCountAndChars(analyzeJobs, s => s.japanese + (s.portuguese||''), {
-               maxItems: options.analyzeBatchSize, maxChars: 6000
+               maxItems: options.analyzeBatchSize, maxChars: 4200, perItemOverhead: 220
             });
             
             for (const chunk of analyzeChunks) {
@@ -186,8 +186,10 @@ export class SourcePreparationService {
       }
 
       if ((options.runMode || 'all') === 'all') {
-        const pendingAnalyzeJobs = (await AiJobRepository.getAll()).some(
-          j => j.target_id === sourceId && j.type === 'batch_analyze_sentences' && ['pending', 'running', 'error'].includes(j.status)
+        const pendingAnalyzeJobs = await AiJobRepository.hasTargetJobByTypeAndStatuses(
+          sourceId,
+          'batch_analyze_sentences',
+          ['pending', 'running', 'error'],
         );
         const currentSentences = await SentenceRepository.getBySourceId(sourceId);
         const currentTerms = await TermRepository.getBySentences(currentSentences.map(s => s.id));
@@ -223,8 +225,7 @@ export class SourcePreparationService {
             const entries = await DictionaryRepository.getByIds(Array.from(dictIds) as string[]);
             const missingEntries = entries.filter(e => this.needsDictionaryEnrichment(e));
             
-            const allJobs = await AiJobRepository.getAll();
-            const targetJobs = allJobs.filter(j => j.target_id === sourceId && (j.status === 'pending' || j.status === 'running' || j.status === 'error'));
+            const targetJobs = await AiJobRepository.getByTargetAndStatuses(sourceId, ['pending', 'running', 'error']);
             const pendingDictItemIds = new Set<string>();
             targetJobs.filter(j => j.type.startsWith('batch_enrich_dictionary')).forEach(j => {
                const input = j.input || j.result || {};
@@ -240,7 +241,7 @@ export class SourcePreparationService {
                const bSize = isFast ? (options.dictFastBatchSize || 30) : (options.dictFullBatchSize || 10);
                
                const dictChunks = chunkByCountAndChars(entriesToBatch, e => e.lemma, {
-                  maxItems: bSize, maxChars: 10000
+                  maxItems: bSize, maxChars: isFast ? 8500 : 5200, perItemOverhead: isFast ? 80 : 180
                });
                
                for (const chunk of dictChunks) {

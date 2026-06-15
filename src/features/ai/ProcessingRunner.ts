@@ -1,4 +1,4 @@
-import { ProcessingRunRepository, AiJobRepository, SentenceRepository, TermRepository, DictionaryRepository } from '../../repositories';
+import { ProcessingRunRepository, AiJobRepository, SourcePreparationRepository } from '../../repositories';
 import { SourcePreparationService, PreparationOptions } from './SourcePreparationService';
 import { AiJobService } from '../../services/aiJobService';
 
@@ -74,31 +74,14 @@ export class ProcessingRunner {
             break;
          }
          
-         // 1. Gather live stats of sentences, segments & dictionary entries
-         const sentences = await SentenceRepository.getBySourceId(sourceId);
-         const hasMissingTranslations = sentences.some(s => !s.portuguese);
-         
-         const terms = await TermRepository.getBySentences(sentences.map(s => s.id));
-         const termCountBySentId: Record<string, number> = {};
-         for (const t of terms) {
-            termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
-         }
-         const hasMissingAnalysis = sentences.some(s => {
-            const hasNoTerms = !termCountBySentId[s.id];
-            const termsWereAttempted = s.terms_source === "ai" || s.terms_source === "ai_empty";
-            return !s.kana || (hasNoTerms && !termsWereAttempted);
-         });
-
-         const dictIds = Array.from(new Set(terms.map(t => t.dictionary_entry_id).filter(Boolean))) as string[];
-         let hasMissingEnrichment = false;
-         if (dictIds.length > 0) {
-            const entries = await DictionaryRepository.getByIds(dictIds);
-            hasMissingEnrichment = entries.some(e => e.status === 'pending' && (!e.main_meaning || !e.kana || !e.romaji || !e.type || !Array.isArray(e.meanings) || e.meanings.length === 0));
-         }
+         // 1. Gather live completion stats with narrow repository queries.
+         const preparationStats = await SourcePreparationRepository.getStats(sourceId);
+         const hasMissingTranslations = preparationStats.sNoTrans > 0;
+         const hasMissingAnalysis = preparationStats.sMissingAnalysis > 0;
+         const hasMissingEnrichment = preparationStats.dictPending > 0;
 
          // Fetch current job queues for this source
-         const allJobs = await AiJobRepository.getAll();
-         const targetJobs = allJobs.filter(j => j.target_id === sourceId);
+         const targetJobs = await AiJobRepository.getByTarget(sourceId);
          const pendingJobs = targetJobs.filter(j => j.status === 'pending');
          const runningJobs = targetJobs.filter(j => j.status === 'running');
          const errorJobs = targetJobs.filter((j) => j.status === "error");
