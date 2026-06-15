@@ -141,8 +141,9 @@ export class SourcePreparationService {
          
          const sentencesToAnalyze = sentences.filter(s => {
             const lacksKana = !s.kana;
-            const lacksTerms = !termCountBySentId[s.id] || termCountBySentId[s.id] === 0;
-            return lacksKana || lacksTerms;
+            const hasNoTerms = !termCountBySentId[s.id] || termCountBySentId[s.id] === 0;
+            const termsWereAttempted = s.terms_source === "ai" || s.terms_source === "ai_empty";
+            return lacksKana || (hasNoTerms && !termsWereAttempted);
          });
          
          const allJobs = await AiJobRepository.getAll();
@@ -194,7 +195,11 @@ export class SourcePreparationService {
         for (const t of currentTerms) {
           termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
         }
-        const stillMissingAnalysis = currentSentences.some(s => !s.kana || !termCountBySentId[s.id]);
+        const stillMissingAnalysis = currentSentences.some(s => {
+           const hasNoTerms = !termCountBySentId[s.id];
+           const termsWereAttempted = s.terms_source === "ai" || s.terms_source === "ai_empty";
+           return !s.kana || (hasNoTerms && !termsWereAttempted);
+        });
         if (pendingAnalyzeJobs || stillMissingAnalysis) {
           await ProcessingRunRepository.updateRun(run.id, {
             completed_steps: 4,

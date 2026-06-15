@@ -64,12 +64,125 @@ export default function DictionaryEntryScreen({
 
   const [showSentencesQuiz, setShowSentencesQuiz] = useState(false);
 
+  // States for full-entry editing
+  const [isEditingFull, setIsEditingFull] = useState(false);
+  const [editLemma, setEditLemma] = useState("");
+  const [editKana, setEditKana] = useState("");
+  const [editRomaji, setEditRomaji] = useState("");
+  const [editType, setEditType] = useState("");
+  const [editSubtype, setEditSubtype] = useState("");
+  const [editJlptLevel, setEditJlptLevel] = useState("");
+  const [editShortNote, setEditShortNote] = useState("");
+  const [editGrammarInfo, setEditGrammarInfo] = useState("");
+  const [editMainMeaning, setEditMainMeaning] = useState("");
+  const [editMeanings, setEditMeanings] = useState<string[]>([]);
+
+  // States for related sentence/term editing
+  const [editingSentenceId, setEditingSentenceId] = useState<string | null>(null);
+  const [editSentJa, setEditSentJa] = useState("");
+  const [editSentRomaji, setEditSentRomaji] = useState("");
+  const [editSentPt, setEditSentPt] = useState("");
+  const [editTermContext, setEditTermContext] = useState("");
+  const [editTermGrammar, setEditTermGrammar] = useState("");
+  const [editTermStructure, setEditTermStructure] = useState("");
+
   const [connectedSentences, setConnectedSentences] = useState<
     { sentence: Sentence; term: SentenceTerm }[]
   >([]);
   const [connectedSources, setConnectedSources] = useState<
     { sourceId: string; title: string; count: number }[]
   >([]);
+
+  const handleStartEditFullEntry = () => {
+    if (!entry) return;
+    setEditLemma(entry.lemma || "");
+    setEditKana(entry.kana || "");
+    setEditRomaji(entry.romaji || "");
+    setEditType(entry.type || "");
+    setEditSubtype(entry.subtype || "");
+    setEditJlptLevel(entry.jlpt_level || "");
+    setEditShortNote(entry.short_note || "");
+    setEditGrammarInfo(entry.grammar_info || "");
+    setEditMainMeaning(entry.main_meaning || "");
+    setEditMeanings(entry.meanings || []);
+    setIsEditingFull(true);
+  };
+
+  const handleSaveFullEntry = async () => {
+    if (!entry) return;
+    try {
+      const updates = {
+        lemma: editLemma.trim(),
+        kana: editKana.trim(),
+        romaji: editRomaji.trim(),
+        type: editType.trim(),
+        subtype: editSubtype.trim(),
+        jlpt_level: editJlptLevel.trim(),
+        short_note: editShortNote.trim(),
+        grammar_info: editGrammarInfo.trim(),
+        main_meaning: editMainMeaning.trim(),
+        meanings: editMeanings.map((m) => m.trim()).filter(Boolean),
+        status: "reviewed" as const,
+      };
+
+      const updated = await DictionaryRepository.update(entry.id, updates);
+      if (updated) {
+        setEntry(updated);
+        setIsEditingFull(false);
+        showAlert("Sucesso", "Verbete atualizado com sucesso!");
+      } else {
+        showAlert("Erro", "Erro ao atualizar verbete no banco de dados.");
+      }
+    } catch (e: any) {
+      console.error(e);
+      showAlert("Erro", `Falha ao salvar verbete: ${e.message || e}`);
+    }
+  };
+
+  const handleStartEditSentence = (item: { sentence: Sentence; term: SentenceTerm }) => {
+    setEditingSentenceId(item.sentence.id);
+    setEditSentJa(item.sentence.japanese || "");
+    setEditSentRomaji(item.sentence.romaji || "");
+    setEditSentPt(item.sentence.portuguese || "");
+    setEditTermContext(item.term.context_meaning || "");
+    setEditTermGrammar(item.term.grammar_note || "");
+    setEditTermStructure(item.term.structure_note || "");
+  };
+
+  const handleSaveSentenceAndTerm = async (item: { sentence: Sentence; term: SentenceTerm }) => {
+    try {
+      const sentUpdates = {
+        japanese: editSentJa.trim(),
+        romaji: editSentRomaji.trim(),
+        portuguese: editSentPt.trim(),
+        status: "reviewed" as const,
+      };
+      const termUpdates = {
+        context_meaning: editTermContext.trim(),
+        grammar_note: editTermGrammar.trim(),
+        structure_note: editTermStructure.trim(),
+      };
+
+      await SentenceRepository.update(item.sentence.id, sentUpdates);
+      await TermRepository.update(item.term.id, termUpdates);
+
+      setConnectedSentences((prev) =>
+        prev.map((it) =>
+          it.sentence.id === item.sentence.id
+            ? {
+                sentence: { ...it.sentence, ...sentUpdates },
+                term: { ...it.term, ...termUpdates },
+              }
+            : it,
+        ),
+      );
+      setEditingSentenceId(null);
+      showAlert("Sucesso", "Frase e contexto atualizados com sucesso!");
+    } catch (e: any) {
+      console.error(e);
+      showAlert("Erro", `Falha ao salvar frase: ${e.message || e}`);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -173,20 +286,216 @@ export default function DictionaryEntryScreen({
   return (
     <div className="screen-gray">
       <header className="screen-header justify-between">
-        <button
-          type="button"
-          onClick={onBack}
-          className="btn-back"
-          aria-label="Voltar"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <h1 className="screen-title flex items-center gap-1.5">
-          <Bookmark className="w-4 h-4 text-indigo-500" /> Ficha de Vocabulário
-        </h1>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="btn-back"
+            aria-label="Voltar"
+          >
+            <ArrowLeft className="w-5 h-5" />
+          </button>
+          <h1 className="screen-title flex items-center gap-1.5">
+            <Bookmark className="w-4 h-4 text-indigo-500" /> Ficha de Vocabulário
+          </h1>
+        </div>
+        {!isEditingFull && (
+          <button
+            onClick={handleStartEditFullEntry}
+            className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold text-xs rounded-xl transition-all"
+            title="Editar todas as informações cadastradas"
+          >
+            <Edit2 className="w-3.5 h-3.5" />
+            Editar Tudo
+          </button>
+        )}
       </header>
 
-      <main className="flex-1 overflow-auto p-4 md:p-6 space-y-6 max-w-2xl mx-auto w-full pb-20">
+      {isEditingFull ? (
+        <main className="flex-1 overflow-auto p-4 md:p-6 space-y-6 max-w-2xl mx-auto w-full pb-20">
+          <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-[#E5E5E7] flex flex-col space-y-4">
+            <div className="border-b border-gray-100 pb-3 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-black text-slate-800">Editar Toda a Ficha</h2>
+                <p className="text-xs text-gray-400 font-medium">Altere todos os parâmetros estruturados cadastrados.</p>
+              </div>
+              <button
+                onClick={() => setIsEditingFull(false)}
+                className="p-1 text-gray-400 hover:text-rose-500 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-slate-400 font-mono">Palavra / Kanji (Original)</label>
+                <input
+                  type="text"
+                  className="w-full p-2.5 text-base bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-800"
+                  value={editLemma}
+                  onChange={(e) => setEditLemma(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-slate-400 font-mono">Leitura (Kana / Hiragana)</label>
+                <input
+                  type="text"
+                  className="w-full p-2.5 text-base bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-indigo-600"
+                  value={editKana}
+                  onChange={(e) => setEditKana(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-slate-400 font-mono">Romaji (Leitura latina)</label>
+                <input
+                  type="text"
+                  className="w-full p-2.5 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-slate-500"
+                  value={editRomaji}
+                  onChange={(e) => setEditRomaji(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-slate-400 font-mono">Categoria Gramatical (Tipo)</label>
+                <select
+                  className="w-full p-2.5 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 hover:bg-slate-50"
+                  value={editType}
+                  onChange={(e) => setEditType(e.target.value)}
+                >
+                  <option value="">(Selecione)</option>
+                  <option value="substantivo">Substantivo</option>
+                  <option value="verbo">Verbo</option>
+                  <option value="adjetivo">Adjetivo</option>
+                  <option value="advérbio">Advérbio</option>
+                  <option value="partícula">Partícula</option>
+                  <option value="pronome">Pronome</option>
+                  <option value="expressão">Expressão</option>
+                  <option value="conector">Conector</option>
+                  <option value="auxiliar">Auxiliar</option>
+                  <option value="tempo">Tempo</option>
+                  <option value="lugar">Lugar</option>
+                  <option value="outro">Outro</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-slate-400 font-mono">Subtipo Gramatical</label>
+                <input
+                  type="text"
+                  className="w-full p-2.5 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                  value={editSubtype}
+                  onChange={(e) => setEditSubtype(e.target.value)}
+                  placeholder="Ex: transitivo, ru-verb, i-adj"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] uppercase font-black text-slate-400 font-mono">Nível JLPT</label>
+                <select
+                  className="w-full p-2.5 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-700 hover:bg-slate-50"
+                  value={editJlptLevel}
+                  onChange={(e) => setEditJlptLevel(e.target.value)}
+                >
+                  <option value="">Nenhum/Outro</option>
+                  <option value="N5">N5</option>
+                  <option value="N4">N4</option>
+                  <option value="N3">N3</option>
+                  <option value="N2">N2</option>
+                  <option value="N1">N1</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-black text-slate-400 font-mono">Significado Principal / Tradução Direta</label>
+              <input
+                type="text"
+                className="w-full p-2.5 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-800"
+                value={editMainMeaning}
+                onChange={(e) => setEditMainMeaning(e.target.value)}
+              />
+            </div>
+
+            {/* Additional meanings */}
+            <div className="space-y-2 border-t border-gray-100 pt-3">
+              <label className="block text-[10px] uppercase font-black text-slate-400 font-mono">Traduções e Significados Secundários</label>
+              <div className="space-y-2">
+                {editMeanings.map((m, idx) => (
+                  <div key={idx} className="flex gap-2 items-center">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-extrabold shrink-0">
+                      {idx + 1}
+                    </span>
+                    <input
+                      type="text"
+                      value={m}
+                      onChange={(e) => {
+                        const newEdit = [...editMeanings];
+                        newEdit[idx] = e.target.value;
+                        setEditMeanings(newEdit);
+                      }}
+                      className="flex-1 px-3 py-1.5 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:border-indigo-450"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditMeanings(editMeanings.filter((_, i) => i !== idx))
+                      }
+                      className="text-rose-500 p-1 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setEditMeanings([...editMeanings, ""])}
+                  className="w-full py-2 flex items-center justify-center gap-1 text-xs font-bold text-indigo-600 bg-indigo-50/50 hover:bg-indigo-100 rounded-xl border border-indigo-200 border-dashed"
+                >
+                  <Plus className="w-4 h-4" /> Adicionar Tradução Secundária
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-black text-slate-400 font-mono">Nota Didática Rápida</label>
+              <textarea
+                className="w-full p-2.5 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                rows={2}
+                value={editShortNote}
+                onChange={(e) => setEditShortNote(e.target.value)}
+                placeholder="Ex: Usado principalmente em conversas informais..."
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[10px] uppercase font-black text-slate-400 font-mono">Regras de Uso & Gramática Detalhada</label>
+              <textarea
+                className="w-full p-2.5 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs"
+                rows={4}
+                value={editGrammarInfo}
+                onChange={(e) => setEditGrammarInfo(e.target.value)}
+                placeholder="Ex: Como conjugar e conectar com substantivos..."
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={() => setIsEditingFull(false)}
+                className="px-4 py-2 text-xs font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors font-mono"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveFullEntry}
+                className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-all shadow-sm flex items-center gap-1 font-mono active:scale-95"
+              >
+                <Save className="w-4 h-4" /> Salvar Tudo
+              </button>
+            </div>
+          </div>
+        </main>
+      ) : (
+        <main className="flex-1 overflow-auto p-4 md:p-6 space-y-6 max-w-2xl mx-auto w-full pb-20">
         {/* Main Display CARD: Hero style */}
         <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-[#E5E5E7] relative overflow-hidden flex flex-col space-y-5">
           {/* Status corner tag */}
@@ -541,56 +850,157 @@ export default function DictionaryEntryScreen({
             </button>
             {isSentencesOpen && (
               <div className="px-6 pb-6 pt-3 border-t border-gray-100 space-y-3">
-                {connectedSentences.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="p-3 bg-slate-50 border border-slate-100 rounded-xl flex flex-col gap-1.5"
-                  >
-                    <p className="text-sm font-bold text-slate-800">
-                      {item.sentence.japanese}
-                    </p>
-                    {item.sentence.romaji && (
-                      <p className="text-[10px] text-slate-400 italic">
-                        {item.sentence.romaji}
-                      </p>
-                    )}
-                    <p className="text-xs text-slate-500">
-                      {item.sentence.portuguese || "Sem tradução"}
-                    </p>
+                {connectedSentences.map((item, idx) => {
+                  const isEditing = editingSentenceId === item.sentence.id;
+                  return (
+                    <div
+                      key={idx}
+                      className="p-4 bg-slate-50 border border-slate-150 rounded-2xl flex flex-col gap-2 relative group"
+                    >
+                      {!isEditing && (
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditSentence(item)}
+                          className="absolute top-3 right-3 p-1.5 bg-white text-gray-400 hover:text-indigo-600 border border-slate-150 hover:border-indigo-150 hover:bg-indigo-50/20 rounded-lg transition-all md:opacity-0 group-hover:opacity-100 shadow-xs"
+                          title="Editar frase e notas de contexto"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
 
-                    {/* Render SentenceTerm notes if they exist */}
-                    {(item.term.context_meaning ||
-                      item.term.grammar_note ||
-                      item.term.structure_note) && (
-                      <div className="mt-2 space-y-1.5 bg-indigo-50/50 p-2.5 rounded-lg border border-indigo-100/50">
-                        {item.term.context_meaning && (
-                          <p className="text-[10px] text-indigo-900 leading-tight">
-                            <span className="font-bold text-indigo-700 uppercase tracking-widest text-[9px] block mb-0.5">
-                              Sentido no Contexto:
-                            </span>
-                            {item.term.context_meaning}
+                      {isEditing ? (
+                        <div className="space-y-3 pt-1 text-slate-700">
+                          <div className="flex justify-between items-center border-b border-indigo-100 pb-1 mb-1">
+                            <span className="text-[10px] font-black text-indigo-600 uppercase font-mono tracking-wider">Editar Frase e Contexto</span>
+                          </div>
+                          
+                          <div className="space-y-1">
+                            <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Frase Japonesa</label>
+                            <input
+                              type="text"
+                              value={editSentJa}
+                              onChange={(e) => setEditSentJa(e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-sm bg-white border border-[#E5E5E7] rounded-lg font-bold text-slate-800"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Leitura Romaji (Opcional)</label>
+                            <input
+                              type="text"
+                              value={editSentRomaji}
+                              onChange={(e) => setEditSentRomaji(e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-[#E5E5E7] rounded-lg text-slate-500 font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Tradução em Português</label>
+                            <input
+                              type="text"
+                              value={editSentPt}
+                              onChange={(e) => setEditSentPt(e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-[#E5E5E7] rounded-lg text-slate-800 font-medium"
+                            />
+                          </div>
+
+                          <div className="space-y-1 pt-1 border-t border-slate-100">
+                            <label className="text-[9px] uppercase font-bold text-slate-400 font-mono text-indigo-600">Sentido do Termo neste Contexto</label>
+                            <input
+                              type="text"
+                              value={editTermContext}
+                              onChange={(e) => setEditTermContext(e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-[#E5E5E7] rounded-lg text-indigo-950 font-bold"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Explicação de Uso / Notas Gramaticais</label>
+                            <textarea
+                              rows={2}
+                              value={editTermGrammar}
+                              onChange={(e) => setEditTermGrammar(e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-[#E5E5E7] rounded-lg text-indigo-900 leading-relaxed"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Estrutura Gramatical Relacionada</label>
+                            <textarea
+                              rows={2}
+                              value={editTermStructure}
+                              onChange={(e) => setEditTermStructure(e.target.value)}
+                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-[#E5E5E7] rounded-lg text-indigo-900 leading-relaxed"
+                            />
+                          </div>
+
+                          <div className="flex justify-end gap-1.5 pt-2 border-t border-slate-100">
+                            <button
+                              type="button"
+                              onClick={() => setEditingSentenceId(null)}
+                              className="px-3 py-1.5 text-[10px] font-bold text-gray-500 hover:bg-gray-200/60 rounded-lg font-mono transition-colors"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveSentenceAndTerm(item)}
+                              className="px-3 py-1.5 text-[10px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg font-mono flex items-center gap-1 active:scale-95 transition-all shadow-xs"
+                            >
+                              <Save className="w-3.5 h-3.5" /> Salvar Alterações
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-sm font-bold text-slate-850 pr-6">
+                            {item.sentence.japanese}
                           </p>
-                        )}
-                        {item.term.grammar_note && (
-                          <p className="text-[10px] text-indigo-900 leading-tight">
-                            <span className="font-bold text-indigo-700 uppercase tracking-widest text-[9px] block mb-0.5">
-                              Uso / Gramática:
-                            </span>
-                            {item.term.grammar_note}
+                          {item.sentence.romaji && (
+                            <p className="text-[10px] text-slate-400 italic font-mono uppercase tracking-wide">
+                              {item.sentence.romaji}
+                            </p>
+                          )}
+                          <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                            {item.sentence.portuguese || "Sem tradução de frase cadastrada."}
                           </p>
-                        )}
-                        {item.term.structure_note && (
-                          <p className="text-[10px] text-indigo-900 leading-tight">
-                            <span className="font-bold text-indigo-700 uppercase tracking-widest text-[9px] block mb-0.5">
-                              Estrutura:
-                            </span>
-                            {item.term.structure_note}
-                          </p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
+
+                          {/* Render SentenceTerm notes if they exist */}
+                          {(item.term.context_meaning ||
+                            item.term.grammar_note ||
+                            item.term.structure_note) && (
+                            <div className="mt-1 space-y-2 bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-100/30 text-indigo-950 text-[10px] leading-relaxed">
+                              {item.term.context_meaning && (
+                                <p>
+                                  <span className="font-black text-indigo-600 uppercase tracking-widest text-[8px] block mb-0.5 font-mono">
+                                    Sentido no Contexto:
+                                  </span>
+                                  {item.term.context_meaning}
+                                </p>
+                              )}
+                              {item.term.grammar_note && (
+                                <p>
+                                  <span className="font-black text-indigo-600 uppercase tracking-widest text-[8px] block mb-0.5 font-mono">
+                                    Nota de Uso / Gramática:
+                                  </span>
+                                  {item.term.grammar_note}
+                                </p>
+                              )}
+                              {item.term.structure_note && (
+                                <p>
+                                  <span className="font-black text-indigo-600 uppercase tracking-widest text-[8px] block mb-0.5 font-mono">
+                                    Estrutura Gramatical:
+                                  </span>
+                                  {item.term.structure_note}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -667,6 +1077,7 @@ export default function DictionaryEntryScreen({
           </div>
         </div>
       </main>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Layers, ArrowLeft, RotateCw, Play, Inbox, Check } from "lucide-react";
+import { Layers, ArrowLeft, RotateCw, Play, Inbox, Check, Edit2, Save } from "lucide-react";
 import {
   DictionaryRepository,
   ProgressRepository,
@@ -30,6 +30,56 @@ export default function FlashcardScreen({ onBack }: FlashcardScreenProps) {
   const [showAnswer, setShowAnswer] = useState(false);
   const [stats, setStats] = useState({ again: 0, hard: 0, good: 0, easy: 0, learned: 0 });
   const [cardMode, setCardMode] = useState<"ja_pt" | "pt_ja">("ja_pt");
+
+  // Flashcard editing states
+  const [isEditingCard, setIsEditingCard] = useState(false);
+  const [editCardLemma, setEditCardLemma] = useState("");
+  const [editCardKana, setEditCardKana] = useState("");
+  const [editCardRomaji, setEditCardRomaji] = useState("");
+  const [editCardMeaning, setEditCardMeaning] = useState("");
+  const [editCardType, setEditCardType] = useState("");
+  const [editCardJlpt, setEditCardJlpt] = useState("");
+
+  const handleStartEditFlashcard = () => {
+    const card = queue[currentIndex];
+    if (!card) return;
+    setEditCardLemma(card.lemma || "");
+    setEditCardKana(card.kana || "");
+    setEditCardRomaji(card.romaji || "");
+    setEditCardMeaning(card.main_meaning || "");
+    setEditCardType(card.type || "");
+    setEditCardJlpt(card.jlpt_level || "");
+    setIsEditingCard(true);
+  };
+
+  const handleSaveFlashcard = async () => {
+    const card = queue[currentIndex];
+    if (!card) return;
+
+    try {
+      const updates = {
+        lemma: editCardLemma.trim(),
+        kana: editCardKana.trim(),
+        romaji: editCardRomaji.trim(),
+        main_meaning: editCardMeaning.trim(),
+        type: editCardType.trim(),
+        jlpt_level: editCardJlpt.trim(),
+        status: "reviewed" as const,
+      };
+
+      const updated = await DictionaryRepository.update(card.id, updates);
+      if (updated) {
+        setQueue((prev) =>
+          prev.map((c, idx) => (idx === currentIndex ? { ...c, ...updates } : c))
+        );
+        setIsEditingCard(false);
+        showAlert("Sucesso", "Ficha de flashcard atualizada com sucesso!");
+      }
+    } catch (e: any) {
+      console.error(e);
+      showAlert("Erro", `Erro ao salvar flashcard: ${e.message || e}`);
+    }
+  };
 
   useEffect(() => {
     loadData();
@@ -271,9 +321,22 @@ export default function FlashcardScreen({ onBack }: FlashcardScreenProps) {
                 <span>
                   {currentIndex + 1} / {queue.length}
                 </span>
-                <span className="bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md">
-                  Flashcards
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleStartEditFlashcard();
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg font-bold"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                    Editar
+                  </button>
+                  <span className="bg-indigo-50 text-indigo-600 px-2 py-1 rounded-md">
+                    Flashcards
+                  </span>
+                </div>
               </div>
 
               {cardMode === "ja_pt" ? (
@@ -432,6 +495,131 @@ export default function FlashcardScreen({ onBack }: FlashcardScreenProps) {
           </div>
         )}
       </main>
+
+      {/* Flashcard Edit Overlay Modal */}
+      {isEditingCard && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45"
+          onClick={() => setIsEditingCard(false)}
+        >
+          <div
+            className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-4 text-slate-800 text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center border-b border-gray-100 pb-2">
+              <div>
+                <h3 className="text-base font-black text-slate-900">
+                  Editar Flashcard
+                </h3>
+                <p className="text-[10px] text-gray-400">Corrige dados do vocabulário em tempo real</p>
+              </div>
+              <button
+                onClick={() => setIsEditingCard(false)}
+                className="text-gray-400 p-1.5 hover:text-rose-500 rounded-lg transition-colors"
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3.5 max-h-[380px] overflow-y-auto pr-1">
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Lema (Japonês/Kanji)</label>
+                <input
+                  type="text"
+                  value={editCardLemma}
+                  onChange={(e) => setEditCardLemma(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Leitura Kana</label>
+                <input
+                  type="text"
+                  value={editCardKana}
+                  onChange={(e) => setEditCardKana(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Romaji</label>
+                <input
+                  type="text"
+                  value={editCardRomaji}
+                  onChange={(e) => setEditCardRomaji(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3.5">
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Categoria</label>
+                  <select
+                    value={editCardType}
+                    onChange={(e) => setEditCardType(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-white border border-[#E5E5E7] rounded-xl outline-none font-bold text-slate-700"
+                  >
+                    <option value="substantivo">Substantivo</option>
+                    <option value="verbo">Verbo</option>
+                    <option value="adjetivo">Adjetivo</option>
+                    <option value="advérbio">Advérbio</option>
+                    <option value="partícula">Partícula</option>
+                    <option value="pronome">Pronome</option>
+                    <option value="expressão">Expressão</option>
+                    <option value="conector">Conector</option>
+                    <option value="outro">Outro</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Nível JLPT</label>
+                  <select
+                    value={editCardJlpt}
+                    onChange={(e) => setEditCardJlpt(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-white border border-[#E5E5E7] rounded-xl outline-none font-bold text-slate-700"
+                  >
+                    <option value="">Nenhum/Outro</option>
+                    <option value="N5">N5</option>
+                    <option value="N4">N4</option>
+                    <option value="N3">N3</option>
+                    <option value="N2">N2</option>
+                    <option value="N1">N1</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Significado PT</label>
+                <input
+                  type="text"
+                  value={editCardMeaning}
+                  onChange={(e) => setEditCardMeaning(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditingCard(false)}
+                className="flex-1 py-3 text-xs bg-gray-50 hover:bg-gray-100 font-bold border border-gray-200 text-slate-500 rounded-xl transition-colors font-mono uppercase tracking-wider"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveFlashcard}
+                className="flex-1 py-3 text-xs bg-emerald-600 hover:bg-emerald-700 font-bold text-white rounded-xl transition-all shadow-md flex items-center justify-center gap-1 font-mono uppercase tracking-wider active:scale-95"
+              >
+                <Save className="w-3.5 h-3.5" /> Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -15,6 +15,7 @@ import {
   Edit2,
   Check,
   X,
+  Trash2,
 } from "lucide-react";
 import {
   SourceRepository,
@@ -148,32 +149,72 @@ export default function ReadingScreen({
   } | null>(null);
   const [showLegendModal, setShowLegendModal] = useState(false);
   const [showPrep, setShowPrep] = useState(false);
-  const { showAlert } = useModal();
+  const { showAlert, showConfirm } = useModal();
   const [reanalyzingId, setReanalyzingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
   const [editingSentenceId, setEditingSentenceId] = useState<string | null>(null);
+  const [editingSentenceJa, setEditingSentenceJa] = useState<string>("");
+  const [editingSentenceKa, setEditingSentenceKa] = useState<string>("");
+  const [editingSentenceRo, setEditingSentenceRo] = useState<string>("");
   const [editingSentencePt, setEditingSentencePt] = useState<string>("");
   const [visibleCount, setVisibleCount] = useState(25);
 
-  const handleEditTranslationClick = (sent: Sentence) => {
+  const handleEditClick = (sent: Sentence) => {
     setEditingSentenceId(sent.id);
+    setEditingSentenceJa(sent.japanese || "");
+    setEditingSentenceKa(sent.kana || "");
+    setEditingSentenceRo(sent.romaji || "");
     setEditingSentencePt(sent.portuguese || "");
   };
 
-  const handleSaveTranslation = async (sent: Sentence) => {
+  const handleSaveFullSentence = async (sent: Sentence) => {
     try {
-      await SentenceRepository.update(sent.id, { portuguese: editingSentencePt, status: "reviewed" });
+      const updates = {
+        japanese: editingSentenceJa,
+        kana: editingSentenceKa,
+        romaji: editingSentenceRo,
+        portuguese: editingSentencePt,
+        status: "reviewed" as const,
+      };
+      await SentenceRepository.update(sent.id, updates);
       setSentences((current) =>
         current.map((s) =>
-          s.id === sent.id ? { ...s, portuguese: editingSentencePt, status: "reviewed" } : s,
+          s.id === sent.id ? { ...s, ...updates } : s,
         ),
       );
       setEditingSentenceId(null);
-    } catch (e) {
-      console.error("Error saving translation", e);
+    } catch (e: any) {
+      console.error("Error saving sentence updates", e);
+      showAlert("Erro", `Falha ao salvar alterações: ${e.message || e}`);
     }
+  };
+
+  const handleDeleteSentence = (sent: Sentence) => {
+    showConfirm(
+      "Excluir Frase",
+      "Tem certeza que deseja excluir esta frase? Esta ação removerá o card de leitura definitivamente.",
+      async () => {
+        try {
+          const success = await SentenceRepository.delete(sent.id);
+          if (success) {
+            setSentences((current) => current.filter((s) => s.id !== sent.id));
+            setSelectedIds((curr) => {
+              const next = new Set(curr);
+              next.delete(sent.id);
+              return next;
+            });
+          } else {
+            showAlert("Erro", "Erro ao excluir a frase do banco de dados.");
+          }
+        } catch (e: any) {
+          console.error(e);
+          showAlert("Erro", `Falha ao excluir a frase: ${e.message || e}`);
+        }
+      },
+      "Excluir"
+    );
   };
 
   const handleReanalyzeSentence = async (sentence: Sentence) => {
@@ -642,7 +683,7 @@ export default function ReadingScreen({
                     {index + 1}
                   </label>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-1">
                   <button
                     onClick={() => handleReanalyzeSentence(sent)}
                     disabled={reanalyzingId !== null}
@@ -651,7 +692,7 @@ export default function ReadingScreen({
                     title="Re-analisar e Corrigir Card com IA"
                   >
                     <RefreshCw
-                      className={`w-4 h-4 ${reanalyzingId === sent.id ? "animate-spin" : ""}`}
+                      className={`w-3.5 h-3.5 ${reanalyzingId === sent.id ? "animate-spin" : ""}`}
                     />
                   </button>
                   <button
@@ -659,7 +700,7 @@ export default function ReadingScreen({
                     className={`p-1.5 rounded-full ${sent.favorite ? "bg-amber-50 text-amber-500" : "text-gray-300 hover:bg-gray-50"}`}
                   >
                     <Star
-                      className={`w-4 h-4 ${sent.favorite ? "fill-current" : ""}`}
+                      className={`w-3.5 h-3.5 ${sent.favorite ? "fill-current" : ""}`}
                     />
                   </button>
                   <button
@@ -667,53 +708,105 @@ export default function ReadingScreen({
                     className={`p-1.5 rounded-full ${sent.difficulty && sent.difficulty > 0 ? "bg-rose-50 text-rose-500" : "text-gray-300 hover:bg-gray-50"}`}
                   >
                     <AlertCircle
-                      className={`w-4 h-4 ${sent.difficulty && sent.difficulty > 0 ? "fill-current" : ""}`}
+                      className={`w-3.5 h-3.5 ${sent.difficulty && sent.difficulty > 0 ? "fill-current" : ""}`}
                     />
+                  </button>
+                  <button
+                    onClick={() => handleEditClick(sent)}
+                    className={`p-1.5 rounded-full ${editingSentenceId === sent.id ? "bg-indigo-50 text-indigo-600 font-bold" : "text-gray-300 hover:text-indigo-600 hover:bg-gray-55"}`}
+                    title="Editar Card"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSentence(sent)}
+                    className="p-1.5 rounded-full text-gray-300 hover:text-rose-600 hover:bg-gray-50"
+                    title="Excluir Card"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
 
-              <div className="space-y-1 w-full text-center py-2 text-xl font-bold text-gray-900 leading-relaxed">
-                {renderSentence(sent)}
-              </div>
-
-              <div className="py-2 w-full border-t border-gray-50 text-center relative group min-h-[3rem]">
-                {editingSentenceId === sent.id ? (
-                  <div className="flex items-center gap-2 px-2">
+              {editingSentenceId === sent.id ? (
+                <div className="text-left space-y-3 bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100 w-full">
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-indigo-900/60 font-mono">Japonês (Original)</label>
                     <input
                       type="text"
-                      className="flex-1 w-full p-2 text-sm bg-gray-50 border border-indigo-200 rounded-lg outline-none focus:border-indigo-500"
+                      className="w-full p-2 text-base bg-white border border-indigo-100 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 font-bold text-slate-800 text-center"
+                      value={editingSentenceJa}
+                      onChange={(e) => setEditingSentenceJa(e.target.value)}
+                      placeholder="Ex: 日本語"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-indigo-900/60 font-mono">Leitura (Kana)</label>
+                      <input
+                        type="text"
+                        className="w-full p-2 text-sm bg-white border border-indigo-100 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 text-center"
+                        value={editingSentenceKa}
+                        onChange={(e) => setEditingSentenceKa(e.target.value)}
+                        placeholder="Ex: にほんご"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-indigo-900/60 font-mono">Romaji</label>
+                      <input
+                        type="text"
+                        className="w-full p-2 text-sm bg-white border border-indigo-100 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 text-center"
+                        value={editingSentenceRo}
+                        onChange={(e) => setEditingSentenceRo(e.target.value)}
+                        placeholder="Ex: nihongo"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-indigo-900/60 font-mono">Tradução (Português)</label>
+                    <input
+                      type="text"
+                      className="w-full p-2 text-sm bg-white border border-indigo-100 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500 text-slate-800 text-center"
                       value={editingSentencePt}
                       onChange={(e) => setEditingSentencePt(e.target.value)}
-                      placeholder="Tradução em Português"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleSaveTranslation(sent);
-                        if (e.key === "Escape") setEditingSentenceId(null);
-                      }}
+                      placeholder="Ex: Idioma japonês"
                     />
-                    <button onClick={() => handleSaveTranslation(sent)} className="p-1.5 bg-emerald-100 text-emerald-700 rounded-md hover:bg-emerald-200 transition-colors">
-                      <Check className="w-4 h-4" />
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      onClick={() => setEditingSentenceId(null)}
+                      className="px-3 py-1.5 text-xs font-bold text-indigo-900/60 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-1 font-mono"
+                    >
+                      <X className="w-3.5 h-3.5" /> Cancelar
                     </button>
-                    <button onClick={() => setEditingSentenceId(null)} className="p-1.5 bg-rose-100 text-rose-700 rounded-md hover:bg-rose-200 transition-colors">
-                      <X className="w-4 h-4" />
+                    <button
+                      onClick={() => handleSaveFullSentence(sent)}
+                      className="px-3 py-1.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-all flex items-center gap-1 shadow-sm active:scale-95 font-mono"
+                    >
+                      <Check className="w-3.5 h-3.5" /> Salvar
                     </button>
                   </div>
-                ) : (
-                  <>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-1 w-full text-center py-2 text-xl font-bold text-gray-900 leading-relaxed">
+                    {renderSentence(sent)}
+                  </div>
+
+                  <div className="py-2 w-full border-t border-gray-50 text-center relative group min-h-[3rem] flex items-center justify-center">
                     <p className={`text-sm font-medium ${sent.portuguese ? 'text-[#1D1D1F]' : 'text-gray-400 italic'}`}>
                       {sent.portuguese || "Sem tradução"}
                     </p>
                     <button
-                      onClick={() => handleEditTranslationClick(sent)}
+                      onClick={() => handleEditClick(sent)}
                       className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-full opacity-0 group-hover:opacity-100 transition-all focus:opacity-100"
-                      title="Editar Tradução"
+                      title="Editar Card"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
-                  </>
-                )}
-              </div>
+                  </div>
+                </>
+              )}
 
               <div className="flex justify-center gap-4 w-full pt-2">
                 <button

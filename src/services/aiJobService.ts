@@ -694,7 +694,14 @@ export class AiJobService {
       allTempTerms.length = 0;
       allTempTerms.push(...processedTempTerms);
 
-      if (allTempTerms.length === 0) return;
+      if (allTempTerms.length === 0) {
+         for (const item of items) {
+            const sentence = sentenceMap.get(item.job_id);
+            if (!sentence || sentence.status === 'reviewed') continue;
+            await SentenceRepository.update(item.job_id, { terms_source: 'ai_empty' });
+         }
+         return;
+      }
      
      // 4. Load ALL existing dictionary entries to find local matches
      const allDicts = await DictionaryRepository.getAll();

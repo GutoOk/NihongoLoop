@@ -10,6 +10,9 @@ import {
   RefreshCw,
   Info,
   PictureInPicture,
+  Edit2,
+  Save,
+  Plus
 } from "lucide-react";
 import {
   SentenceRepository,
@@ -143,6 +146,99 @@ export default function StudyPlayerScreen({
   >(null);
   const [showLegendModal, setShowLegendModal] = useState(false);
   const playActiveRef = useRef(false);
+
+  // Active study item editing states
+  const [isEditingActiveItem, setIsEditingActiveItem] = useState(false);
+  const [editItemJapanese, setEditItemJapanese] = useState("");
+  const [editItemKana, setEditItemKana] = useState("");
+  const [editItemRomaji, setEditItemRomaji] = useState("");
+  const [editItemPortuguese, setEditItemPortuguese] = useState("");
+  const [editItemType, setEditItemType] = useState("");
+  const [editItemJlpt, setEditItemJlpt] = useState("");
+
+  const handleStartEditCurrentItem = () => {
+    const active = items[currentIndex];
+    if (!active) return;
+    setIsPlaying(false);
+    playActiveRef.current = false;
+    SpeechService.stop();
+
+    setEditItemJapanese(active.japanese || "");
+    setEditItemKana(active.kana || "");
+    setEditItemRomaji(active.romaji || "");
+    setEditItemPortuguese(active.portuguese || "");
+    
+    if ((active.type === "word" || active.type === "word_context") && active.rawRef) {
+      setEditItemType(active.rawRef.type || "");
+      setEditItemJlpt(active.rawRef.jlpt_level || "");
+    } else {
+      setEditItemType("");
+      setEditItemJlpt("");
+    }
+    setIsEditingActiveItem(true);
+  };
+
+  const handleSaveActiveItem = async () => {
+    const active = items[currentIndex];
+    if (!active) return;
+
+    try {
+      if (active.type === "sentence") {
+        const updates = {
+          japanese: editItemJapanese.trim(),
+          kana: editItemKana.trim(),
+          romaji: editItemRomaji.trim(),
+          portuguese: editItemPortuguese.trim(),
+          status: "reviewed" as const,
+        };
+        await SentenceRepository.update(active.id, updates);
+        
+        setItems((prev) =>
+          prev.map((it, idx) =>
+            idx === currentIndex
+              ? { ...it, ...updates, rawRef: { ...it.rawRef, ...updates } }
+              : it
+          )
+        );
+      } else {
+        const updates = {
+          lemma: editItemJapanese.trim(),
+          kana: editItemKana.trim(),
+          romaji: editItemRomaji.trim(),
+          main_meaning: editItemPortuguese.trim(),
+          type: editItemType.trim(),
+          jlpt_level: editItemJlpt.trim(),
+          status: "reviewed" as const,
+        };
+        const entryId = active.targetWordId || active.id;
+        await DictionaryRepository.update(entryId, updates);
+
+        setItems((prev) =>
+          prev.map((it, idx) =>
+            idx === currentIndex
+              ? {
+                  ...it,
+                  japanese: editItemJapanese.trim(),
+                  kana: editItemKana.trim(),
+                  romaji: editItemRomaji.trim(),
+                  portuguese: editItemPortuguese.trim(),
+                  rawRef: { ...it.rawRef, ...updates },
+                }
+              : it
+          )
+        );
+      }
+
+      setIsEditingActiveItem(false);
+      if (active.type === "sentence") {
+        const terms = await TermRepository.getBySentence(active.id);
+        setCurrentTerms(terms);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Erro ao salvar alterações no banco de dados.");
+    }
+  };
 
   // Picture-in-Picture feature support
   const [isPipActive, setIsPipActive] = useState(false);
@@ -921,6 +1017,14 @@ export default function StudyPlayerScreen({
           >
             <PictureInPicture className="w-5 h-5" />
           </button>
+          <button
+            onClick={handleStartEditCurrentItem}
+            className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors"
+            title="Editar Ficha Atual"
+            id="btn-edit-active-item"
+          >
+            <Edit2 className="w-5 h-5" />
+          </button>
         </div>
       </header>
 
@@ -1152,6 +1256,133 @@ export default function StudyPlayerScreen({
                 className="w-full bg-slate-950 hover:bg-slate-900 text-white text-xs font-bold py-3.5 rounded-xl uppercase tracking-widest transition-colors shadow-lg cursor-pointer"
               >
                 Entendi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Active study item editing modal overlay */}
+      {isEditingActiveItem && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45"
+          onClick={() => setIsEditingActiveItem(false)}
+        >
+          <div
+            className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-4 text-slate-800 text-left"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center border-b border-gray-100 pb-2">
+              <div>
+                <h3 className="text-base font-black text-slate-900">
+                  Editar {item?.type === "sentence" ? "Frase" : "Palavra"}
+                </h3>
+                <p className="text-[10px] text-gray-400">Corrige dados e atualiza em tempo real no áudio e texto</p>
+              </div>
+              <button
+                onClick={() => setIsEditingActiveItem(false)}
+                className="text-gray-400 p-1.5 hover:text-rose-500 rounded-lg transition-colors"
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3.5 max-h-[380px] overflow-y-auto pr-1">
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Original (Japonês)</label>
+                <input
+                  type="text"
+                  value={editItemJapanese}
+                  onChange={(e) => setEditItemJapanese(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-bold"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Kana (Leitura)</label>
+                <input
+                  type="text"
+                  value={editItemKana}
+                  onChange={(e) => setEditItemKana(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Romaji</label>
+                <input
+                  type="text"
+                  value={editItemRomaji}
+                  onChange={(e) => setEditItemRomaji(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-xs"
+                />
+              </div>
+
+              {item?.type !== "sentence" && (
+                <div className="grid grid-cols-2 gap-3.5">
+                  <div className="space-y-1">
+                    <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Categoria</label>
+                    <select
+                      value={editItemType}
+                      onChange={(e) => setEditItemType(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-white border border-[#E5E5E7] rounded-xl outline-none font-bold text-slate-700"
+                    >
+                      <option value="substantivo">Substantivo</option>
+                      <option value="verbo">Verbo</option>
+                      <option value="adjetivo">Adjetivo</option>
+                      <option value="advérbio">Advérbio</option>
+                      <option value="partícula">Partícula</option>
+                      <option value="pronome">Pronome</option>
+                      <option value="expressão">Expressão</option>
+                      <option value="conector">Conector</option>
+                      <option value="outro">Outro</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Nível JLPT</label>
+                    <select
+                      value={editItemJlpt}
+                      onChange={(e) => setEditItemJlpt(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-white border border-[#E5E5E7] rounded-xl outline-none font-bold text-slate-700"
+                    >
+                      <option value="">Nenhum/Outro</option>
+                      <option value="N5">N5</option>
+                      <option value="N4">N4</option>
+                      <option value="N3">N3</option>
+                      <option value="N2">N2</option>
+                      <option value="N1">N1</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase font-bold text-slate-400 font-mono">Significado PT</label>
+                <input
+                  type="text"
+                  value={editItemPortuguese}
+                  onChange={(e) => setEditItemPortuguese(e.target.value)}
+                  className="w-full px-3 py-2 text-sm bg-white border border-[#E5E5E7] rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setIsEditingActiveItem(false)}
+                className="flex-1 py-3 text-xs bg-gray-50 hover:bg-gray-100 font-bold border border-gray-200 text-slate-500 rounded-xl transition-colors font-mono uppercase tracking-wider"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveActiveItem}
+                className="flex-1 py-3 text-xs bg-emerald-600 hover:bg-emerald-700 font-bold text-white rounded-xl transition-all shadow-md flex items-center justify-center gap-1 font-mono uppercase tracking-wider active:scale-95"
+              >
+                <Save className="w-3.5 h-3.5" /> Salvar
               </button>
             </div>
           </div>

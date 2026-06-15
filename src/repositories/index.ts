@@ -274,6 +274,12 @@ export class SentenceRepository {
     }
     return data;
   }
+
+  static async delete(id: string): Promise<boolean> {
+    if (!isSupabaseConfigured) return false;
+    const { error } = await supabase!.from('sentences').delete().eq('id', id).eq('user_id', getUserId());
+    return !error;
+  }
 }
 
 export class TermRepository {

@@ -83,7 +83,11 @@ export class ProcessingRunner {
          for (const t of terms) {
             termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
          }
-         const hasMissingAnalysis = sentences.some(s => !s.kana || !termCountBySentId[s.id]);
+         const hasMissingAnalysis = sentences.some(s => {
+            const hasNoTerms = !termCountBySentId[s.id];
+            const termsWereAttempted = s.terms_source === "ai" || s.terms_source === "ai_empty";
+            return !s.kana || (hasNoTerms && !termsWereAttempted);
+         });
 
          const dictIds = Array.from(new Set(terms.map(t => t.dictionary_entry_id).filter(Boolean))) as string[];
          let hasMissingEnrichment = false;
