@@ -23,7 +23,6 @@ const StandardStudyFlowContainer = lazy(() => import("./components/StandardStudy
 const StudyPlayerScreen = lazy(() => import("./components/StudyPlayerScreen"));
 const DictionaryScreen = lazy(() => import("./components/DictionaryScreen"));
 const DictionaryEntryScreen = lazy(() => import("./components/DictionaryEntryScreen"));
-const PendingAiScreen = lazy(() => import("./components/PendingAiScreen"));
 const StatisticsScreen = lazy(() => import("./components/StatisticsScreen"));
 const QuizScreen = lazy(() => import("./components/QuizScreen"));
 const FlashcardScreen = lazy(() => import("./components/FlashcardScreen"));
@@ -322,12 +321,6 @@ export default function App() {
                   })
                 }
               />
-            </div>
-          )}
-
-          {nav.screen === "pending_ai" && (
-            <div key="pending_ai" className="flex-1 flex flex-col">
-              <PendingAiScreen onBack={handleGoBack} />
             </div>
           )}
 

@@ -8,13 +8,14 @@ export interface SourcePreparationStats {
   sNoRead: number;
   sNoTerms: number;
   sMissingAnalysis: number;
+  dictTotal: number;
   dictPending: number;
 }
 
 export class SourcePreparationRepository {
   static async getStats(sourceId: string): Promise<SourcePreparationStats> {
     if (!isSupabaseConfigured) {
-      return { sTotal: 0, sNoTrans: 0, sNoRead: 0, sNoTerms: 0, sMissingAnalysis: 0, dictPending: 0 };
+      return { sTotal: 0, sNoTrans: 0, sNoRead: 0, sNoTerms: 0, sMissingAnalysis: 0, dictTotal: 0, dictPending: 0 };
     }
 
     const { data: sentences, error: sentencesError } = await supabase!
@@ -30,7 +31,7 @@ export class SourcePreparationRepository {
     const safeSentences = sentences || [];
     const sentenceIds = safeSentences.map((s) => s.id);
     if (sentenceIds.length === 0) {
-      return { sTotal: 0, sNoTrans: 0, sNoRead: 0, sNoTerms: 0, sMissingAnalysis: 0, dictPending: 0 };
+      return { sTotal: 0, sNoTrans: 0, sNoRead: 0, sNoTerms: 0, sMissingAnalysis: 0, dictTotal: 0, dictPending: 0 };
     }
 
     let allTerms: Pick<SentenceTerm, 'sentence_id' | 'dictionary_form_id'>[] = [];
@@ -99,6 +100,7 @@ export class SourcePreparationRepository {
       sNoRead: safeSentences.length - withReading,
       sNoTerms: safeSentences.filter((s) => !termSentenceIds.has(s.id)).length,
       sMissingAnalysis: missingAnalysis,
+      dictTotal: dictIds.length,
       dictPending,
     };
   }

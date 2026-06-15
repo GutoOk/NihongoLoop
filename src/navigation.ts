@@ -9,7 +9,6 @@ export type ScreenType =
   | "study_player"
   | "dictionary"
   | "dictionary_entry"
-  | "pending_ai"
   | "statistics"
   | "quiz"
   | "flashcards"
@@ -28,7 +27,6 @@ export interface ScreenParams {
   study_player: { config: StudyConfig };
   dictionary: undefined;
   dictionary_entry: { entryId: string };
-  pending_ai: undefined;
   statistics: undefined;
   quiz: { config?: StudyConfig } | undefined;
   flashcards: undefined;

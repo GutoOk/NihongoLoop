@@ -276,7 +276,7 @@ export interface AppSettings {
   blockHighlightDuringSpeech?: boolean;
 }
 
-export type ProcessingRunStatus = 'pending' | 'running' | 'completed' | 'error' | 'cancelled';
+export type ProcessingRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'error' | 'cancelled';
 export interface ProcessingRun {
   id: string;
   user_id: string;

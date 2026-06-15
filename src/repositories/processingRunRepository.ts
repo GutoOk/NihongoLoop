@@ -31,6 +31,23 @@ export class ProcessingRunRepository {
     return data;
   }
 
+  static async getResumableRun(sourceId: string): Promise<ProcessingRun | null> {
+    if (!isSupabaseConfigured) return null;
+    const { data, error } = await supabase!.from('processing_runs')
+      .select('*')
+      .eq('source_id', sourceId)
+      .eq('user_id', getUserId())
+      .in('status', ['pending', 'running', 'paused', 'error'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao carregar processamento retomavel: ${error.message}`);
+    }
+    return data;
+  }
+
   static async getLatestRunBySource(sourceId: string): Promise<ProcessingRun | null> {
     if (!isSupabaseConfigured) return null;
     const { data, error } = await supabase!.from('processing_runs')
@@ -86,6 +103,24 @@ export class ProcessingRunRepository {
       cancel_requested: true,
       status: 'cancelled',
       finished_at: new Date().toISOString()
+    });
+  }
+
+  static async pauseRun(id: string): Promise<void> {
+    await this.updateRun(id, {
+      cancel_requested: false,
+      status: 'paused',
+      current_step: 'Pausado. A fila pendente foi preservada para retomada.'
+    });
+  }
+
+  static async resumeRun(id: string): Promise<void> {
+    await this.updateRun(id, {
+      cancel_requested: false,
+      status: 'pending',
+      error: null,
+      finished_at: null,
+      current_step: 'Retomando preparacao...'
     });
   }
 

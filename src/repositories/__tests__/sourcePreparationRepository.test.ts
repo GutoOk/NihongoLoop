@@ -91,6 +91,7 @@ describe('SourcePreparationRepository', () => {
       sNoRead: 1,
       sNoTerms: 2,
       sMissingAnalysis: 2,
+      dictTotal: 2,
       dictPending: 1,
     });
   });

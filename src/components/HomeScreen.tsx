@@ -6,7 +6,6 @@ import {
   HelpCircle,
   Layers,
   Settings,
-  FileText,
   Brain,
 } from "lucide-react";
 import { SourceRepository } from "../repositories";
@@ -43,12 +42,6 @@ const NAV_CARDS: NavCard[] = [
     icon: <Search className="w-5 h-5" />,
     label: "Dicionário",
     description: "Vocabulário extraído",
-  },
-  {
-    screen: "pending_ai",
-    icon: <FileText className="w-5 h-5" />,
-    label: "Pendências / IA",
-    description: "Traduções e revisões",
   },
   {
     screen: "statistics",
@@ -101,7 +94,7 @@ export default function HomeScreen({ onNavigate }: HomeScreenProps) {
             type="button"
             onClick={() => onNavigate("settings")}
             className="btn-back"
-            aria-label="Configurações"
+            aria-label="Configuracoes"
           >
             <Settings className="w-4 h-4" />
           </button>

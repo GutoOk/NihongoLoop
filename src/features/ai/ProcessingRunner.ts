@@ -73,7 +73,11 @@ export class ProcessingRunner {
   ) {
     if (this.isRunning) return;
     const run = await ProcessingRunRepository.getRun(runId);
-    if (run && run.status !== "completed" && run.status !== "error" && run.status !== "cancelled") {
+    if (run && run.status !== "completed" && run.status !== "cancelled") {
+      if (run.status === "paused" || run.status === "error") {
+        await AiJobRepository.resetRunningJobsByTarget(sourceId);
+        await ProcessingRunRepository.resumeRun(run.id);
+      }
       this._isRunning = true;
       this.currentRunId = run.id;
       this.currentOptions = options;
@@ -87,6 +91,20 @@ export class ProcessingRunner {
       await AiJobRepository.cancelJobsByTarget(run.source_id);
     }
     await ProcessingRunRepository.requestCancel(runId);
+    if (this.activeControllers.has(runId)) {
+      this.activeControllers.get(runId)?.abort();
+    }
+    this._isRunning = false;
+    this.currentRunId = null;
+    this.currentOptions = null;
+  }
+
+  static async pausePreparation(runId: string) {
+    const run = await ProcessingRunRepository.getRun(runId);
+    if (run) {
+      await AiJobRepository.resetRunningJobsByTarget(run.source_id);
+      await ProcessingRunRepository.pauseRun(runId);
+    }
     if (this.activeControllers.has(runId)) {
       this.activeControllers.get(runId)?.abort();
     }
@@ -110,6 +128,7 @@ export class ProcessingRunner {
       while (
         run &&
         run.status !== "completed" &&
+        run.status !== "paused" &&
         run.status !== "cancelled" &&
         run.status !== "error"
       ) {
