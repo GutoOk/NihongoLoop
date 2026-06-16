@@ -31,7 +31,6 @@ import { SpeechService } from "../services/speechService";
 import { AiJobService } from "../services/aiJobService";
 import { DictionaryEntry, Sentence, SentenceTerm } from "../types";
 import { useModal } from "./ModalProvider";
-import { getDictionaryMissingFields, needsDictionaryEnrichment } from "../domain/dictionaryCompleteness";
 
 import WordSentencesQuizScreen from "./WordSentencesQuizScreen";
 
@@ -235,11 +234,7 @@ export default function DictionaryEntryScreen({
   const handleEnrich = async () => {
     if (!entry) return;
     try {
-      await AiJobService.requestDictionaryEnrichment(
-        entry.id,
-        entry.lemma,
-        getDictionaryMissingFields(entry),
-      );
+      await AiJobService.requestDictionaryEnrichment(entry.id, entry.lemma);
       showAlert(
         "Sucesso",
         "Fila de IA atualizada! O enriquecimento inteligente foi solicitado para esta palavra.",
@@ -513,9 +508,9 @@ export default function DictionaryEntryScreen({
               <Sparkles className="w-4 h-4" />
             </button>
             <span
-              className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${needsDictionaryEnrichment(entry) ? "bg-amber-50 text-amber-600 border border-amber-100" : "bg-emerald-50 text-emerald-700 border border-emerald-100"}`}
+              className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${entry.status === "pending" ? "bg-amber-50 text-amber-600 border border-amber-100" : "bg-emerald-50 text-emerald-700 border border-emerald-100"}`}
             >
-              {needsDictionaryEnrichment(entry) ? "pendente" : entry.status === "reviewed" ? "revisado" : "enriquecido"}
+              {entry.status === "pending" ? "pendente" : "revisado"}
             </span>
           </div>
 

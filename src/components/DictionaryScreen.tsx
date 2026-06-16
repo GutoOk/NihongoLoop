@@ -16,7 +16,6 @@ import {
 import { DictionaryEntry, Source } from "../types";
 import { AiJobService } from "../services/aiJobService";
 import { useModal } from "./ModalProvider";
-import { getDictionaryMissingFields, needsDictionaryEnrichment } from "../domain/dictionaryCompleteness";
 
 interface DictionaryScreenProps {
   onBack: () => void;
@@ -76,7 +75,7 @@ export default function DictionaryScreen({
       data = data.filter((e) => validEntryIds.has(e.id));
     }
 
-    const totalPending = data.filter((e) => needsDictionaryEnrichment(e)).length;
+    const totalPending = data.filter((e) => e.status === "pending").length;
     setPendingCount(totalPending);
 
     const availableTypes = Array.from(
@@ -140,25 +139,12 @@ export default function DictionaryScreen({
       async () => {
         setIsQueuing(true);
         try {
-          let allEntries = await DictionaryRepository.getAll();
-          if (sourceFilter !== "all") {
-            const sentences = await SentenceRepository.getBySourceId(sourceFilter);
-            const sentenceIds = sentences.map((s) => s.id);
-            const terms = await TermRepository.getBySentences(sentenceIds);
-            const validEntryIds = new Set(
-              terms.map((t) => t.dictionary_entry_id).filter(Boolean),
-            );
-            allEntries = allEntries.filter((e) => validEntryIds.has(e.id));
-          }
-          const pendings = allEntries.filter((e) => needsDictionaryEnrichment(e));
+          const allEntries = await DictionaryRepository.getAll();
+          const pendings = allEntries.filter((e) => e.status === "pending");
 
           let count = 0;
           for (const item of pendings) {
-            await AiJobService.requestDictionaryEnrichment(
-              item.id,
-              item.lemma,
-              getDictionaryMissingFields(item),
-            );
+            await AiJobService.requestDictionaryEnrichment(item.id, item.lemma);
             count++;
           }
           showAlert(

@@ -11,7 +11,6 @@ import { AuthService } from '../core/authService';
 import { generateDictionaryUniqueKey } from './termDetectionService';
 import { stableHash } from '../core/hash';
 import { simpleKanaToRomaji } from './romajiHelper';
-import { isDictionaryComplete, needsDictionaryEnrichment } from '../domain/dictionaryCompleteness';
 
 async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 0, initialDelay = 1000): Promise<Response> {
   const { supabase } = await import('../core/supabaseClient');
@@ -89,8 +88,8 @@ export class AiJobService {
     });
   }
 
-  static async requestDictionaryEnrichment(entryId: string, lemma: string, missingFields?: string[]) {
-    const input = { lemma, missing_fields: missingFields || undefined };
+  static async requestDictionaryEnrichment(entryId: string, lemma: string) {
+    const input = { lemma };
     const hash = await stableHash(input);
     const existing = await AiJobRepository.getPendingByTarget('enrich_dictionary_entry', 'dictionary_entry', entryId);
     if (existing && existing.input_hash === hash) return existing;
@@ -232,14 +231,9 @@ export class AiJobService {
     }
     if (job.type.startsWith('batch_enrich_dictionary') && Array.isArray(input.items)) {
       const entries = await DictionaryRepository.getByIds(input.items.map((item: any) => item.id).filter(Boolean));
-      const unresolvedEntries = entries.filter((entry) => needsDictionaryEnrichment(entry));
-      if (unresolvedEntries.length === 0) {
+      if (entries.every((entry) => entry.status !== 'pending' && entry.main_meaning && entry.kana && entry.romaji)) {
         await AiJobRepository.updateStatus(job.id, { status: 'completed', result: { optimization: 'already_enriched' }, completed_at: new Date().toISOString() });
         return true;
-      }
-      if (unresolvedEntries.length !== input.items.length) {
-        const unresolvedIds = new Set(unresolvedEntries.map((entry) => entry.id));
-        job.input = { ...input, items: input.items.filter((item: any) => unresolvedIds.has(item.id)) };
       }
     }
     return false;
@@ -453,7 +447,7 @@ export class AiJobService {
 
     const finalType = result.type || entry.type || 'outro';
     const finalKana = result.kana || entry.kana || null;
-    const updates = {
+    await DictionaryRepository.update(entry.id, {
       main_meaning: mainMeaning,
       type: finalType,
       kana: finalKana,
@@ -464,11 +458,8 @@ export class AiJobService {
       components: result.components || entry.components || null,
       grammar_info: result.grammar_info || entry.grammar_info || null,
       short_note: result.short_note || entry.short_note || null,
+      status: 'ai_enriched',
       unique_key: DictionaryRepository.makeEntryKey(entry.lemma, finalKana, finalType),
-    };
-    await DictionaryRepository.update(entry.id, {
-      ...updates,
-      status: isDictionaryComplete({ ...entry, ...updates }) ? 'ai_enriched' : 'pending',
     });
 
     const meanings = Array.isArray(result.meanings) && result.meanings.length > 0 ? result.meanings : [mainMeaning];

@@ -39,12 +39,7 @@ ${JSON.stringify(input.sentence || "")}`,
 
   if (jobType === "enrich_dictionary_entry") {
     return withPolicy(jobType, promptVersion, {
-      prompt: buildDictionaryPrompt([{
-        id: "item",
-        lemma: input.lemma,
-        examples: input.examples || [],
-        missing_fields: input.missing_fields || [],
-      }], true, false),
+      prompt: buildDictionaryPrompt([{ id: "item", lemma: input.lemma, examples: input.examples || [] }], true, false),
       responseSchema: dictionarySchema(true),
     });
   }
@@ -89,11 +84,6 @@ ${JSON.stringify(compactItems)}`,
     const compactItems = items.map((item) => ({
       id: item.id,
       lemma: item.lemma,
-      kana: item.kana || null,
-      romaji: item.romaji || null,
-      type: item.type || null,
-      main_meaning: item.main_meaning || null,
-      missing_fields: Array.isArray(item.missing_fields) ? item.missing_fields : [],
       examples: Array.isArray(item.examples) ? item.examples.slice(0, 2) : [],
     }));
     return withPolicy(jobType, promptVersion, {
@@ -160,7 +150,6 @@ Para cada lemma, retorne:
 - kana e romaji da forma canônica.
 - jlpt_level se souber; vazio se incerto.
 - tags curtas de uso quando úteis.
-- Quando missing_fields vier preenchido, priorize completar esses campos e preserve os dados existentes quando estiverem corretos.
 ${fullInstruction}
 
 Entrada:
