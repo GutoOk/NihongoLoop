@@ -72,6 +72,18 @@ export class AiJobRepository {
     delete enriched.retry_count;
     const { data, error } = await supabase!.from('ai_jobs').insert(enriched).select().maybeSingle();
     if (error) {
+      if (error.code === '23505') {
+        const { data: existing } = await supabase!
+          .from('ai_jobs')
+          .select('*')
+          .eq('user_id', enriched.user_id)
+          .eq('type', enriched.type)
+          .eq('target_type', enriched.target_type)
+          .eq('target_id', enriched.target_id)
+          .eq('input_hash', enriched.input_hash)
+          .maybeSingle();
+        if (existing) return existing;
+      }
       console.error(error);
       throw new Error(`Erro do Supabase ao criar ai_job: ${error.message}`);
     }
