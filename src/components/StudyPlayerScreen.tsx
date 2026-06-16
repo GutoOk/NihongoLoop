@@ -262,10 +262,40 @@ export default function StudyPlayerScreen({
 
     if (config.entityType === "word") {
       let entries = await DictionaryRepository.getAll();
+      const dictionaryProgress = await ProgressRepository.getAllDictionaryProgress();
+      const progressMap = new Map(
+        dictionaryProgress.map((progress) => [progress.dictionary_entry_id, progress]),
+      );
       let limitForWords = config.limit;
       if (config.targetType === "specific" && config.wordId) {
         entries = entries.filter((e) => e.id === config.wordId);
       } else {
+        if (config.targetType === "review_due") {
+          const now = Date.now();
+          entries = entries.filter((e) => {
+            const progress = progressMap.get(e.id);
+            return Boolean(
+              e.main_meaning &&
+                progress &&
+                !progress.suspended &&
+                progress.due_at &&
+                new Date(progress.due_at).getTime() <= now,
+            );
+          });
+        }
+        if (config.targetType === "difficult_words") {
+          entries = entries.filter((e) => {
+            const progress = progressMap.get(e.id);
+            return Boolean(
+              e.main_meaning &&
+                progress &&
+                !progress.suspended &&
+                ((progress.wrong_count || 0) > 0 ||
+                  (progress.difficulty || 0) > 0 ||
+                  ((progress.seen_count || 0) > 0 && (progress.mastery || 0) < 50)),
+            );
+          });
+        }
         if (config.targetType === "pending")
           entries = entries.filter((e) => e.status === "pending");
         if (config.targetType === "reviewed")
@@ -369,7 +399,21 @@ export default function StudyPlayerScreen({
         }
       }
 
-      if (config.order === "random") {
+      if (config.order === "due") {
+        entries.sort((a, b) => {
+          const aDue = progressMap.get(a.id)?.due_at || "";
+          const bDue = progressMap.get(b.id)?.due_at || "";
+          return aDue.localeCompare(bDue);
+        });
+      } else if (config.order === "priority") {
+        entries.sort((a, b) => {
+          const aProgress = progressMap.get(a.id);
+          const bProgress = progressMap.get(b.id);
+          const aScore = (aProgress?.wrong_count || 0) * 10 - (aProgress?.mastery || 0);
+          const bScore = (bProgress?.wrong_count || 0) * 10 - (bProgress?.mastery || 0);
+          return bScore - aScore;
+        });
+      } else if (config.order === "random") {
         entries.sort(() => Math.random() - 0.5);
       }
       if (limitForWords && limitForWords < entries.length) {
@@ -596,11 +640,11 @@ export default function StudyPlayerScreen({
       });
     };
 
-    if (studyMode === "jp-pt") {
+    if (studyMode === "jp-pt" || studyMode === "jp-meaning" || studyMode === "jp-reading-meaning") {
       await speakAndWait(item.japanese, "ja");
       if (isCurrentLoop()) await sleep(pSpeech);
       if (item.portuguese) await speakAndWait(item.portuguese, "pt");
-    } else if (studyMode === "pt-jp") {
+    } else if (studyMode === "pt-jp" || studyMode === "meaning-jp" || studyMode === "reading-jp-meaning") {
       if (item.portuguese) await speakAndWait(item.portuguese, "pt");
       if (isCurrentLoop()) await sleep(pSpeech);
       await speakAndWait(item.japanese, "ja");
