@@ -3,6 +3,7 @@ import { Sentence } from '../../types';
 import { makeJapaneseKey } from '../../core/japaneseNormalize';
 import { stableHash } from '../../core/hash';
 import { chunkByCountAndChars } from './batching';
+import { getDictionaryMissingFields, needsDictionaryEnrichment } from '../../domain/dictionaryCompleteness';
 
 export interface PreparationOptions {
   translateBatchSize: number;
@@ -18,15 +19,6 @@ export interface PreparationOptions {
 }
 
 export class SourcePreparationService {
-  private static needsDictionaryEnrichment(entry: any): boolean {
-    return entry.status === 'pending' && (
-      !entry.main_meaning ||
-      !entry.kana ||
-      !entry.romaji ||
-      !entry.type
-    );
-  }
-
   static async prepareSource(sourceId: string, options: PreparationOptions, runId: string): Promise<void> {
     const run = await ProcessingRunRepository.getRun(runId);
     if (!run) return;
@@ -223,7 +215,7 @@ export class SourcePreparationService {
          
          if (dictIds.size > 0) {
             const entries = await DictionaryRepository.getByIds(Array.from(dictIds) as string[]);
-            const missingEntries = entries.filter(e => this.needsDictionaryEnrichment(e));
+            const missingEntries = entries.filter(e => needsDictionaryEnrichment(e));
             
             const targetJobs = await AiJobRepository.getByTargetAndStatuses(sourceId, ['pending', 'running', 'error']);
             const pendingDictItemIds = new Set<string>();
@@ -248,7 +240,18 @@ export class SourcePreparationService {
                   cancelCheck = await ProcessingRunRepository.getRun(run.id);
                   if (cancelCheck?.cancel_requested) throw new Error('Canceled');
                   
-                  const input = { mode: isFast ? 'fast' : 'full', items: chunk.map(e => ({ id: e.id, lemma: e.lemma })) };
+                  const input = {
+                     mode: isFast ? 'fast' : 'full',
+                     items: chunk.map(e => ({
+                        id: e.id,
+                        lemma: e.lemma,
+                        kana: e.kana || null,
+                        romaji: e.romaji || null,
+                        type: e.type || null,
+                        main_meaning: e.main_meaning || null,
+                        missing_fields: getDictionaryMissingFields(e),
+                     })),
+                  };
                   const hash = await stableHash({ type: dictType, input });
                   
                   if (!targetJobs.find(j => j.input_hash === hash)) {

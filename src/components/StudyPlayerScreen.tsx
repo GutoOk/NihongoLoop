@@ -26,6 +26,7 @@ import { Database } from "../database/db"; // for TTS settings
 import { TERM_COLORS, getTermColor } from "../ui/termColors";
 import { AppNavigate } from "../navigation";
 import { drawStudyPipCanvas } from "./studyPlayer/pipCanvas";
+import { needsDictionaryEnrichment } from "../domain/dictionaryCompleteness";
 
 interface StudySetupScreenProps {
   config: any;
@@ -267,7 +268,7 @@ export default function StudyPlayerScreen({
         entries = entries.filter((e) => e.id === config.wordId);
       } else {
         if (config.targetType === "pending")
-          entries = entries.filter((e) => e.status === "pending");
+          entries = entries.filter((e) => needsDictionaryEnrichment(e));
         if (config.targetType === "reviewed")
           entries = entries.filter((e) => e.status === "reviewed");
         if (config.targetType === "ai_enriched")

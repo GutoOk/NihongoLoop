@@ -17,6 +17,7 @@ import {
 import { supabase, isSupabaseConfigured } from "../core/supabaseClient";
 import { AuthService } from "../core/authService";
 import { AppNavigate, NavigationParams, ScreenType } from "../navigation";
+import { needsDictionaryEnrichment } from "../domain/dictionaryCompleteness";
 
 interface StatisticsScreenProps {
   onBack: () => void;
@@ -64,7 +65,7 @@ export default function StatisticsScreen({
       isSupabaseConfigured
         ? supabase!
             .from("dictionary_entries")
-            .select("id, lemma, status, main_meaning, type")
+            .select("id, lemma, status, main_meaning, kana, romaji, type")
             .eq("user_id", getUserId())
         : { data: [] },
       isSupabaseConfigured
@@ -142,7 +143,7 @@ export default function StatisticsScreen({
         ];
 
         const pendingCount = w.filter(
-          (word) => srcDictIds.includes(word.id) && word.status === "pending",
+          (word) => srcDictIds.includes(word.id) && needsDictionaryEnrichment(word),
         ).length;
 
         return {
@@ -181,7 +182,7 @@ export default function StatisticsScreen({
         top: topWords,
         topVerbs,
         topParticles,
-        pending: w.filter((word) => word.status === "pending").length,
+        pending: w.filter((word) => needsDictionaryEnrichment(word)).length,
         aiEnriched: w.filter((word) => word.status === "ai_enriched").length,
         reviewed: w.filter((word) => word.status === "reviewed").length,
         noMeaning: w.filter((word) => !word.main_meaning).length,

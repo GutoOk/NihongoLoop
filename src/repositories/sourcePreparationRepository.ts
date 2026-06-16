@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../core/supabaseClient';
 import { SentenceTerm } from '../types';
 import { chunkArray, getUserId } from './utils';
+import { needsDictionaryEnrichment } from '../domain/dictionaryCompleteness';
 
 export interface SourcePreparationStats {
   sTotal: number;
@@ -76,14 +77,7 @@ export class SourcePreparationRepository {
         console.error(error);
         throw new Error(`Erro do Supabase ao carregar estatísticas de dicionário: ${error.message}`);
       }
-      dictPending += (data || []).filter(
-        (e) =>
-          e.status === 'pending' &&
-          (!e.main_meaning ||
-            !e.kana ||
-            !e.romaji ||
-            !e.type),
-      ).length;
+      dictPending += (data || []).filter((e) => needsDictionaryEnrichment(e)).length;
     }
 
     const withTrans = safeSentences.filter((s) => !!s.portuguese).length;

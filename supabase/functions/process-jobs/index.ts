@@ -202,10 +202,12 @@ serve(async (req) => {
                     main_meaning: { type: "STRING" },
                     meanings: { type: "ARRAY", items: { type: "STRING" } },
                     type: { type: "STRING" },
+                    kana: { type: "STRING" },
+                    romaji: { type: "STRING" },
                     tags: { type: "ARRAY", items: { type: "STRING" } },
                     jlpt_level: { type: "STRING" },
                   },
-                  required: ["job_id", "main_meaning", "meanings", "type"],
+                  required: ["job_id", "main_meaning", "meanings", "type", "kana", "romaji"],
                 },
               },
             },
@@ -263,9 +265,12 @@ serve(async (req) => {
               .from("dictionary_entries")
               .update({
                 main_meaning: item.main_meaning,
-                meanings: item.meanings,
                 type: validType,
-                status: "ai_enriched",
+                kana: item.kana,
+                romaji: item.romaji,
+                tags: Array.isArray(item.tags) ? item.tags : [],
+                jlpt_level: item.jlpt_level || null,
+                status: item.main_meaning && validType && item.kana && item.romaji ? "ai_enriched" : "pending",
               })
               .eq("id", entryId);
           }
