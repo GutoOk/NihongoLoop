@@ -95,7 +95,7 @@ export default function SourcePreparationPanel({
       setLocalRunnerActive(ProcessingRunner.isRunning);
       setLoadError(null);
     } catch (error: any) {
-      setLoadError(error?.message || "Nao foi possivel atualizar a preparacao.");
+      setLoadError(error?.message || "Não foi possível atualizar a preparação.");
     } finally {
       loadingRef.current = false;
     }
@@ -112,8 +112,8 @@ export default function SourcePreparationPanel({
     return [
       {
         mode: "translate",
-        title: "Traducao natural",
-        purpose: "Criar portugues brasileiro natural por frase. So envia frases sem traducao.",
+        title: "Tradução natural",
+        purpose: "Criar português brasileiro natural por frase. Só envia frases sem tradução.",
         total: s.sTotal,
         missing: s.sNoTrans,
         done: Math.max(0, s.sTotal - s.sNoTrans),
@@ -122,7 +122,7 @@ export default function SourcePreparationPanel({
       {
         mode: "analyze",
         title: "Leitura e termos",
-        purpose: "Gerar kana/romaji e detectar blocos lexicais clicaveis.",
+        purpose: "Gerar kana/romaji e detectar blocos lexicais clicáveis.",
         total: s.sTotal,
         missing: s.sMissingAnalysis,
         done: Math.max(0, s.sTotal - s.sMissingAnalysis),
@@ -130,7 +130,7 @@ export default function SourcePreparationPanel({
       },
       {
         mode: "dictionary",
-        title: "Dicionario e sentidos",
+        title: "Dicionário e sentidos",
         purpose: "Completar verbetes, formas e sentidos apenas para termos usados.",
         total: s.dictTotal || s.dictPending,
         missing: s.dictPending,
@@ -159,7 +159,7 @@ export default function SourcePreparationPanel({
       user_id: "",
       status: "pending",
       run_mode: runMode,
-      current_step: runMode === "all" ? "Montando plano economico..." : `Montando etapa: ${runMode}`,
+      current_step: runMode === "all" ? "Montando plano econômico..." : `Montando etapa: ${runMode}`,
       total_steps: 3,
       completed_steps: 0,
       total_items: 0,
@@ -211,8 +211,8 @@ export default function SourcePreparationPanel({
 
   const clearQueue = () => {
     showConfirm(
-      "Limpar preparacao de IA",
-      "Isso apaga runs e jobs desta fonte, mas preserva frases, traducoes, termos e dicionario ja aplicados.",
+      "Limpar preparação de IA",
+      "Isso apaga a fila e as execuções desta fonte, mas preserva frases, traduções, termos e dicionário já aplicados.",
       async () => {
         if (run?.id && run.id !== "starting" && isRunActive) {
           await ProcessingRunner.cancelPreparation(run.id);
@@ -256,15 +256,15 @@ export default function SourcePreparationPanel({
                 Preparar com IA
               </h2>
               <p className="max-w-2xl text-xs leading-relaxed text-slate-500">
-                Pipeline em etapas: traduz primeiro, analisa termos depois e so entao enriquece o dicionario.
-                Cada etapa reaproveita o que ja existe e cria jobs apenas para lacunas reais.
+                Pipeline em etapas: traduz primeiro, analisa termos depois e só então enriquece o dicionário.
+                Cada etapa reaproveita o que já existe e cria tarefas apenas para lacunas reais.
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
               <button
                 onClick={() => setShowSettings((value) => !value)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 sm:w-10"
                 title="Ajustes de economia e velocidade"
               >
                 <Settings2 className="h-4 w-4" />
@@ -272,7 +272,7 @@ export default function SourcePreparationPanel({
               {isRunActive || localRunnerActive ? (
                 <button
                   onClick={pause}
-                  className="inline-flex items-center gap-2 rounded-xl bg-rose-50 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-rose-700 hover:bg-rose-100"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-rose-50 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-rose-700 hover:bg-rose-100 sm:w-auto"
                 >
                   <Pause className="h-4 w-4" />
                   Pausar
@@ -280,7 +280,7 @@ export default function SourcePreparationPanel({
               ) : isPaused || run?.status === "error" || activeJobs.length > 0 ? (
                 <button
                   onClick={resume}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white hover:bg-emerald-700"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white hover:bg-emerald-700 sm:w-auto"
                 >
                   <Play className="h-4 w-4 fill-current" />
                   Retomar
@@ -289,7 +289,7 @@ export default function SourcePreparationPanel({
                 <button
                   onClick={() => start("all")}
                   disabled={isDone || totalMissing === 0}
-                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 sm:w-auto"
                 >
                   <Zap className="h-4 w-4" />
                   Preparar tudo
@@ -297,7 +297,7 @@ export default function SourcePreparationPanel({
               )}
               <button
                 onClick={onPreparationComplete}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50"
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50 sm:w-auto"
               >
                 Estudar
               </button>
@@ -323,13 +323,13 @@ export default function SourcePreparationPanel({
                   </span>
                 </div>
                 <p className="text-xs font-semibold text-slate-700">
-                  {run?.current_step || (isDone ? "Tudo pronto para estudar." : "Pronto para montar a fila economica.")}
+                  {run?.current_step || (isDone ? "Tudo pronto para estudar." : "Pronto para montar a fila econômica.")}
                 </p>
               </div>
               <div className="text-right">
                 <div className="text-2xl font-black text-slate-900">{progressPercent}%</div>
                 <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
-                  {totalMissing} pendencias
+                  {totalMissing} pendências
                 </div>
               </div>
             </div>
@@ -344,7 +344,7 @@ export default function SourcePreparationPanel({
           {showSettings && (
             <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
               <SelectSetting
-                label="Execucao"
+                label="Execução"
                 value={options.processMode || "server"}
                 onChange={(value) => updateOptions({ processMode: value as "local" | "server" })}
                 options={[
@@ -359,16 +359,16 @@ export default function SourcePreparationPanel({
                 options={[
                   ["1", "1 seguro"],
                   ["2", "2 equilibrado"],
-                  ["3", "3 rapido"],
+                  ["3", "3 rápido"],
                   ["5", "5 agressivo"],
                 ]}
               />
               <SelectSetting
-                label="Dicionario"
+                label="Dicionário"
                 value={options.dictMode}
                 onChange={(value) => updateOptions({ dictMode: value as "fast" | "full" })}
                 options={[
-                  ["fast", "Rapido"],
+                  ["fast", "Rápido"],
                   ["full", "Completo"],
                 ]}
               />
@@ -395,7 +395,7 @@ export default function SourcePreparationPanel({
             <div className="flex flex-col gap-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-2">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{run.error || "A preparacao parou porque um lote falhou."}</span>
+                <span>{run.error || "A preparação parou porque um lote falhou."}</span>
               </div>
               <button
                 onClick={resetFailed}
@@ -427,13 +427,13 @@ export default function SourcePreparationPanel({
               <div className="flex items-center gap-2">
                 {showQueue ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
                 <Database className="h-4 w-4 text-slate-500" />
-                <span className="text-sm font-black text-slate-800">Fila tecnica</span>
+                <span className="text-sm font-black text-slate-800">Fila técnica</span>
               </div>
               <div className="flex flex-wrap justify-end gap-1.5 text-[10px] font-bold">
-                <QueueBadge label="Pend" value={jobCounts.pending} tone="amber" />
-                <QueueBadge label="Run" value={jobCounts.running} tone="sky" />
+                <QueueBadge label="Pendentes" value={jobCounts.pending} tone="amber" />
+                <QueueBadge label="Processando" value={jobCounts.running} tone="sky" />
                 <QueueBadge label="Erro" value={jobCounts.error} tone="rose" />
-                <QueueBadge label="Ok" value={jobCounts.completed} tone="emerald" />
+                <QueueBadge label="Concluídas" value={jobCounts.completed} tone="emerald" />
               </div>
             </button>
 
@@ -460,7 +460,7 @@ export default function SourcePreparationPanel({
 
                 {jobs.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs font-semibold text-slate-400">
-                    Nenhum job criado. Inicie uma fase para montar a fila.
+                    Nenhuma tarefa criada. Inicie uma etapa para montar a fila.
                   </div>
                 ) : (
                   <div className="max-h-80 overflow-auto rounded-xl border border-slate-200">
@@ -471,7 +471,7 @@ export default function SourcePreparationPanel({
                           <th className="p-3">Itens</th>
                           <th className="p-3">Status</th>
                           <th className="p-3">Mensagem</th>
-                          <th className="p-3 text-right">Acoes</th>
+                          <th className="p-3 text-right">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -532,43 +532,47 @@ const PhaseCard: React.FC<{
   const active = phaseJobs.some((job) => job.status === "pending" || job.status === "running");
   const complete = phase.missing === 0;
   const percent = phase.total > 0 ? Math.round((phase.done / phase.total) * 100) : complete ? 100 : 0;
+  const total = phase.total || phase.done + phase.missing;
+  const missingLabel = phase.missing === 1 ? "1 pendência" : `${phase.missing} pendências`;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            {complete ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            ) : active ? (
-              <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
-            ) : hasErrors ? (
-              <AlertCircle className="h-4 w-4 text-rose-600" />
-            ) : (
-              <Clock className="h-4 w-4 text-slate-400" />
-            )}
-            <h3 className="text-sm font-black text-slate-900">{phase.title}</h3>
-          </div>
-          <p className="min-h-10 text-xs leading-relaxed text-slate-500">{phase.purpose}</p>
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          {complete ? (
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+          ) : active ? (
+            <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
+          ) : hasErrors ? (
+            <AlertCircle className="h-4 w-4 text-rose-600" />
+          ) : (
+            <Clock className="h-4 w-4 text-slate-400" />
+          )}
+          <h3 className="text-sm font-black leading-tight text-slate-900">{phase.title}</h3>
         </div>
-        <div className="text-right">
+
+        <p className="text-xs leading-relaxed text-slate-500">{phase.purpose}</p>
+
+        <div className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Progresso</span>
           <div className="text-lg font-black text-slate-900">{percent}%</div>
-          <div className="text-[10px] font-bold uppercase text-slate-400">{phase.missing} falta</div>
         </div>
-      </div>
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-        <div className="h-full rounded-full bg-indigo-600" style={{ width: `${Math.max(complete ? 100 : 4, percent)}%` }} />
-      </div>
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <span className="text-[11px] font-semibold text-slate-500">
-          {phase.done}/{phase.total || phase.done + phase.missing} prontos
-        </span>
+
+        <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+          <div className="h-full rounded-full bg-indigo-600" style={{ width: `${Math.max(complete ? 100 : 4, percent)}%` }} />
+        </div>
+
+        <div className="grid grid-cols-1 gap-1 text-[11px] font-semibold text-slate-500">
+          <span>{phase.done}/{total} prontos</span>
+          <span>{missingLabel}</span>
+        </div>
+
         <button
           onClick={onStart}
           disabled={running || complete}
-          className="rounded-lg bg-slate-900 px-3 py-1.5 text-[10px] font-black uppercase tracking-wide text-white disabled:bg-slate-200 disabled:text-slate-400"
+          className="w-full rounded-lg bg-slate-900 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-white disabled:bg-slate-200 disabled:text-slate-400"
         >
-          Fazer etapa
+          Preparar etapa
         </button>
       </div>
     </div>
@@ -580,7 +584,7 @@ const StatusPill: React.FC<{ run: ProcessingRun | null; localRunnerActive: boole
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-indigo-700 ring-1 ring-indigo-100">
         <Loader2 className="h-3 w-3 animate-spin" />
-        Em execucao
+        Em execução
       </span>
     );
   }
@@ -591,7 +595,7 @@ const StatusPill: React.FC<{ run: ProcessingRun | null; localRunnerActive: boole
     return <span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-rose-700 ring-1 ring-rose-100">Erro</span>;
   }
   if (run?.status === "completed") {
-    return <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700 ring-1 ring-emerald-100">Concluido</span>;
+    return <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-emerald-700 ring-1 ring-emerald-100">Concluído</span>;
   }
   return <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">Pronto</span>;
 };
@@ -608,13 +612,22 @@ function QueueBadge({ label, value, tone }: { label: string; value: number; tone
 
 function JobStatus({ status }: { status: AiJob["status"] }) {
   const tone = status === "error" ? "rose" : status === "running" ? "sky" : status === "completed" ? "emerald" : "amber";
+  const label: Record<string, string> = {
+    pending: "Pendente",
+    running: "Processando",
+    completed: "Concluído",
+    error: "Erro",
+    cancelled: "Cancelado",
+    rejected: "Rejeitado",
+    applied: "Aplicado",
+  };
   const color = {
     amber: "bg-amber-50 text-amber-700 ring-amber-100",
     sky: "bg-sky-50 text-sky-700 ring-sky-100",
     rose: "bg-rose-50 text-rose-700 ring-rose-100",
     emerald: "bg-emerald-50 text-emerald-700 ring-emerald-100",
   }[tone];
-  return <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ring-1 ${color}`}>{status}</span>;
+  return <span className={`rounded-full px-2 py-1 text-[10px] font-bold uppercase ring-1 ${color}`}>{label[status] || "Pendente"}</span>;
 }
 
 function SelectSetting({
