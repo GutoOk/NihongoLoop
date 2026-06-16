@@ -20,12 +20,14 @@ import {
   DictionaryRepository,
   TermRepository,
 } from "../repositories";
-import { Sentence, DictionaryEntry } from "../types";
 import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // for TTS settings
 import { TERM_COLORS, getTermColor } from "../ui/termColors";
 import { AppNavigate } from "../navigation";
 import { drawStudyPipCanvas } from "./studyPlayer/pipCanvas";
+import { StudySessionBuilder } from "../features/study/StudySessionBuilder";
+import { StudyItem } from "../features/study/studyTypes";
+import { Sentence } from "../types";
 
 interface StudySetupScreenProps {
   config: any;
@@ -34,20 +36,6 @@ interface StudySetupScreenProps {
   onFinishStandardFlow?: (sentenceIds: string[]) => void;
   isFinishingStandardFlow?: boolean;
 }
-
-type StudyItem = {
-  id: string;
-  japanese: string;
-  kana?: string | null;
-  romaji?: string | null;
-  portuguese?: string | null;
-  isFavorite: boolean;
-  isDifficult: boolean;
-  type: "sentence" | "word" | "word_context";
-  targetWordId?: string;
-  targetSurface?: string;
-  rawRef: any;
-};
 
 export default function StudyPlayerScreen({
   config,
@@ -65,6 +53,15 @@ export default function StudyPlayerScreen({
     any | null
   >(null);
   const [showLegendModal, setShowLegendModal] = useState(false);
+  const [isAnswerVisible, setIsAnswerVisible] = useState(false);
+  const [sessionWarnings, setSessionWarnings] = useState<string[]>([]);
+  const [sessionStats, setSessionStats] = useState({
+    reviewed: 0,
+    again: 0,
+    almost: 0,
+    good: 0,
+  });
+  const [feedbackRecordedKey, setFeedbackRecordedKey] = useState<string | null>(null);
   const playActiveRef = useRef(false);
 
   // Active study item editing states
@@ -258,6 +255,23 @@ export default function StudyPlayerScreen({
 
   const loadItems = async () => {
     setLoading(true);
+    try {
+      const result = await StudySessionBuilder.build(config);
+      setItems(result.items);
+      setSessionWarnings(result.warnings);
+      setCurrentIndex(0);
+      setIsAnswerVisible(false);
+      setSessionStats({ reviewed: 0, again: 0, almost: 0, good: 0 });
+      setFeedbackRecordedKey(null);
+      setLoading(false);
+      return;
+    } catch (error) {
+      console.error(error);
+      setSessionWarnings(["Não consegui montar esta sessão. Tente outro caminho de estudo."]);
+      setItems([]);
+      setLoading(false);
+      return;
+    }
     let loadedItems: StudyItem[] = [];
 
     if (config.entityType === "word") {
@@ -596,20 +610,31 @@ export default function StudyPlayerScreen({
       });
     };
 
-    if (studyMode === "jp-pt") {
+    if (
+      studyMode === "jp-pt" ||
+      studyMode === "jp-meaning" ||
+      studyMode === "jp-reading-meaning"
+    ) {
       await speakAndWait(item.japanese, "ja");
       if (isCurrentLoop()) await sleep(pSpeech);
       if (item.portuguese) await speakAndWait(item.portuguese, "pt");
-    } else if (studyMode === "pt-jp") {
+      setIsAnswerVisible(true);
+    } else if (
+      studyMode === "pt-jp" ||
+      studyMode === "meaning-jp" ||
+      studyMode === "reading-jp-meaning"
+    ) {
       if (item.portuguese) await speakAndWait(item.portuguese, "pt");
       if (isCurrentLoop()) await sleep(pSpeech);
       await speakAndWait(item.japanese, "ja");
+      setIsAnswerVisible(true);
     } else if (studyMode === "pt-jp-jp") {
       if (item.portuguese) await speakAndWait(item.portuguese, "pt");
       if (isCurrentLoop()) await sleep(pSpeech);
       await speakAndWait(item.japanese, "ja");
       if (isCurrentLoop()) await sleep(pSpeech);
       await speakAndWait(item.japanese, "ja");
+      setIsAnswerVisible(true);
     } else if (studyMode === "jp-repeat") {
       await speakAndWait(item.japanese, "ja");
       if (isCurrentLoop()) await sleep(pSpeech);
@@ -624,6 +649,8 @@ export default function StudyPlayerScreen({
 
     if (isCurrentLoop()) {
       if (index + 1 < items.length) {
+        setIsAnswerVisible(false);
+        setFeedbackRecordedKey(null);
         setCurrentIndex(index + 1);
       } else {
         setIsPlaying(false);
@@ -653,6 +680,8 @@ export default function StudyPlayerScreen({
   const nextItem = () => {
     if (currentIndex < items.length - 1) {
       SpeechService.stop();
+      setIsAnswerVisible(false);
+      setFeedbackRecordedKey(null);
       setCurrentIndex((c) => c + 1);
     }
   };
@@ -660,8 +689,35 @@ export default function StudyPlayerScreen({
   const prevItem = () => {
     if (currentIndex > 0) {
       SpeechService.stop();
+      setIsAnswerVisible(false);
+      setFeedbackRecordedKey(null);
       setCurrentIndex((c) => c - 1);
     }
+  };
+
+  const recordRecallFeedback = async (quality: "again" | "hard" | "good") => {
+    const active = items[currentIndex];
+    if (!active) return;
+    const feedbackKey = `${currentIndex}:${active.type}:${active.id}`;
+    if (feedbackRecordedKey === feedbackKey) return;
+    const isCorrect = quality !== "again";
+    if (active.type === "sentence") {
+      await ProgressRepository.updateSentenceProgressLog(active.id, isCorrect);
+    } else {
+      const targetId = active.type === "word_context" && active.targetWordId ? active.targetWordId : active.id;
+      await ProgressRepository.applyFlashcardFeedback(
+        targetId,
+        quality === "again" ? "again" : quality === "hard" ? "hard" : "good",
+      );
+    }
+    setSessionStats((stats) => ({
+      reviewed: stats.reviewed + 1,
+      again: stats.again + (quality === "again" ? 1 : 0),
+      almost: stats.almost + (quality === "hard" ? 1 : 0),
+      good: stats.good + (quality === "good" ? 1 : 0),
+    }));
+    setFeedbackRecordedKey(feedbackKey);
+    setIsAnswerVisible(true);
   };
 
   if (loading) {
@@ -800,8 +856,13 @@ export default function StudyPlayerScreen({
         >
           <X className="w-6 h-6" />
         </button>
-        <div className="text-[10px] font-mono tracking-widest text-slate-400 uppercase">
-          {currentIndex + 1} / {items.length}
+        <div className="text-center">
+          <div className="text-[10px] font-mono tracking-widest text-slate-400 uppercase">
+            {currentIndex + 1} / {items.length}
+          </div>
+          <div className="text-[10px] font-bold text-slate-500">
+            {sessionStats.reviewed} respostas
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -853,8 +914,17 @@ export default function StudyPlayerScreen({
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col justify-center items-center px-6 text-center space-y-8 select-none">
+      <main className="flex-1 flex flex-col justify-center items-center px-6 text-center space-y-6 select-none overflow-auto py-6">
+        {sessionWarnings.length > 0 && (
+          <div className="w-full max-w-sm rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-xs leading-relaxed text-amber-800">
+            {sessionWarnings[0]}
+          </div>
+        )}
+
         <div className="w-full space-y-2">
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+            Japonês
+          </div>
           <div
             className={`${item.type === "word" ? "text-4xl" : "text-3xl"} font-black tracking-tight text-slate-900 break-words leading-tight`}
           >
@@ -872,20 +942,78 @@ export default function StudyPlayerScreen({
           )}
         </div>
 
-        <div className="pt-8 w-full max-w-sm mx-auto border-t border-slate-100">
-          {item.portuguese ? (
-            <div className="text-sm font-bold text-slate-800 bg-slate-50/70 py-4 px-6 rounded-2xl border border-slate-100">
-              {item.portuguese}
+        <div className="w-full max-w-sm mx-auto border-t border-slate-100 pt-6 space-y-4">
+          <p className="text-xs font-semibold text-slate-500">
+            Tente lembrar antes de revelar. Depois marque como foi.
+          </p>
+
+          {isAnswerVisible ? (
+            <div className="space-y-4">
+              {item.portuguese ? (
+                <div className="text-sm font-bold text-slate-800 bg-slate-50/70 py-4 px-6 rounded-xl border border-slate-100">
+                  {item.portuguese}
+                </div>
+              ) : (
+                <div className="text-[10px] text-slate-400 italic uppercase tracking-widest">
+                  Sem {item.type === "word" ? "significado" : "tradução"}
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => recordRecallFeedback("again")}
+                  disabled={feedbackRecordedKey === `${currentIndex}:${item.type}:${item.id}`}
+                  className="py-3 rounded-xl border border-rose-200 bg-rose-50 text-[11px] font-black text-rose-700 disabled:opacity-45"
+                >
+                  Errei
+                </button>
+                <button
+                  type="button"
+                  onClick={() => recordRecallFeedback("hard")}
+                  disabled={feedbackRecordedKey === `${currentIndex}:${item.type}:${item.id}`}
+                  className="py-3 rounded-xl border border-amber-200 bg-amber-50 text-[11px] font-black text-amber-700 disabled:opacity-45"
+                >
+                  Quase
+                </button>
+                <button
+                  type="button"
+                  onClick={() => recordRecallFeedback("good")}
+                  disabled={feedbackRecordedKey === `${currentIndex}:${item.type}:${item.id}`}
+                  className="py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-[11px] font-black text-emerald-700 disabled:opacity-45"
+                >
+                  Acertei
+                </button>
+              </div>
             </div>
           ) : (
-            <div className="text-[10px] text-slate-400 italic uppercase tracking-widest">
-              Sem {item.type === "word" ? "significado" : "tradução"}
-            </div>
+            <button
+              type="button"
+              onClick={() => setIsAnswerVisible(true)}
+              className="w-full py-4 rounded-xl bg-slate-900 text-white text-xs font-black uppercase tracking-wider"
+            >
+              Revelar resposta
+            </button>
           )}
         </div>
       </main>
 
       <footer className="shrink-0 pb-10 pt-6 px-8 border-t border-slate-100 bg-slate-50/40">
+        {sessionStats.reviewed > 0 && (
+          <div className="max-w-sm mx-auto mb-5 grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-xl bg-white border border-slate-100 py-2">
+              <div className="text-sm font-black text-rose-600">{sessionStats.again}</div>
+              <div className="text-[9px] font-bold uppercase text-slate-400">revisar</div>
+            </div>
+            <div className="rounded-xl bg-white border border-slate-100 py-2">
+              <div className="text-sm font-black text-amber-600">{sessionStats.almost}</div>
+              <div className="text-[9px] font-bold uppercase text-slate-400">quase</div>
+            </div>
+            <div className="rounded-xl bg-white border border-slate-100 py-2">
+              <div className="text-sm font-black text-emerald-600">{sessionStats.good}</div>
+              <div className="text-[9px] font-bold uppercase text-slate-400">fixei</div>
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-center gap-8 mb-6">
           <button
             id="study-btn-prev"

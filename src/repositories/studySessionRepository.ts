@@ -63,4 +63,51 @@ export class StudySessionRepository {
       return false;
     }
   }
+
+  static async getSavedCustomSessions(): Promise<StudySession[]> {
+    if (isE2EMockMode() || !isSupabaseConfigured) return [];
+    const { data, error } = await supabase!
+      .from('study_sessions')
+      .select('*')
+      .eq('type', 'custom_template')
+      .eq('user_id', getUserId())
+      .order('updated_at', { ascending: false });
+    if (error) {
+      console.error(error);
+      return [];
+    }
+    return data || [];
+  }
+
+  static async saveCustomSessionTemplate(name: string, config: any): Promise<StudySession | null> {
+    if (isE2EMockMode() || !isSupabaseConfigured) return null;
+    const payload = {
+      user_id: getUserId(),
+      type: 'custom_template',
+      source_id: config.sourceId || null,
+      config: { ...config, name, saved_at: new Date().toISOString() },
+    };
+    const { data, error } = await supabase!
+      .from('study_sessions')
+      .insert(payload)
+      .select()
+      .maybeSingle();
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao salvar estudo personalizado: ${error.message}`);
+    }
+    return data;
+  }
+
+  static async deleteCustomSessionTemplate(id: string): Promise<boolean> {
+    if (isE2EMockMode()) return true;
+    if (!isSupabaseConfigured) return false;
+    const { error } = await supabase!
+      .from('study_sessions')
+      .delete()
+      .eq('id', id)
+      .eq('type', 'custom_template')
+      .eq('user_id', getUserId());
+    return !error;
+  }
 }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, Play, Settings2, BookOpen } from "lucide-react";
+import { ArrowLeft, Play, Save } from "lucide-react";
 import { SourceRepository, DictionaryRepository } from "../repositories";
+import { StudySessionRepository } from "../repositories/studySessionRepository";
 import { Source, DictionaryEntry } from "../types";
 
 interface StudySetupScreenProps {
@@ -30,6 +31,9 @@ export default function StudySetupScreen({
   const [studyMode, setStudyMode] = useState<
     "jp-pt" | "pt-jp" | "pt-jp-jp" | "jp-repeat" | "shadowing"
   >("jp-pt");
+  const [shouldSavePreset, setShouldSavePreset] = useState(false);
+  const [presetName, setPresetName] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     SourceRepository.getAll().then(setSources);
@@ -47,8 +51,7 @@ export default function StudySetupScreen({
     }
   }, [entityType]);
 
-  const handleStart = () => {
-    onStartSession({
+  const buildConfig = () => ({
       entityType,
       targetType: entityType === "word" ? "custom_word_filter" : targetType,
       sourceId:
@@ -61,7 +64,24 @@ export default function StudySetupScreen({
       limit: limit === "all" ? 9999 : parseInt(limit, 10),
       order,
       studyMode,
+      title: presetName.trim() || "Estudo personalizado",
+      preset: "custom",
     });
+
+  const handleStart = async () => {
+    const config = buildConfig();
+    if (shouldSavePreset && presetName.trim()) {
+      setIsSaving(true);
+      try {
+        await StudySessionRepository.saveCustomSessionTemplate(
+          presetName.trim(),
+          config,
+        );
+      } finally {
+        setIsSaving(false);
+      }
+    }
+    onStartSession(config);
   };
 
   return (
@@ -311,18 +331,51 @@ export default function StudySetupScreen({
             ))}
           </div>
         </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-3">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={shouldSavePreset}
+              onChange={(event) => setShouldSavePreset(event.target.checked)}
+              className="mt-1"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-black text-slate-900">
+                Salvar este estudo personalizado
+              </span>
+              <span className="block text-xs leading-relaxed text-slate-500">
+                Ele aparecera na tela Estudar para voce continuar depois.
+              </span>
+            </span>
+          </label>
+          {shouldSavePreset && (
+            <input
+              value={presetName}
+              onChange={(event) => setPresetName(event.target.value)}
+              placeholder="Ex.: Verbos N5 da minha fonte"
+              className="w-full p-3 bg-[#F5F5F7] border border-[#E5E5E7] rounded-xl text-sm outline-none"
+            />
+          )}
+        </div>
       </main>
 
       <div className="p-4 border-t border-[#E5E5E7]">
         <button
           onClick={handleStart}
           disabled={
+            isSaving ||
             (targetType === "source" && !selectedSource) ||
-            (entityType === "word_context" && !selectedWordId)
+            (entityType === "word_context" && !selectedWordId) ||
+            (shouldSavePreset && !presetName.trim())
           }
           className="btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"
         >
-          <Play className="w-4 h-4 fill-current" /> Iniciar Sessão
+          {shouldSavePreset ? (
+            <Save className="w-4 h-4" />
+          ) : (
+            <Play className="w-4 h-4 fill-current" />
+          )}
+          {isSaving ? "Salvando..." : "Iniciar sessao"}
         </button>
       </div>
     </div>
