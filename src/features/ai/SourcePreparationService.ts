@@ -27,6 +27,17 @@ export class SourcePreparationService {
     );
   }
 
+  private static getSentencesWithValidDictionaryTerms(terms: any[]): Set<string> {
+    const sentenceIds = new Set<string>();
+    for (const term of terms) {
+      const hasExistingEntry = Boolean(term.entry?.id || term.form?.entry?.id);
+      if (hasExistingEntry) {
+        sentenceIds.add(term.sentence_id);
+      }
+    }
+    return sentenceIds;
+  }
+
   static async prepareSource(sourceId: string, options: PreparationOptions, runId: string): Promise<void> {
     const run = await ProcessingRunRepository.getRun(runId);
     if (!run) return;
@@ -134,17 +145,14 @@ export class SourcePreparationService {
       if (runAnalyze) {
          await ProcessingRunRepository.updateRun(run.id, { current_step: 'Identificando frases para leitura e segmentação...' });
          
-         const allTerms = await TermRepository.getBySentences(sentences.map(s => s.id));
-         const termCountBySentId: Record<string, number> = {};
-         for (const t of allTerms) {
-            termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
-         }
+         const allTerms = await TermRepository.getBySentencesWithDictionary(sentences.map(s => s.id));
+         const validTermSentenceIds = this.getSentencesWithValidDictionaryTerms(allTerms);
          
          const sentencesToAnalyze = sentences.filter(s => {
             const lacksKana = !s.kana;
-            const hasNoTerms = !termCountBySentId[s.id] || termCountBySentId[s.id] === 0;
-            const termsWereAttempted = s.terms_source === "ai" || s.terms_source === "ai_empty";
-            return lacksKana || (hasNoTerms && !termsWereAttempted);
+            const lacksRomaji = !s.romaji;
+            const lacksValidTerms = !validTermSentenceIds.has(s.id);
+            return lacksKana || lacksRomaji || lacksValidTerms;
          });
          
          const targetJobs = await AiJobRepository.getByTargetAndStatuses(sourceId, ['pending', 'running', 'error']);
@@ -192,15 +200,10 @@ export class SourcePreparationService {
           ['pending', 'running', 'error'],
         );
         const currentSentences = await SentenceRepository.getBySourceId(sourceId);
-        const currentTerms = await TermRepository.getBySentences(currentSentences.map(s => s.id));
-        const termCountBySentId: Record<string, number> = {};
-        for (const t of currentTerms) {
-          termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
-        }
+        const currentTerms = await TermRepository.getBySentencesWithDictionary(currentSentences.map(s => s.id));
+        const validTermSentenceIds = this.getSentencesWithValidDictionaryTerms(currentTerms);
         const stillMissingAnalysis = currentSentences.some(s => {
-           const hasNoTerms = !termCountBySentId[s.id];
-           const termsWereAttempted = s.terms_source === "ai" || s.terms_source === "ai_empty";
-           return !s.kana || (hasNoTerms && !termsWereAttempted);
+           return !s.kana || !s.romaji || !validTermSentenceIds.has(s.id);
         });
         if (pendingAnalyzeJobs || stillMissingAnalysis) {
           await ProcessingRunRepository.updateRun(run.id, {
