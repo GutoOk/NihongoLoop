@@ -27,11 +27,22 @@ export class SourcePreparationService {
     );
   }
 
+  private static isPreparing = false;
+
   static async prepareSource(sourceId: string, options: PreparationOptions, runId: string): Promise<void> {
-    const run = await ProcessingRunRepository.getRun(runId);
-    if (!run) return;
+    if (this.isPreparing) {
+      console.warn("Source preparation is already running. Skipping duplicate call.");
+      return;
+    }
+    this.isPreparing = true;
 
     try {
+      const run = await ProcessingRunRepository.getRun(runId);
+      if (!run) {
+        this.isPreparing = false;
+        return;
+      }
+
       await ProcessingRunRepository.updateRun(run.id, { status: 'running', started_at: run.started_at || new Date().toISOString(), current_step: 'Carregando fonte...' });
 
       // ETAPA 1 - carregar fonte
@@ -72,7 +83,7 @@ export class SourcePreparationService {
          await ProcessingRunRepository.updateRun(run.id, { current_step: 'Identificando frases para tradução...' });
          const sentencesToTranslate = sentences.filter(s => !s.portuguese);
          
-         const targetJobs = await AiJobRepository.getByTargetAndStatuses(sourceId, ['pending', 'running', 'error']);
+         const targetJobs = await AiJobRepository.getByStatuses(['pending', 'running', 'error']);
          
          const pendingTranslateSet = new Set<string>();
          targetJobs.filter(j => j.type === 'batch_translate_sentences').forEach(j => {
@@ -151,7 +162,7 @@ export class SourcePreparationService {
             return lacksKana || (hasNoValidTerms && !wasEmptyByAi);
          });
          
-         const targetJobs = await AiJobRepository.getByTargetAndStatuses(sourceId, ['pending', 'running', 'error']);
+         const targetJobs = await AiJobRepository.getByStatuses(['pending', 'running', 'error']);
          const pendingAnalyzeSet = new Set<string>();
          targetJobs.filter(j => j.type === 'batch_analyze_sentences').forEach(j => {
             const input = j.input || j.result || {};
@@ -231,7 +242,7 @@ export class SourcePreparationService {
             const entries = await DictionaryRepository.getByIds(Array.from(dictIds) as string[]);
             const missingEntries = entries.filter(e => this.needsDictionaryEnrichment(e));
             
-            const targetJobs = await AiJobRepository.getByTargetAndStatuses(sourceId, ['pending', 'running', 'error']);
+            const targetJobs = await AiJobRepository.getByStatuses(['pending', 'running', 'error']);
             const pendingDictItemIds = new Set<string>();
             targetJobs.filter(j => j.type.startsWith('batch_enrich_dictionary')).forEach(j => {
                const input = j.input || j.result || {};
@@ -276,11 +287,13 @@ export class SourcePreparationService {
 
     } catch (e: any) {
       if (e.message === 'Canceled') {
-        await ProcessingRunRepository.appendLog(run.id, 'Preparação cancelada pelo usuário.');
-        await ProcessingRunRepository.updateRun(run.id, { status: 'cancelled', finished_at: new Date().toISOString() });
+        await ProcessingRunRepository.appendLog(runId, 'Preparação cancelada pelo usuário.');
+        await ProcessingRunRepository.updateRun(runId, { status: 'cancelled', finished_at: new Date().toISOString() });
       } else {
-        await ProcessingRunRepository.failRun(run.id, e.message);
+        await ProcessingRunRepository.failRun(runId, e.message);
       }
+    } finally {
+      this.isPreparing = false;
     }
   }
 

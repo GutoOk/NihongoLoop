@@ -24,6 +24,21 @@ export class AiJobRepository {
     return data || [];
   }
 
+  static async getByStatuses(statuses: AiJob['status'][]): Promise<AiJob[]> {
+    if (!isSupabaseConfigured || statuses.length === 0) return [];
+    const { data, error } = await supabase!
+      .from('ai_jobs')
+      .select('*')
+      .eq('user_id', getUserId())
+      .in('status', statuses)
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao carregar tarefas de IA por status: ${error.message}`);
+    }
+    return data || [];
+  }
+
   static async getByTargetAndStatuses(targetId: string, statuses: AiJob['status'][]): Promise<AiJob[]> {
     if (!isSupabaseConfigured || statuses.length === 0) return [];
     const { data, error } = await supabase!
