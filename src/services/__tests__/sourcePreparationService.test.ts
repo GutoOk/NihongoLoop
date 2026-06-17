@@ -8,6 +8,7 @@ vi.mock('../../repositories', () => ({
     addBatch: vi.fn(),
     getPendingByTarget: vi.fn().mockResolvedValue([]),
     getAll: vi.fn().mockResolvedValue([]),
+    getByStatuses: vi.fn().mockResolvedValue([]),
     getByTargetAndStatuses: vi.fn().mockResolvedValue([]),
     hasTargetJobByTypeAndStatuses: vi.fn().mockResolvedValue(false),
   },
@@ -21,10 +22,12 @@ vi.mock('../../repositories', () => ({
     update: vi.fn()
   },
   TermRepository: {
-    getBySentences: vi.fn().mockResolvedValue([])
+    getBySentences: vi.fn().mockResolvedValue([]),
+    getBySentencesWithDictionary: vi.fn().mockResolvedValue([])
   },
   DictionaryRepository: {
     getByUniqueKey: vi.fn().mockResolvedValue(null),
+    getByIds: vi.fn().mockResolvedValue([]),
     addBatch: vi.fn()
   },
   ProcessingRunRepository: {
@@ -40,6 +43,7 @@ vi.mock('../../repositories', () => ({
 describe('SourcePreparationService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(AiJobRepository.getByStatuses).mockResolvedValue([]);
     vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
     vi.mocked(AiJobRepository.hasTargetJobByTypeAndStatuses).mockResolvedValue(false);
   });
@@ -74,7 +78,7 @@ describe('SourcePreparationService', () => {
     vi.mocked(SourceRepository.getById).mockResolvedValue({ id: 'source-1' } as any);
     // Suppress console.log output for the simulated fail
     vi.mocked(ProcessingRunRepository.failRun).mockResolvedValue(undefined as any);
-    vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([
+    vi.mocked(AiJobRepository.getByStatuses).mockResolvedValue([
       { id: 'job-1', target_id: 'source-1', status: 'pending', type: 'batch_translate_sentences', input: { items: [{ id: 'sent-2' }]} } as any
     ]);
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
@@ -83,7 +87,7 @@ describe('SourcePreparationService', () => {
     ]);
     
     // Simulate that sent-2 is already pending in job-1
-    vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([
+    vi.mocked(AiJobRepository.getByStatuses).mockResolvedValue([
         { id: 'job-1', target_id: 'source-1', status: 'pending', type: 'batch_translate_sentences', input: { items: [{ id: 'sent-2' }]} } as any
     ]);
 
