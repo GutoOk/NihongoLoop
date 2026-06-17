@@ -120,6 +120,13 @@ export default function DictionaryScreen({
             
             // Recarrega silenciosamente se ainda estiver montado
             if (active) {
+              const allJobs = await AiJobRepository.getAll();
+              const remainingPending = allJobs.filter(
+                (j) => j.type === "enrich_dictionary_entry" && j.status === "pending"
+              ).length;
+              if (remainingPending === 0) {
+                await AiJobRepository.deleteCompletedJobsByType("enrich_dictionary_entry");
+              }
               await loadJobs();
               await loadEntries(true);
             }

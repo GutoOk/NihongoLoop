@@ -224,12 +224,32 @@ export class AiJobRepository {
     return !error;
   }
 
+  static async deleteCompletedJobsByTarget(targetId: string): Promise<boolean> {
+    if (!isSupabaseConfigured) return false;
+    const { error } = await supabase!.from('ai_jobs')
+      .delete()
+      .eq('user_id', getUserId())
+      .eq('target_id', targetId)
+      .eq('status', 'completed');
+    return !error;
+  }
+
   static async deleteJobsByType(type: string): Promise<boolean> {
     if (!isSupabaseConfigured) return false;
     const { error } = await supabase!.from('ai_jobs')
       .delete()
       .eq('user_id', getUserId())
       .eq('type', type);
+    return !error;
+  }
+
+  static async deleteCompletedJobsByType(type: string): Promise<boolean> {
+    if (!isSupabaseConfigured) return false;
+    const { error } = await supabase!.from('ai_jobs')
+      .delete()
+      .eq('user_id', getUserId())
+      .eq('type', type)
+      .eq('status', 'completed');
     return !error;
   }
 

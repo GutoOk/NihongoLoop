@@ -39,9 +39,14 @@ export default function PendingAiScreen({ onBack }: PendingAiScreenProps) {
   const loadJobs = async () => {
     setLoading(true);
     const data = await AiJobRepository.getAll();
-    // Os completos devem sumir da fila de exibição
-    const activeJobs = data.filter((j) => j.status !== "completed");
-    setJobs(activeJobs);
+    const completedIds = data.filter((j) => j.status === "completed").map((j) => j.id);
+    if (completedIds.length > 0) {
+      for (const id of completedIds) {
+        await AiJobRepository.delete(id);
+      }
+    }
+    const freshData = await AiJobRepository.getAll();
+    setJobs(freshData);
     setLoading(false);
   };
 

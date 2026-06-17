@@ -211,6 +211,7 @@ export class ProcessingRunner {
           } else {
             // All tasks for selected mode completed
             await ProcessingRunRepository.finishRun(runId);
+            await AiJobRepository.deleteCompletedJobsByTarget(sourceId);
             break;
           }
 

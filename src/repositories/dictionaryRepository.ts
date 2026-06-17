@@ -11,8 +11,45 @@ export class DictionaryRepository {
   static async getAll(): Promise<DictionaryEntry[]> {
     if (isE2EMockMode()) return defaultMockDict;
     if (!isSupabaseConfigured) return [];
-    const { data } = await supabase!.from('dictionary_entries').select('*').eq('user_id', getUserId());
-    return data || [];
+    
+    let allData: DictionaryEntry[] = [];
+    let hasMore = true;
+    let offset = 0;
+    const limit = 1000;
+    
+    while (hasMore) {
+      const { data, error } = await supabase!
+        .from('dictionary_entries')
+        .select('*')
+        .eq('user_id', getUserId())
+        .order('id')
+        .range(offset, offset + limit - 1);
+        
+      if (error) {
+        console.error(error);
+        throw new Error(`Erro do Supabase ao carregar dicionário completo: ${error.message}`);
+      }
+      
+      const chunk = data || [];
+      allData = allData.concat(chunk);
+      offset += limit;
+      if (chunk.length < limit) {
+        hasMore = false;
+      }
+    }
+    
+    // Garantir que as chaves de IDs no React sejam absolutamente únicas e estáveis
+    const seenIds = new Set<string>();
+    const uniqueData = allData.filter((entry) => {
+      if (!entry || !entry.id) return false;
+      if (seenIds.has(entry.id)) {
+        return false;
+      }
+      seenIds.add(entry.id);
+      return true;
+    });
+    
+    return uniqueData;
   }
 
   static async getById(id: string): Promise<DictionaryEntry | null> {

@@ -32,6 +32,7 @@ import { countJobsByStatus, getJobHumanName } from "./sourcePreparation/jobDispl
 interface SourcePreparationPanelProps {
   sourceId: string;
   onPreparationComplete: () => void;
+  onContentUpdated?: () => void;
 }
 
 type PhaseMode = "translate" | "analyze" | "dictionary";
@@ -51,7 +52,7 @@ const DEFAULT_OPTIONS: PreparationOptions = {
   analyzeBatchSize: 10,
   dictFastBatchSize: 40,
   dictFullBatchSize: 12,
-  dictMode: "fast",
+  dictMode: "full",
   useCache: true,
   overwriteReviewed: false,
   processMode: (localStorage.getItem("ai_process_mode") as "local" | "server") || "server",
@@ -61,6 +62,7 @@ const DEFAULT_OPTIONS: PreparationOptions = {
 export default function SourcePreparationPanel({
   sourceId,
   onPreparationComplete,
+  onContentUpdated,
 }: SourcePreparationPanelProps) {
   const [run, setRun] = useState<ProcessingRun | null>(null);
   const [stats, setStats] = useState<SourcePreparationStats | null>(null);
@@ -71,6 +73,7 @@ export default function SourcePreparationPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [localRunnerActive, setLocalRunnerActive] = useState(false);
   const loadingRef = useRef(false);
+  const statsRef = useRef<SourcePreparationStats | null>(null);
   const { showAlert, showConfirm } = useModal();
 
   useEffect(() => {
@@ -89,6 +92,14 @@ export default function SourcePreparationPanel({
         SourcePreparationRepository.getStats(sourceId),
         AiJobRepository.getByTarget(sourceId),
       ]);
+      
+      const prevStatsStr = JSON.stringify(statsRef.current);
+      const newStatsStr = JSON.stringify(sourceStats);
+      if (statsRef.current && prevStatsStr !== newStatsStr) {
+        if (onContentUpdated) onContentUpdated();
+      }
+      statsRef.current = sourceStats;
+      
       setRun(activeRun || latestRun);
       setStats(sourceStats);
       setJobs(targetJobs);
@@ -135,7 +146,7 @@ export default function SourcePreparationPanel({
         total: s.dictTotal || s.dictPending,
         missing: s.dictPending,
         done: Math.max(0, (s.dictTotal || s.dictPending) - s.dictPending),
-        jobTypes: ["batch_enrich_dictionary_entries_fast", "batch_enrich_dictionary_entries_full"],
+        jobTypes: ["batch_enrich_dictionary_entries_full"],
       },
     ];
   }, [stats]);
@@ -143,6 +154,7 @@ export default function SourcePreparationPanel({
   const jobCounts = countJobsByStatus(jobs);
   const failedJobs = jobs.filter((job) => job.status === "error");
   const activeJobs = jobs.filter((job) => job.status === "pending" || job.status === "running");
+  const activeQueueJobs = jobs.filter((job) => job.status !== "completed" && job.status !== "applied");
   const isRunActive = run?.status === "pending" || run?.status === "running";
   const isPaused = run?.status === "paused" || run?.status === "cancelled";
   const isDone = phases.every((phase) => phase.missing === 0) && activeJobs.length === 0;
@@ -342,7 +354,7 @@ export default function SourcePreparationPanel({
           </div>
 
           {showSettings && (
-            <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
               <SelectSetting
                 label="Execução"
                 value={options.processMode || "server"}
@@ -361,15 +373,6 @@ export default function SourcePreparationPanel({
                   ["2", "2 equilibrado"],
                   ["3", "3 rápido"],
                   ["5", "5 agressivo"],
-                ]}
-              />
-              <SelectSetting
-                label="Dicionário"
-                value={options.dictMode}
-                onChange={(value) => updateOptions({ dictMode: value as "fast" | "full" })}
-                options={[
-                  ["fast", "Rápido"],
-                  ["full", "Completo"],
                 ]}
               />
               <label className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 font-bold text-slate-700">
@@ -458,9 +461,9 @@ export default function SourcePreparationPanel({
                   </button>
                 </div>
 
-                {jobs.length === 0 ? (
+                {activeQueueJobs.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-xs font-semibold text-slate-400">
-                    Nenhuma tarefa criada. Inicie uma etapa para montar a fila.
+                    Nenhuma tarefa pendente na fila.
                   </div>
                 ) : (
                   <div className="max-h-80 overflow-auto rounded-xl border border-slate-200">
@@ -475,7 +478,7 @@ export default function SourcePreparationPanel({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {jobs.map((job) => (
+                        {activeQueueJobs.map((job) => (
                           <tr key={job.id} className="align-top">
                             <td className="p-3 font-bold text-slate-700">{getJobHumanName(job.type)}</td>
                             <td className="p-3 text-slate-500">{job.input?.items?.length || 1}</td>

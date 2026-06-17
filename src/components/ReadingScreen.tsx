@@ -580,6 +580,7 @@ export default function ReadingScreen({
                 setShowPrep(false);
                 loadData(false);
               }}
+              onContentUpdated={() => loadData(true)}
             />
           </div>
         )}

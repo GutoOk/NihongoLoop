@@ -137,14 +137,18 @@ export class SourcePreparationService {
          const allTerms = await TermRepository.getBySentences(sentences.map(s => s.id));
          const termCountBySentId: Record<string, number> = {};
          for (const t of allTerms) {
-            termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
+            // Count ONLY valid terms (that actually link to a dictionary form)
+            // orphaned terms without a dictionary form are considered deleted and require re-analysis.
+            if (t.dictionary_form_id) {
+               termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
+            }
          }
          
          const sentencesToAnalyze = sentences.filter(s => {
             const lacksKana = !s.kana;
-            const hasNoTerms = !termCountBySentId[s.id] || termCountBySentId[s.id] === 0;
-            const termsWereAttempted = s.terms_source === "ai" || s.terms_source === "ai_empty";
-            return lacksKana || (hasNoTerms && !termsWereAttempted);
+            const hasNoValidTerms = !termCountBySentId[s.id] || termCountBySentId[s.id] === 0;
+            const wasEmptyByAi = s.terms_source === "ai_empty";
+            return lacksKana || (hasNoValidTerms && !wasEmptyByAi);
          });
          
          const targetJobs = await AiJobRepository.getByTargetAndStatuses(sourceId, ['pending', 'running', 'error']);
@@ -195,12 +199,14 @@ export class SourcePreparationService {
         const currentTerms = await TermRepository.getBySentences(currentSentences.map(s => s.id));
         const termCountBySentId: Record<string, number> = {};
         for (const t of currentTerms) {
-          termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
+          if (t.dictionary_form_id) {
+            termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
+          }
         }
         const stillMissingAnalysis = currentSentences.some(s => {
-           const hasNoTerms = !termCountBySentId[s.id];
-           const termsWereAttempted = s.terms_source === "ai" || s.terms_source === "ai_empty";
-           return !s.kana || (hasNoTerms && !termsWereAttempted);
+           const hasNoValidTerms = !termCountBySentId[s.id];
+           const wasEmptyByAi = s.terms_source === "ai_empty";
+           return !s.kana || (hasNoValidTerms && !wasEmptyByAi);
         });
         if (pendingAnalyzeJobs || stillMissingAnalysis) {
           await ProcessingRunRepository.updateRun(run.id, {
@@ -233,22 +239,20 @@ export class SourcePreparationService {
             });
             
             const entriesToBatch = missingEntries.filter(e => !pendingDictItemIds.has(e.id));
-            
-            if (entriesToBatch.length > 0) {
+                        if (entriesToBatch.length > 0) {
                await ProcessingRunRepository.appendLog(run.id, `Criando lotes de dicionário para ${entriesToBatch.length} termos.`);
-               const isFast = options.dictMode === 'fast';
-               const dictType = isFast ? 'batch_enrich_dictionary_entries_fast' : 'batch_enrich_dictionary_entries_full';
-               const bSize = isFast ? (options.dictFastBatchSize || 30) : (options.dictFullBatchSize || 10);
+               const dictType = 'batch_enrich_dictionary_entries_full';
+               const bSize = (options.dictFullBatchSize || 10);
                
                const dictChunks = chunkByCountAndChars(entriesToBatch, e => e.lemma, {
-                  maxItems: bSize, maxChars: isFast ? 8500 : 5200, perItemOverhead: isFast ? 80 : 180
+                  maxItems: bSize, maxChars: 5200, perItemOverhead: 180
                });
                
                for (const chunk of dictChunks) {
                   cancelCheck = await ProcessingRunRepository.getRun(run.id);
                   if (cancelCheck?.cancel_requested) throw new Error('Canceled');
                   
-                  const input = { mode: isFast ? 'fast' : 'full', items: chunk.map(e => ({ id: e.id, lemma: e.lemma })) };
+                  const input = { mode: 'full', items: chunk.map(e => ({ id: e.id, lemma: e.lemma })) };
                   const hash = await stableHash({ type: dictType, input });
                   
                   if (!targetJobs.find(j => j.input_hash === hash)) {

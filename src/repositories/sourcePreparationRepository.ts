@@ -48,9 +48,10 @@ export class SourcePreparationRepository {
       if (data) allTerms = allTerms.concat(data);
     }
 
-    const termSentenceIds = new Set(allTerms.map((t) => t.sentence_id));
-    const legacyDictIds = allTerms.map((t: any) => t.dictionary_entry_id).filter(Boolean);
-    const formIds = Array.from(new Set(allTerms.map((t) => t.dictionary_form_id).filter(Boolean))) as string[];
+    const validTerms = allTerms.filter(t => !!t.dictionary_form_id);
+    const termSentenceIds = new Set(validTerms.map((t) => t.sentence_id));
+    const legacyDictIds = validTerms.map((t: any) => t.dictionary_entry_id).filter(Boolean);
+    const formIds = Array.from(new Set(validTerms.map((t) => t.dictionary_form_id).filter(Boolean))) as string[];
     let dictIds: string[] = legacyDictIds;
     if (formIds.length > 0) {
       for (const chunk of chunkArray(formIds, 100)) {
@@ -63,22 +64,27 @@ export class SourcePreparationRepository {
         dictIds = dictIds.concat((data || []).map((f: { dictionary_entry_id: string }) => f.dictionary_entry_id));
       }
     }
-    dictIds = Array.from(new Set(dictIds));
+    dictIds = Array.from(new Set(dictIds.filter(Boolean)));
     let dictPending = 0;
 
     for (const chunk of chunkArray(dictIds, 100)) {
       const { data, error } = await supabase!
         .from('dictionary_entries')
-        .select('status, main_meaning, kana, romaji, type')
+        .select('id, status, main_meaning, kana, romaji, type')
         .in('id', chunk)
         .eq('user_id', getUserId());
       if (error) {
         console.error(error);
         throw new Error(`Erro do Supabase ao carregar estatísticas de dicionário: ${error.message}`);
       }
+      
+      const returnedIds = new Set((data || []).map(e => e.id));
+      const missingTotal = chunk.filter(id => !returnedIds.has(id)).length;
+      dictPending += missingTotal;
+      
       dictPending += (data || []).filter(
         (e) =>
-          e.status === 'pending' &&
+          e.status === 'pending' ||
           (!e.main_meaning ||
             !e.kana ||
             !e.romaji ||
@@ -89,9 +95,9 @@ export class SourcePreparationRepository {
     const withTrans = safeSentences.filter((s) => !!s.portuguese).length;
     const withReading = safeSentences.filter((s) => !!s.kana && !!s.romaji).length;
     const missingAnalysis = safeSentences.filter((s) => {
-      const hasNoTerms = !termSentenceIds.has(s.id);
-      const termsWereAttempted = s.terms_source === 'ai' || s.terms_source === 'ai_empty';
-      return !s.kana || (hasNoTerms && !termsWereAttempted);
+      const hasNoValidTerms = !termSentenceIds.has(s.id);
+      const wasEmptyByAi = s.terms_source === 'ai_empty';
+      return !s.kana || (hasNoValidTerms && !wasEmptyByAi);
     }).length;
 
     return {
