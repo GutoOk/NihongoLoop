@@ -20,8 +20,19 @@ export function cleanAndParseJSON<T = any>(text: string): T {
 
 export function formatGenAiError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
-  if (msg.includes("spending cap") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("exceeded its monthly spending cap")) {
-    return "Limite de faturamento / orçamento atingido no Google AI Studio (429 - RESOURCE_EXHAUSTED). Seu projeto ultrapassou os limites e restrições mensais estabelecidos. Por favor, acesse o painel do Google AI Studio em https://ai.studio/spend para estender seu limite ou atualizar os planos de faturamento.";
+  const lowerMsg = msg.toLowerCase();
+  if (
+    lowerMsg.includes("prepayment credits are depleted") ||
+    lowerMsg.includes("prepayment") ||
+    lowerMsg.includes("depleted") ||
+    lowerMsg.includes("spending cap") ||
+    lowerMsg.includes("resource_exhausted") ||
+    lowerMsg.includes("exceeded its monthly spending cap")
+  ) {
+    if (lowerMsg.includes("prepayment") || lowerMsg.includes("depleted")) {
+      return "Créditos pré-pagos esgotados no Google AI Studio (429 - RESOURCE_EXHAUSTED). Os créditos de faturamento pré-pago da sua conta do Google AI Studio acabaram. Por favor, acesse o painel do Google AI Studio em https://ai.studio/projects para adicionar fundos ou atualizar suas informações de faturamento.";
+    }
+    return "Limite de faturamento / orçamento atingido no Google AI Studio (429 - RESOURCE_EXHAUSTED). Seu projeto ultrapassou os limites e restrições mensais estabelecidos. Por favor, acesse o painel do Google AI Studio em https://ai.studio/spend ou https://ai.studio/projects para estender seu limite ou atualizar os planos de faturamento.";
   }
   return msg;
 }

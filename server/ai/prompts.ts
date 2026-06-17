@@ -53,12 +53,13 @@ export function buildBatchAiRequest(jobType: string, items: any[]): AiPromptRequ
 
   if (kind === "translate_sentence") {
     const compactItems = items.map((item) => ({
+      job_id: item.id,
       id: item.id,
       japanese: item.sentence || item.japanese,
     }));
     return withPolicy(jobType, promptVersion, {
       prompt: `Tarefa: traduzir cada frase japonesa para português brasileiro natural.
-Associe cada resultado ao mesmo id recebido. Não omita itens. Retorne apenas JSON.
+Associe cada resultado ao mesmo id recebido em job_id. Não omita itens. Retorne apenas JSON.
 
 Entrada:
 ${JSON.stringify(compactItems)}`,
@@ -68,6 +69,7 @@ ${JSON.stringify(compactItems)}`,
 
   if (kind === "analyze_sentence") {
     const compactItems = items.map((item) => ({
+      job_id: item.id,
       id: item.id,
       japanese: item.sentence || item.japanese,
       portuguese: item.portuguese || null,
@@ -82,6 +84,7 @@ ${JSON.stringify(compactItems)}`,
   if (kind === "enrich_dictionary") {
     const includeFull = jobType === "batch_enrich_dictionary_entries_full";
     const compactItems = items.map((item) => ({
+      job_id: item.id,
       id: item.id,
       lemma: item.lemma,
       examples: Array.isArray(item.examples) ? item.examples.slice(0, 2) : [],

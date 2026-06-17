@@ -117,7 +117,14 @@ export class AiJobService {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ job }),
       });
-      if (!res.ok) throw new Error(`API Error: ${res.status}`);
+      if (!res.ok) {
+        let errMsg = `API Error: ${res.status}`;
+        try {
+          const body = await res.json();
+          if (body && body.error) errMsg = body.error;
+        } catch {}
+        throw new Error(errMsg);
+      }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       await this.applyJobResult(job, data.result);
@@ -134,16 +141,34 @@ export class AiJobService {
   }
 
   static async processJobsBatch(jobs: AiJob[], signal?: AbortSignal) {
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
     let successCount = 0;
     let errorCount = 0;
-    for (const job of jobs) {
-      await AiJobRepository.updateStatus(job.id, { status: 'running', attempts: (job.attempts || 0) + 1 });
+
+    // Set all jobs to running in a single optimized query
+    await AiJobRepository.updateStatuses(jobs.map(j => j.id), { status: 'running' });
+
+    if (signal?.aborted) {
+      // Revert if aborted immediately after running state change
+      await AiJobRepository.updateStatuses(jobs.map(j => j.id), { status: 'pending' });
+      throw new DOMException('Aborted', 'AbortError');
     }
 
     const remainingJobs: AiJob[] = [];
     for (const job of jobs) {
+      if (signal?.aborted) break;
       if (await this.tryOptimizeJob(job)) successCount++;
       else remainingJobs.push(job);
+    }
+
+    if (signal?.aborted) {
+      if (remainingJobs.length > 0) {
+        await AiJobRepository.updateStatuses(remainingJobs.map(j => j.id), { status: 'pending' });
+      }
+      throw new DOMException('Aborted', 'AbortError');
     }
 
     if (remainingJobs.length === 0) return { success: true, successCount, errorCount };
@@ -155,7 +180,14 @@ export class AiJobService {
         body: JSON.stringify({ jobs: remainingJobs }),
         signal,
       });
-      if (!res.ok) throw new Error(`API Error: ${res.status}`);
+      if (!res.ok) {
+        let errMsg = `API Error: ${res.status}`;
+        try {
+          const body = await res.json();
+          if (body && body.error) errMsg = body.error;
+        } catch {}
+        throw new Error(errMsg);
+      }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
@@ -165,6 +197,9 @@ export class AiJobService {
       }
 
       for (const job of remainingJobs) {
+        if (signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
         const itemResult = resultMap.get(job.id) || data.result || data;
         try {
           await this.applyJobResult(job, itemResult);
@@ -184,8 +219,17 @@ export class AiJobService {
       }
       return { success: true, successCount, errorCount };
     } catch (error: any) {
-      for (const job of remainingJobs) {
-        await AiJobRepository.updateStatus(job.id, { status: 'error', error: error.message });
+      const isAbort = error.name === 'AbortError' || 
+                      error.message?.includes('aborted') || 
+                      error.message?.includes('AbortError') ||
+                      error.message?.includes('signal is aborted') ||
+                      (signal && signal.aborted);
+      
+      const newStatus = isAbort ? 'pending' : 'error';
+      const errorMsg = isAbort ? null : error.message;
+
+      if (remainingJobs.length > 0) {
+        await AiJobRepository.updateStatuses(remainingJobs.map(j => j.id), { status: newStatus, error: errorMsg });
       }
       return { success: false, error: error.message, successCount, errorCount: remainingJobs.length };
     }

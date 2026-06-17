@@ -70,7 +70,7 @@ export default function StatisticsScreen({
       isSupabaseConfigured
         ? supabase!
             .from("sentence_terms")
-            .select("id, sentence_id, dictionary_entry_id")
+            .select("id, sentence_id, dictionary_forms(dictionary_entry_id)")
             .eq("user_id", getUserId())
         : { data: [] },
       isSupabaseConfigured
@@ -90,7 +90,12 @@ export default function StatisticsScreen({
     const s = sources || [];
     const sen = sentences || [];
     const w = words || [];
-    const st = terms || [];
+    const rawTerms = terms || [];
+    const st = rawTerms.map((t: any) => ({
+      id: t.id,
+      sentence_id: t.sentence_id,
+      dictionary_entry_id: t.dictionary_entry_id || t.dictionary_forms?.dictionary_entry_id || null,
+    }));
     const sp = sentProg || [];
     const dp = dictProg || [];
 

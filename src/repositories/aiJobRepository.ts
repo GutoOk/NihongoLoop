@@ -106,6 +106,25 @@ export class AiJobRepository {
     return data;
   }
 
+  static async updateStatuses(ids: string[], updates: Partial<AiJob>): Promise<boolean> {
+    if (!isSupabaseConfigured || ids.length === 0) return false;
+    const finalUpdates: any = { 
+      ...updates, 
+      updated_at: new Date().toISOString() 
+    };
+    delete finalUpdates.errors;
+    delete finalUpdates.retry_count;
+    const { error } = await supabase!.from('ai_jobs')
+      .update(finalUpdates)
+      .in('id', ids)
+      .eq('user_id', getUserId());
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao atualizar lote de status ai_jobs: ${error.message}`);
+    }
+    return true;
+  }
+
   static async claimJob(id: string, runnerId: string): Promise<boolean> {
     if (!isSupabaseConfigured) return false;
     const now = new Date();
@@ -202,6 +221,25 @@ export class AiJobRepository {
       .delete()
       .eq('user_id', getUserId())
       .eq('target_id', targetId);
+    return !error;
+  }
+
+  static async deleteJobsByType(type: string): Promise<boolean> {
+    if (!isSupabaseConfigured) return false;
+    const { error } = await supabase!.from('ai_jobs')
+      .delete()
+      .eq('user_id', getUserId())
+      .eq('type', type);
+    return !error;
+  }
+
+  static async deleteNonCompletedJobsByType(type: string): Promise<boolean> {
+    if (!isSupabaseConfigured) return false;
+    const { error } = await supabase!.from('ai_jobs')
+      .delete()
+      .eq('user_id', getUserId())
+      .eq('type', type)
+      .in('status', ['pending', 'running', 'error', 'cancelled']);
     return !error;
   }
 
