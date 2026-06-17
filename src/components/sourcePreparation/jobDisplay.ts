@@ -1,10 +1,10 @@
 import { AiJob } from "../../types";
 
 export function getJobHumanName(type: string): string {
-  if (type === "batch_translate_sentences") return "Tradução de frases";
-  if (type === "batch_analyze_sentences") return "Leitura e identificação de palavras";
-  if (type.includes("dictionary_entries_fast")) return "Dicionário completo";
-  if (type.includes("dictionary_entries_full")) return "Dicionário completo";
+  if (type === "batch_translate_sentences") return "Tradução de Frases";
+  if (type === "batch_analyze_sentences") return "Análise & Geração de Leitura/Furigana";
+  if (type.includes("dictionary_entries_fast")) return "Dicionário (Modo Rápido)";
+  if (type.includes("dictionary_entries_full")) return "Dicionário (Modo Completo)";
   return type;
 }
 

@@ -82,7 +82,7 @@ ${JSON.stringify(compactItems)}`,
   }
 
   if (kind === "enrich_dictionary") {
-    const includeFull = true;
+    const includeFull = jobType === "batch_enrich_dictionary_entries_full";
     const compactItems = items.map((item) => ({
       job_id: item.id,
       id: item.id,

@@ -29,10 +29,7 @@ export function getModelForJobType(jobType: string): string {
   const envSpecific = process.env[`GEMINI_MODEL_${jobType.toUpperCase()}`];
   if (envSpecific) return envSpecific;
 
-  if (
-    jobType === "batch_enrich_dictionary_entries_full" ||
-    jobType === "batch_enrich_dictionary_entries_fast"
-  ) {
+  if (jobType === "batch_enrich_dictionary_entries_full") {
     return process.env.GEMINI_MODEL_FULL || process.env.GEMINI_MODEL || "gemini-2.5-flash";
   }
 

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SourcePreparationService } from '../../features/ai/SourcePreparationService';
 import { AiJobRepository, SentenceRepository, SourceRepository, ProcessingRunRepository } from '../../repositories';
-import { stableHash } from '../../core/hash';
 
 vi.mock('../../repositories', () => ({
   AiJobRepository: {
@@ -9,10 +8,8 @@ vi.mock('../../repositories', () => ({
     addBatch: vi.fn(),
     getPendingByTarget: vi.fn().mockResolvedValue([]),
     getAll: vi.fn().mockResolvedValue([]),
-    getByTarget: vi.fn().mockResolvedValue([]),
     getByTargetAndStatuses: vi.fn().mockResolvedValue([]),
     hasTargetJobByTypeAndStatuses: vi.fn().mockResolvedValue(false),
-    updateStatus: vi.fn(),
   },
   SentenceRepository: {
     getBySourceId: vi.fn(),
@@ -43,7 +40,6 @@ vi.mock('../../repositories', () => ({
 describe('SourcePreparationService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([]);
     vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
     vi.mocked(AiJobRepository.hasTargetJobByTypeAndStatuses).mockResolvedValue(false);
   });
@@ -64,6 +60,7 @@ describe('SourcePreparationService', () => {
       runMode: "all",
       translateBatchSize: 20,
       analyzeBatchSize: 5,
+      dictFastBatchSize: 30,
       dictFullBatchSize: 10
     }, 'run-1');
 
@@ -78,9 +75,6 @@ describe('SourcePreparationService', () => {
     // Suppress console.log output for the simulated fail
     vi.mocked(ProcessingRunRepository.failRun).mockResolvedValue(undefined as any);
     vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([
-      { id: 'job-1', target_id: 'source-1', status: 'pending', type: 'batch_translate_sentences', input: { items: [{ id: 'sent-2' }]} } as any
-    ]);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
       { id: 'job-1', target_id: 'source-1', status: 'pending', type: 'batch_translate_sentences', input: { items: [{ id: 'sent-2' }]} } as any
     ]);
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
@@ -100,6 +94,7 @@ describe('SourcePreparationService', () => {
       runMode: "all",
       translateBatchSize: 20,
       analyzeBatchSize: 5,
+      dictFastBatchSize: 30,
       dictFullBatchSize: 10
     }, 'run-1');
 
@@ -123,51 +118,12 @@ describe('SourcePreparationService', () => {
       runMode: "all",
       translateBatchSize: 20,
       analyzeBatchSize: 5,
+      dictFastBatchSize: 30,
       dictFullBatchSize: 10
     }, 'run-1');
 
     expect(AiJobRepository.add).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'batch_translate_sentences' })
-    );
-  });
-
-  it('reopens completed analysis jobs when terms were deleted after a previous AI analysis', async () => {
-    vi.mocked(SourceRepository.getById).mockResolvedValue({ id: 'source-1' } as any);
-    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
-      {
-        id: 'sent-1',
-        japanese: '日本語',
-        japanese_key: '日本語',
-        portuguese: 'Japonês',
-        kana: 'にほんご',
-        romaji: 'nihongo',
-        terms_source: 'ai',
-      } as any,
-    ]);
-    const input = { items: [{ id: 'sent-1', japanese: '日本語', portuguese: 'Japonês' }] };
-    const completedJob = {
-      id: 'job-old',
-      target_id: 'source-1',
-      status: 'completed',
-      type: 'batch_analyze_sentences',
-      input_hash: await stableHash({ type: 'batch_analyze_sentences', input }),
-      input,
-    } as any;
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([completedJob]);
-
-    await SourcePreparationService.prepareSource('source-1', {
-      dictMode: "full",
-      useCache: false,
-      overwriteReviewed: false,
-      runMode: "analyze",
-      translateBatchSize: 20,
-      analyzeBatchSize: 5,
-      dictFullBatchSize: 10
-    }, 'run-1');
-
-    expect(AiJobRepository.updateStatus).toHaveBeenCalledWith(
-      'job-old',
-      expect.objectContaining({ status: 'pending', result: null }),
     );
   });
 });
