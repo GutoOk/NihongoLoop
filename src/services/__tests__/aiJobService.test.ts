@@ -7,8 +7,10 @@ import { stableHash } from '../../core/hash';
 vi.mock('../../repositories', () => ({
   AiJobRepository: {
     getPendingByTarget: vi.fn(),
+    getByTarget: vi.fn(),
     add: vi.fn(),
     updateStatus: vi.fn(),
+    updateStatuses: vi.fn(),
     getByTargetAndStatuses: vi.fn(),
   },
   SentenceRepository: {
@@ -42,7 +44,9 @@ describe('AiJobService', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', vi.fn());
     vi.mocked(AiJobRepository.updateStatus).mockResolvedValue({} as any);
+    vi.mocked(AiJobRepository.updateStatuses).mockResolvedValue(true);
     vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([]);
   });
 
   describe('requestSentenceTranslation', () => {
@@ -83,6 +87,44 @@ describe('AiJobService', () => {
         user_id: 'user-123'
       }));
       expect(result.id).toBe('job-2');
+    });
+  });
+
+  describe('requestDictionaryEnrichment', () => {
+    it('reabre job antigo finalizado com o mesmo hash quando o verbete continua pendente', async () => {
+      const input = { lemma: '家' };
+      const hash = await stableHash(input);
+
+      vi.mocked(AiJobRepository.getPendingByTarget).mockResolvedValue(null);
+      vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+        {
+          id: 'job-old',
+          type: 'enrich_dictionary_entry',
+          target_type: 'dictionary_entry',
+          target_id: 'dict-1',
+          status: 'completed',
+          input_hash: hash,
+          result: { main_meaning: 'casa' },
+        } as any,
+      ]);
+      vi.mocked(AiJobRepository.updateStatus).mockResolvedValue({
+        id: 'job-old',
+        status: 'pending',
+      } as any);
+
+      const result = await AiJobService.requestDictionaryEnrichment('dict-1', '家');
+
+      expect(AiJobRepository.add).not.toHaveBeenCalled();
+      expect(AiJobRepository.updateStatus).toHaveBeenCalledWith(
+        'job-old',
+        expect.objectContaining({
+          status: 'pending',
+          error: null,
+          result: null,
+          completed_at: null,
+        }),
+      );
+      expect(result?.id).toBe('job-old');
     });
   });
 

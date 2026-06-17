@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+﻿import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
   ArrowLeft,
   Search,
@@ -22,6 +22,11 @@ import {
 import { DictionaryEntry, Source, AiJob } from "../types";
 import { AiJobService } from "../services/aiJobService";
 import { useModal } from "./ModalProvider";
+import {
+  filterDictionaryEntries,
+  getCorrectDictionaryStatus,
+  summarizeDictionaryQueue,
+} from "../features/dictionary/dictionaryQueue";
 
 interface DictionaryScreenProps {
   onBack: () => void;
@@ -48,6 +53,7 @@ export default function DictionaryScreen({
   onSelectEntry,
 }: DictionaryScreenProps) {
   const [entries, setEntries] = useState<DictionaryEntry[]>([]);
+  const [allEntries, setAllEntries] = useState<DictionaryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState("all");
   const [levelFilter, setLevelFilter] = useState("all");
@@ -55,11 +61,13 @@ export default function DictionaryScreen({
   const [types, setTypes] = useState<string[]>([]);
   const [levels, setLevels] = useState<string[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [sourceEntryIds, setSourceEntryIds] = useState<Set<string> | null>(null);
   const [isQueuing, setIsQueuing] = useState(false);
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [serverStatus, setServerStatus] = useState<"checking" | "online" | "offline">("checking");
+  const [lastProcessingMessage, setLastProcessingMessage] = useState("Aguardando ação.");
   const [showErrorsModal, setShowErrorsModal] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const { showAlert, showConfirm } = useModal();
@@ -67,6 +75,7 @@ export default function DictionaryScreen({
   useEffect(() => {
     SourceRepository.getAll().then(setSources);
     loadJobs();
+    checkServerHealth();
   }, []);
 
   useEffect(() => {
@@ -99,14 +108,14 @@ export default function DictionaryScreen({
     isPausedRef.current = isPaused;
   }, [isPaused]);
 
-  // Processador automático em background das tarefas 'enrich_dictionary_entry'
+  // Processador automÃ¡tico em background das tarefas 'enrich_dictionary_entry'
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
     const runLoop = async () => {
-      // Loop contínuo enquanto o componente estiver montado e não estiver pausado
+      // Loop contÃ­nuo enquanto o componente estiver montado e nÃ£o estiver pausado
       while (active && !isPausedRef.current) {
         const pending = jobsRef.current.filter(j => j.status === 'pending');
         
@@ -116,7 +125,11 @@ export default function DictionaryScreen({
           try {
             // Processa em lotes de 10
             const chunk = pending.slice(0, 10);
-            await AiJobService.processJobsBatch(chunk, controller.signal);
+            setLastProcessingMessage(`Processando ${chunk.length} tarefa(s) de dicionário no servidor local.`);
+            const result = await AiJobService.processJobsBatch(chunk, controller.signal);
+            setLastProcessingMessage(
+              `Lote finalizado: ${result.successCount || 0} sucesso(s), ${result.errorCount || 0} falha(s).`,
+            );
             
             // Recarrega silenciosamente se ainda estiver montado
             if (active) {
@@ -125,7 +138,8 @@ export default function DictionaryScreen({
             }
           } catch (err: any) {
             if (err.name !== 'AbortError' && active) {
-              console.error("Erro no processamento automático de verbetes:", err);
+              console.error("Erro no processamento automÃ¡tico de verbetes:", err);
+              setLastProcessingMessage(`Erro no processamento: ${err.message || String(err)}`);
             }
           } finally {
             isProcessingRef.current = false;
@@ -135,7 +149,7 @@ export default function DictionaryScreen({
           }
         }
         
-        // Aguarda 1000ms antes de verificar o próximo lote
+        // Aguarda 1000ms antes de verificar o prÃ³ximo lote
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
     };
@@ -160,40 +174,68 @@ export default function DictionaryScreen({
     }
   };
 
+  const checkServerHealth = async () => {
+    setServerStatus("checking");
+    try {
+      const response = await fetch("/api/health");
+      setServerStatus(response.ok ? "online" : "offline");
+    } catch {
+      setServerStatus("offline");
+    }
+  };
+
   const loadEntries = async (silent = false) => {
     if (!silent) setLoading(true);
-    let data = await DictionaryRepository.getAll();
+    const data = await DictionaryRepository.getAll();
+    let scopedSourceEntryIds: Set<string> | null = null;
 
     if (sourceFilter !== "all") {
       const sentences = await SentenceRepository.getBySourceId(sourceFilter);
       const sentenceIds = sentences.map((s) => s.id);
       const terms = await TermRepository.getBySentences(sentenceIds);
-      const validEntryIds = new Set(
+      scopedSourceEntryIds = new Set(
         terms.map((t) => t.dictionary_entry_id).filter(Boolean),
       );
-      data = data.filter((e) => validEntryIds.has(e.id));
     }
 
-    const totalPending = data.filter((e) => e.status === "pending").length;
-    setPendingCount(totalPending);
+    setAllEntries(data);
+    setSourceEntryIds(scopedSourceEntryIds);
+
+    const sourceScopedData = filterDictionaryEntries(data, {
+      sourceEntryIds: scopedSourceEntryIds,
+      typeFilter: "all",
+      levelFilter: "all",
+    });
+
+    const filteredData = filterDictionaryEntries(data, {
+      sourceEntryIds: scopedSourceEntryIds,
+      typeFilter,
+      levelFilter,
+    });
 
     const availableTypes = Array.from(
-      new Set(data.map((e) => e.type).filter(Boolean)),
+      new Set(sourceScopedData.map((e) => e.type).filter(Boolean)),
     ) as string[];
     const availableLevels = Array.from(
-      new Set(data.map((e) => e.jlpt_level).filter(Boolean)),
+      new Set(sourceScopedData.map((e) => e.jlpt_level).filter(Boolean)),
     ) as string[];
 
     setTypes(availableTypes.sort());
     setLevels(availableLevels.sort());
 
-    if (typeFilter !== "all") data = data.filter((e) => e.type === typeFilter);
-    if (levelFilter !== "all")
-      data = data.filter((e) => e.jlpt_level === levelFilter);
-
-    setEntries(data);
+    setEntries(filteredData);
     if (!silent) setLoading(false);
   };
+
+  const queueSummary = useMemo(
+    () =>
+      summarizeDictionaryQueue(allEntries, jobs, {
+        sourceEntryIds,
+        typeFilter,
+        levelFilter,
+      }),
+    [allEntries, jobs, sourceEntryIds, typeFilter, levelFilter],
+  );
 
   const handleClearDictionary = () => {
     if (entries.length === 0) {
@@ -211,7 +253,6 @@ export default function DictionaryScreen({
           if (success) {
             showAlert("Sucesso", "O dicionário foi totalmente limpo.");
             setEntries([]);
-            setPendingCount(0);
             await loadJobs();
           } else {
             showAlert("Erro", "Ocorreu um erro ao limpar o dicionário.");
@@ -228,28 +269,29 @@ export default function DictionaryScreen({
   };
 
   const handleAddToQueue = async () => {
-    if (pendingCount === 0) {
-      showAlert("Aviso", "Não há palavras pendentes no dicionário.");
+    const pendings = queueSummary.pendingEntries;
+    if (pendings.length === 0) {
+      showAlert("Aviso", "Não há palavras pendentes neste filtro do dicionário.");
       return;
     }
 
     showConfirm(
       "Completar dicionário",
-      `Deseja enviar ${pendingCount} verbetes pendentes para completar o enrichment com IA? Forneça apenas se você deseja forçar a atualização global.`,
+      `Deseja enviar ${pendings.length} verbetes pendentes deste filtro para completar com IA?`,
       async () => {
         setIsQueuing(true);
         try {
-          const allEntries = await DictionaryRepository.getAll();
-          const pendings = allEntries.filter((e) => e.status === "pending");
-
           let count = 0;
           for (const item of pendings) {
             await AiJobService.requestDictionaryEnrichment(item.id, item.lemma);
             count++;
           }
+          setIsPaused(false);
+          isPausedRef.current = false;
+          setLastProcessingMessage(`${count} tarefa(s) prontas para processamento.`);
           showAlert(
             "Sucesso",
-            `${count} tarefas de enriquecimento foram enviadas à fila de IA. O processamento se iniciará em background automaticamente.`,
+            `${count} tarefas foram enviadas à fila de IA. O processamento começa automaticamente se o servidor estiver online e esta tela permanecer aberta.`,
           );
           await loadJobs();
           await loadEntries(true);
@@ -263,9 +305,8 @@ export default function DictionaryScreen({
       "Completar pendentes",
     );
   };
-
   const handleResetErroredJobs = async () => {
-    const errored = jobs.filter((j) => j.status === "error" || j.status === "cancelled");
+    const errored = queueSummary.erroredJobs;
     if (errored.length === 0) return;
     setIsQueuing(true);
     try {
@@ -274,7 +315,7 @@ export default function DictionaryScreen({
       }
       showAlert(
         "Fila Reiniciada",
-        `${errored.length} tarefas de dicionário com erro foram marcadas para re-tentativa e voltaram para a fila.`
+        `${errored.length} tarefas de dicionário com erro foram marcadas para nova tentativa e voltaram para a fila.`
       );
       await loadJobs();
       await loadEntries(true);
@@ -314,14 +355,15 @@ export default function DictionaryScreen({
     }
   };
 
-  const pendingJobs = jobs.filter((j) => j.status === "pending");
-  const runningJobs = jobs.filter((j) => j.status === "running");
-  const erroredJobs = jobs.filter((j) => j.status === "error" || j.status === "cancelled");
-  const completedJobs = jobs.filter((j) => j.status === "completed");
+  const pendingJobs = queueSummary.pendingJobs;
+  const runningJobs = queueSummary.runningJobs;
+  const erroredJobs = queueSummary.erroredJobs;
+  const completedJobs = queueSummary.completedJobs;
+  const staleCompletedJobs = queueSummary.staleCompletedJobs;
   const lastErrorMsg = erroredJobs.find((j) => j.error)?.error || null;
 
-  const totalActiveQueue = pendingJobs.length + runningJobs.length + erroredJobs.length + completedJobs.length;
-  const progressPercent = totalActiveQueue > 0 ? Math.round((completedJobs.length / totalActiveQueue) * 100) : 0;
+  const totalActiveQueue = queueSummary.totalActionableJobs;
+  const progressPercent = queueSummary.progressPercent;
   const isQueueActive = runningJobs.length > 0 || isProcessing;
 
   const getJobWordLabel = (job: AiJob) => {
@@ -410,7 +452,7 @@ export default function DictionaryScreen({
               Completar Dicionário com IA
             </h2>
             <p className="text-[11px] leading-relaxed text-[#86868B]">
-              Enriqueça os verbetes pendentes no dicionário em lote. Quando há tarefas pendentes, o processamento ocorre automaticamente em segundo plano nesta tela.
+              Enriqueça os verbetes pendentes no dicionário em lote. Quando há tarefas pendentes, esta tela chama a API local e acompanha a fila.
             </p>
           </div>
 
@@ -433,13 +475,54 @@ export default function DictionaryScreen({
             ) : (
               <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 rounded-full px-2 py-0.5">
                 <CheckCircle2 className="h-3 w-3" />
-                Fila Concluída / Ociosa
+                Fila concluída / ociosa
               </span>
             )}
           </div>
         </div>
 
-        {/* Informações de progresso do preenchimento */}
+        <div className="grid grid-cols-1 gap-2 text-[11px] sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+            <div className="font-black uppercase tracking-wider text-slate-500">
+              Servidor de IA
+            </div>
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <span
+                className={`font-bold ${
+                  serverStatus === "online"
+                    ? "text-emerald-700"
+                    : serverStatus === "offline"
+                      ? "text-rose-700"
+                      : "text-amber-700"
+                }`}
+              >
+                {serverStatus === "online"
+                  ? "API online"
+                  : serverStatus === "offline"
+                    ? "API offline"
+                    : "Verificando..."}
+              </span>
+              <button
+                type="button"
+                onClick={checkServerHealth}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 font-bold text-slate-600"
+              >
+                Atualizar
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+            <div className="font-black uppercase tracking-wider text-slate-500">
+              Último estado
+            </div>
+            <p className="mt-1 font-semibold leading-relaxed text-slate-700">
+              {lastProcessingMessage}
+            </p>
+          </div>
+        </div>
+
+        {/* InformaÃ§Ãµes de progresso do preenchimento */}
         {totalActiveQueue > 0 ? (
           <div className="space-y-3 bg-slate-50/60 p-3 rounded-xl border border-slate-100">
             <div className="flex items-center justify-between text-xs font-semibold">
@@ -454,7 +537,7 @@ export default function DictionaryScreen({
               />
             </div>
 
-            <div className="grid grid-cols-4 gap-1.5 pt-1 text-[10px] text-center font-bold">
+            <div className="grid grid-cols-5 gap-1.5 pt-1 text-[10px] text-center font-bold">
               <div className="bg-amber-100/60 text-amber-800 px-1 py-1.5 rounded-lg border border-amber-200/40 flex flex-col justify-center">
                 <div className="text-xs">{pendingJobs.length}</div>
                 <div className="text-[8px] uppercase tracking-wider text-amber-600 mt-0.5">Pendentes</div>
@@ -467,20 +550,24 @@ export default function DictionaryScreen({
                 <div className="text-xs">{completedJobs.length}</div>
                 <div className="text-[8px] uppercase tracking-wider text-emerald-600 mt-0.5">Sucesso</div>
               </div>
+              <div className="bg-orange-100/60 text-orange-800 px-1 py-1.5 rounded-lg border border-orange-200/40 flex flex-col justify-center">
+                <div className="text-xs">{staleCompletedJobs.length}</div>
+                <div className="text-[8px] uppercase tracking-wider text-orange-600 mt-0.5">Travados</div>
+              </div>
               <button
                 type="button"
                 onClick={() => erroredJobs.length > 0 && setShowErrorsModal(true)}
                 disabled={erroredJobs.length === 0}
                 className={`flex flex-col items-center justify-center px-1 py-1.5 rounded-lg border leading-tight transition-colors ${
                   erroredJobs.length > 0
-                    ? "bg-rose-100 hover:bg-rose-200 text-rose-805 border-rose-300 font-bold cursor-pointer"
+                    ? "bg-rose-100 hover:bg-rose-200 text-rose-800 border-rose-300 font-bold cursor-pointer"
                     : "bg-rose-100/40 text-rose-800/60 border-rose-200/40 cursor-not-allowed"
                 }`}
                 title={erroredJobs.length > 0 ? "Clique para ver histórico de falhas" : undefined}
               >
                 <div className="text-xs font-bold">{erroredJobs.length}</div>
-                <div className="text-[8px] uppercase tracking-wider text-rose-605 mt-0.5 flex items-center gap-0.5 underline">
-                  Falhas {erroredJobs.length > 0 && "🔍"}
+                <div className="text-[8px] uppercase tracking-wider text-rose-600 mt-0.5 flex items-center gap-0.5 underline">
+                  Falhas {erroredJobs.length > 0 && "ðŸ”"}
                 </div>
               </button>
             </div>
@@ -511,13 +598,13 @@ export default function DictionaryScreen({
                       <Loader2 className={`h-3.5 w-3.5 shrink-0 text-indigo-600 ${isPaused ? "" : "animate-spin"}`} />
                       {isPaused 
                         ? "Processamento em segundo plano pausado pelo usuário." 
-                        : "Processamento automático ativo em segundo plano! Deixe esta tela aberta."
+                        : "Processamento automático ativo em segundo plano. Deixe esta tela aberta."
                       }
                     </>
                   ) : (
                     <>
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-                      Fila sem tarefas executivas ativas, mas contém falhas que impediram a conclusão.
+                      Fila sem tarefas ativas, mas contém falhas que impediram a conclusão.
                     </>
                   )}
                 </p>
@@ -574,7 +661,7 @@ export default function DictionaryScreen({
                             // Remove todas as tarefas de IA desta categoria da tabela do Supabase (limpando erros e pendentes)
                             await AiJobRepository.deleteJobsByType("enrich_dictionary_entry");
                             
-                            // Recarrega os jobs e as palavras do dicionário na tela
+                            // Recarrega os jobs e as palavras do dicionÃ¡rio na tela
                             await loadJobs();
                             await loadEntries(true);
                             showAlert("Sucesso", "Todas as tarefas ativas foram paradas e a fila/erros foram completamente zerados.");
@@ -605,7 +692,7 @@ export default function DictionaryScreen({
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
             onClick={handleAddToQueue}
-            disabled={isQueuing || pendingCount === 0}
+            disabled={isQueuing || queueSummary.pendingEntries.length === 0}
             className="flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-100 disabled:text-slate-400 text-white text-xs font-bold px-3 py-2 transition-all shadow-sm"
           >
             {isQueuing ? (
@@ -613,7 +700,7 @@ export default function DictionaryScreen({
             ) : (
               <Sparkles className="w-3.5 h-3.5" />
             )}
-            {isQueuing ? "Analisando..." : `Completar pendentes (${pendingCount})`}
+            {isQueuing ? "Analisando..." : `Completar pendentes (${queueSummary.pendingEntries.length})`}
           </button>
 
           {erroredJobs.length > 0 && (
@@ -703,7 +790,7 @@ export default function DictionaryScreen({
             {/* Content (Scrollable List) */}
             <div className="max-h-[350px] overflow-y-auto p-4 space-y-3">
               <p className="text-[11px] leading-relaxed text-slate-500 font-medium">
-                Se os erros forem decorrentes de limites ou faturamento no Google AI Studio (ex: 429 Resource Exhausted), adicione fundos no painel ou reduza a fila. Você pode reiniciar as tarefas com erro usando o botão correspondente.
+                Se os erros forem decorrentes de limites ou faturamento no Google AI Studio (ex.: 429 Resource Exhausted), adicione fundos no painel ou reduza a fila. Você pode reiniciar as tarefas com erro usando o botão correspondente.
               </p>
 
               <div className="space-y-2">
@@ -723,7 +810,7 @@ export default function DictionaryScreen({
                         </span>
                       </div>
                       <p className="text-[11px] text-[#86868B] font-medium leading-relaxed font-mono bg-white p-2 rounded-lg border border-slate-100 break-words max-h-24 overflow-y-auto">
-                        {job.error || "Erro misterioso sem descrição registrada."}
+                        {job.error || "Erro sem descrição registrada."}
                       </p>
                     </div>
                   );
