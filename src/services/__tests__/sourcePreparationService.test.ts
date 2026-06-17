@@ -1,133 +1,137 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SourcePreparationService } from '../../features/ai/SourcePreparationService';
-import { AiJobRepository, SentenceRepository, SourceRepository, ProcessingRunRepository } from '../../repositories';
+import { AiJobRepository, DictionaryRepository, ProcessingRunRepository, SentenceRepository, TermRepository } from '../../repositories';
 
 vi.mock('../../repositories', () => ({
   AiJobRepository: {
     add: vi.fn(),
-    addBatch: vi.fn(),
-    getPendingByTarget: vi.fn().mockResolvedValue([]),
-    getAll: vi.fn().mockResolvedValue([]),
-    getByStatuses: vi.fn().mockResolvedValue([]),
-    getByTargetAndStatuses: vi.fn().mockResolvedValue([]),
-    hasTargetJobByTypeAndStatuses: vi.fn().mockResolvedValue(false),
+    getByTarget: vi.fn(),
+  },
+  DictionaryRepository: {
+    getByIds: vi.fn(),
+  },
+  ProcessingRunRepository: {
+    failRun: vi.fn(),
+    updateRun: vi.fn(),
   },
   SentenceRepository: {
+    getAll: vi.fn(),
+    getById: vi.fn(),
     getBySourceId: vi.fn(),
     update: vi.fn(),
-    findProcessedByJapaneseKeys: vi.fn().mockResolvedValue([])
   },
   SourceRepository: {
     getById: vi.fn(),
-    update: vi.fn()
   },
   TermRepository: {
-    getBySentences: vi.fn().mockResolvedValue([]),
-    getBySentencesWithDictionary: vi.fn().mockResolvedValue([])
+    getBySentencesWithDictionary: vi.fn(),
   },
-  DictionaryRepository: {
-    getByUniqueKey: vi.fn().mockResolvedValue(null),
-    getByIds: vi.fn().mockResolvedValue([]),
-    addBatch: vi.fn()
-  },
-  ProcessingRunRepository: {
-    createRun: vi.fn().mockResolvedValue({ id: 'run-1' }),
-    getRun: vi.fn().mockResolvedValue({ id: 'run-1', cancel_requested: false }),
-    appendLog: vi.fn(),
-    updateRun: vi.fn(),
-    finishRun: vi.fn(),
-    failRun: vi.fn(),
-  }
 }));
+
+const options = {
+  dictMode: 'full' as const,
+  useCache: true,
+  overwriteReviewed: false,
+  runMode: 'all' as const,
+  translateBatchSize: 20,
+  analyzeBatchSize: 5,
+  dictFastBatchSize: 30,
+  dictFullBatchSize: 10,
+};
+
+function sentence(overrides: Record<string, unknown>) {
+  return {
+    id: 's1',
+    source_id: 'source-1',
+    user_id: 'user-1',
+    order_index: 0,
+    japanese: '待って',
+    japanese_key: '待って',
+    portuguese: null,
+    kana: null,
+    romaji: null,
+    status: 'raw',
+    tags: [],
+    created_at: '2026-06-17T12:00:00.000Z',
+    updated_at: '2026-06-17T12:00:00.000Z',
+    ...overrides,
+  } as any;
+}
 
 describe('SourcePreparationService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(AiJobRepository.getByStatuses).mockResolvedValue([]);
-    vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
-    vi.mocked(AiJobRepository.hasTargetJobByTypeAndStatuses).mockResolvedValue(false);
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([]);
+    vi.mocked(AiJobRepository.add).mockImplementation(async (job: any) => ({ id: 'job-created', ...job }));
+    vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([]);
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([]);
+    vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([]);
   });
 
-  it('prepareSource creates translation jobs for sentences that need it', async () => {
-    vi.mocked(ProcessingRunRepository.getRun).mockResolvedValue({ id: 'run-1', cancel_requested: false } as any);
-    vi.mocked(SourceRepository.getById).mockResolvedValue({ id: 'source-1' } as any);
-    vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
-    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
-      { id: 's1', japanese: '待て', japanese_key: '待て', portuguese: null, translation_source: 'ai', status: 'pending' },
-      { id: 's2', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos', translation_source: 'manual', status: 'ready' }
-    ] as any);
+  it('creates translation jobs only for sentences that really need AI', async () => {
+    const sentences = [
+      sentence({ id: 'needs-ai', japanese: '待って', japanese_key: '待って' }),
+      sentence({ id: 'ready', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos.' }),
+    ];
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue(sentences);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue(sentences);
 
-    await SourcePreparationService.prepareSource('source-1', {
-      dictMode: "full",
-      useCache: true,
-      overwriteReviewed: false,
-      runMode: "all",
-      translateBatchSize: 20,
-      analyzeBatchSize: 5,
-      dictFastBatchSize: 30,
-      dictFullBatchSize: 10
-    }, 'run-1');
+    await SourcePreparationService.prepareSource('source-1', options, 'run-1');
 
-    // Should create a job for s1
     expect(AiJobRepository.add).toHaveBeenCalledWith(
-      expect.objectContaining({ target_id: 'source-1', type: 'batch_translate_sentences' })
+      expect.objectContaining({
+        target_id: 'source-1',
+        type: 'batch_translate_sentences',
+        input: expect.objectContaining({
+          items: [{ id: 'needs-ai', japanese: '待って' }],
+        }),
+      }),
+    );
+    expect(ProcessingRunRepository.updateRun).toHaveBeenCalledWith(
+      'run-1',
+      expect.objectContaining({ status: 'completed' }),
     );
   });
 
-  it('prepareSource continues from where it left off', async () => {
-    vi.mocked(SourceRepository.getById).mockResolvedValue({ id: 'source-1' } as any);
-    // Suppress console.log output for the simulated fail
-    vi.mocked(ProcessingRunRepository.failRun).mockResolvedValue(undefined as any);
-    vi.mocked(AiJobRepository.getByStatuses).mockResolvedValue([
-      { id: 'job-1', target_id: 'source-1', status: 'pending', type: 'batch_translate_sentences', input: { items: [{ id: 'sent-2' }]} } as any
-    ]);
-    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
-      { id: 's1', japanese: '日本語', portuguese: 'Japones' } as any, // implicitly ready if valid
-      { id: 'sent-2', japanese: 'テスト', portuguese: null } as any 
-    ]);
-    
-    // Simulate that sent-2 is already pending in job-1
-    vi.mocked(AiJobRepository.getByStatuses).mockResolvedValue([
-        { id: 'job-1', target_id: 'source-1', status: 'pending', type: 'batch_translate_sentences', input: { items: [{ id: 'sent-2' }]} } as any
+  it('does not duplicate a pending translation target', async () => {
+    const sentences = [sentence({ id: 'sent-2', japanese: 'テスト', japanese_key: 'テスト' })];
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue(sentences);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue(sentences);
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+      {
+        id: 'job-1',
+        target_id: 'source-1',
+        status: 'pending',
+        type: 'batch_translate_sentences',
+        input: { items: [{ id: 'sent-2' }] },
+      } as any,
     ]);
 
-    await SourcePreparationService.prepareSource('source-1', {
-      dictMode: "full",
-      useCache: true,
-      overwriteReviewed: false,
-      runMode: "all",
-      translateBatchSize: 20,
-      analyzeBatchSize: 5,
-      dictFastBatchSize: 30,
-      dictFullBatchSize: 10
-    }, 'run-1');
+    await SourcePreparationService.prepareSource('source-1', options, 'run-1');
 
-    // Should NOT create new translation job for sent-2 because it's pending
     expect(AiJobRepository.add).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'batch_translate_sentences' })
+      expect.objectContaining({ type: 'batch_translate_sentences' }),
     );
   });
 
-  it('prepareSource skips sentences with manual changes', async () => {
-    vi.mocked(SourceRepository.getById).mockResolvedValue({ id: 'source-1' } as any);
-    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
-      { id: 'sent-3', japanese: '手動', portuguese: 'Editado Manualmente', translation_source: 'manual' } as any
+  it('reuses identical translated sentences instead of creating AI jobs', async () => {
+    const sourceSentence = sentence({ id: 'new-sentence', japanese: 'ある', japanese_key: 'ある' });
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([sourceSentence]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sourceSentence,
+      sentence({ id: 'old-sentence', source_id: 'source-2', japanese: 'ある', japanese_key: 'ある', portuguese: 'Existe.' }),
     ]);
-    vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
+    vi.mocked(SentenceRepository.getById).mockResolvedValue(sourceSentence);
 
-    await SourcePreparationService.prepareSource('source-1', {
-      dictMode: "full",
-      useCache: true,
-      overwriteReviewed: false,
-      runMode: "all",
-      translateBatchSize: 20,
-      analyzeBatchSize: 5,
-      dictFastBatchSize: 30,
-      dictFullBatchSize: 10
-    }, 'run-1');
+    await SourcePreparationService.prepareSource('source-1', options, 'run-1');
 
+    expect(SentenceRepository.update).toHaveBeenCalledWith(
+      'new-sentence',
+      expect.objectContaining({ portuguese: 'Existe.', translation_source: 'cache' }),
+    );
     expect(AiJobRepository.add).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'batch_translate_sentences' })
+      expect.objectContaining({ type: 'batch_translate_sentences' }),
     );
   });
 });

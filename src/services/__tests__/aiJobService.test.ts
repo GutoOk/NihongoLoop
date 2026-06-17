@@ -20,6 +20,9 @@ vi.mock('../../repositories', () => ({
   DictionaryRepository: {
     getAll: vi.fn().mockResolvedValue([]),
     getByIds: vi.fn(),
+    getById: vi.fn(),
+    update: vi.fn(),
+    makeEntryKey: vi.fn((lemma: string, kana?: string | null, type?: string | null) => `${lemma}|${kana || ''}|${type || 'outro'}`),
   },
   TermRepository: {
     getBySentences: vi.fn().mockResolvedValue([]),
@@ -29,6 +32,7 @@ vi.mock('../../repositories', () => ({
   },
   DictionarySenseRepository: {
     resolveOrCreate: vi.fn(),
+    upsertBatch: vi.fn(),
   }
 }));
 
@@ -215,6 +219,71 @@ describe('AiJobService', () => {
       expect(AiJobRepository.add).toHaveBeenCalledTimes(2);
       expect(vi.mocked(AiJobRepository.add).mock.calls[0][0].input.items).toHaveLength(2);
       expect(vi.mocked(AiJobRepository.add).mock.calls[1][0].input.items).toHaveLength(1);
+    });
+
+    it('completes dictionary gaps without overwriting valid existing fields', async () => {
+      const job = {
+        id: 'dict-job',
+        user_id: 'user-123',
+        type: 'batch_enrich_dictionary_entries_full',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: { items: [{ id: 'entry-1', lemma: '行く' }] },
+      } as any;
+
+      const { DictionaryRepository, DictionaryFormRepository, DictionarySenseRepository } = await import('../../repositories');
+      vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
+        { id: 'entry-1', status: 'pending', main_meaning: null, kana: 'いく', romaji: 'iku', type: 'verbo' },
+      ] as any);
+      vi.mocked(DictionaryRepository.getById).mockResolvedValue({
+        id: 'entry-1',
+        lemma: '行く',
+        status: 'pending',
+        main_meaning: 'ir',
+        kana: 'いく',
+        romaji: 'iku',
+        type: 'verbo',
+        tags: ['core'],
+      } as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'dict-job',
+            type: 'batch_enrich_dictionary_entries_full',
+            items: [{
+              job_id: 'entry-1',
+              main_meaning: 'andar',
+              kana: 'ユク',
+              romaji: 'yuku',
+              type: 'substantivo',
+              jlpt_level: 'N5',
+              tags: ['ai'],
+            }],
+          }],
+        }),
+      } as any);
+
+      await AiJobService.processJobsBatch([job]);
+
+      expect(DictionaryRepository.update).toHaveBeenCalledWith(
+        'entry-1',
+        expect.objectContaining({
+          main_meaning: 'ir',
+          kana: 'いく',
+          romaji: 'iku',
+          type: 'verbo',
+          jlpt_level: 'N5',
+          tags: ['core'],
+        }),
+      );
+      expect(DictionarySenseRepository.upsertBatch).toHaveBeenCalled();
+      expect(DictionaryFormRepository.resolveOrCreate).toHaveBeenCalledWith(expect.objectContaining({
+        dictionary_entry_id: 'entry-1',
+        kana: 'いく',
+        romaji: 'iku',
+      }));
     });
   });
 });

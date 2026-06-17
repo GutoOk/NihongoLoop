@@ -486,22 +486,24 @@ export class AiJobService {
     if (!entryId) return;
     const entry = await DictionaryRepository.getById(entryId);
     if (!entry || entry.status === 'reviewed') return;
-    const mainMeaning = result.main_meaning || result.meaning || (Array.isArray(result.meanings) ? result.meanings[0] : null);
-    if (!mainMeaning || !result.type) throw new Error('Resultado inválido: significado ou tipo ausente.');
+    const resultMeaning = result.main_meaning || result.meaning || (Array.isArray(result.meanings) ? result.meanings[0] : null);
+    const mainMeaning = entry.main_meaning || resultMeaning;
+    const finalType = entry.type || result.type || 'outro';
+    if (!mainMeaning || !finalType) throw new Error('Resultado inválido: significado ou tipo ausente.');
 
-    const finalType = result.type || entry.type || 'outro';
-    const finalKana = result.kana || entry.kana || null;
+    const finalKana = entry.kana || result.kana || null;
+    const finalRomaji = entry.romaji || result.romaji || null;
     await DictionaryRepository.update(entry.id, {
       main_meaning: mainMeaning,
       type: finalType,
       kana: finalKana,
-      romaji: result.romaji || entry.romaji || null,
-      jlpt_level: result.jlpt_level || entry.jlpt_level || null,
-      tags: Array.isArray(result.tags) ? result.tags : entry.tags,
-      subtype: result.subtype || entry.subtype || null,
-      components: result.components || entry.components || null,
-      grammar_info: result.grammar_info || entry.grammar_info || null,
-      short_note: result.short_note || entry.short_note || null,
+      romaji: finalRomaji,
+      jlpt_level: entry.jlpt_level || result.jlpt_level || null,
+      tags: entry.tags?.length ? entry.tags : Array.isArray(result.tags) ? result.tags : entry.tags,
+      subtype: entry.subtype || result.subtype || null,
+      components: entry.components || result.components || null,
+      grammar_info: entry.grammar_info || result.grammar_info || null,
+      short_note: entry.short_note || result.short_note || null,
       status: 'ai_enriched',
       unique_key: DictionaryRepository.makeEntryKey(entry.lemma, finalKana, finalType),
     });
@@ -518,7 +520,7 @@ export class AiJobService {
       dictionary_entry_id: entry.id,
       form: entry.lemma,
       kana: finalKana,
-      romaji: result.romaji || entry.romaji || null,
+      romaji: finalRomaji,
       form_type: 'forma de dicionário',
       is_common: true,
     });

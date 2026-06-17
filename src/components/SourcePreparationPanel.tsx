@@ -1,23 +1,25 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
-  Clock3,
+  Database,
+  Eraser,
   ListPlus,
+  Play,
   RefreshCw,
-  Settings2,
-  Sparkles,
-} from "lucide-react";
+  RotateCcw,
+  Square,
+} from 'lucide-react';
+import { AiJob } from '../types';
 import {
-  PreparationOptions,
-  SourcePreparationService,
-} from "../features/ai/SourcePreparationService";
-import {
-  ProcessingRunRepository,
-  SourcePreparationRepository,
-  SourcePreparationStats,
-} from "../repositories";
-import { GlobalAiQueueControl } from "./GlobalAiQueueControl";
+  SourcePreparationDiagnosis,
+  SourcePreparationEngine,
+  SourcePreparationPlan,
+} from '../features/ai/SourcePreparationEngine';
+import { SourcePreparationRunner } from '../features/ai/SourcePreparationRunner';
+import { AiJobRepository } from '../repositories';
+import { useModal } from './ModalProvider';
+import { getJobHumanName } from './sourcePreparation/jobDisplay';
 
 interface SourcePreparationPanelProps {
   sourceId: string;
@@ -25,36 +27,10 @@ interface SourcePreparationPanelProps {
   onContentUpdated?: () => void;
 }
 
-type PhaseMode = "translate" | "analyze" | "dictionary";
-
-interface PhaseView {
-  mode: PhaseMode;
-  title: string;
-  purpose: string;
-  total: number;
-  missing: number;
-  done: number;
-  actionLabel: string;
-}
-
-const DEFAULT_OPTIONS: PreparationOptions = {
+const PLAN_OPTIONS = {
   translateBatchSize: 30,
   analyzeBatchSize: 10,
-  dictFastBatchSize: 40,
-  dictFullBatchSize: 12,
-  dictMode: "full",
-  useCache: true,
-  overwriteReviewed: false,
-};
-
-const EMPTY_STATS: SourcePreparationStats = {
-  sTotal: 0,
-  sNoTrans: 0,
-  sNoRead: 0,
-  sNoTerms: 0,
-  sMissingAnalysis: 0,
-  dictTotal: 0,
-  dictPending: 0,
+  dictionaryBatchSize: 12,
 };
 
 export default function SourcePreparationPanel({
@@ -62,322 +38,356 @@ export default function SourcePreparationPanel({
   onPreparationComplete,
   onContentUpdated,
 }: SourcePreparationPanelProps) {
-  const [stats, setStats] = useState<SourcePreparationStats | null>(null);
-  const [options, setOptions] = useState<PreparationOptions>(DEFAULT_OPTIONS);
-  const [showSettings, setShowSettings] = useState(false);
+  const [diagnosis, setDiagnosis] = useState<SourcePreparationDiagnosis | null>(null);
+  const [plan, setPlan] = useState<SourcePreparationPlan | null>(null);
+  const [jobs, setJobs] = useState<AiJob[]>([]);
+  const [showGlobal, setShowGlobal] = useState(false);
+  const [isRunning, setIsRunning] = useState(SourcePreparationRunner.isRunning);
+  const [isBusy, setIsBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isQueueing, setIsQueueing] = useState(false);
-  const [lastQueuedLabel, setLastQueuedLabel] = useState<string | null>(null);
+  const signatureRef = useRef<string | null>(null);
   const loadingRef = useRef(false);
-  const statsSignatureRef = useRef<string | null>(null);
+  const { showConfirm } = useModal();
 
   useEffect(() => {
-    statsSignatureRef.current = null;
-    loadStats();
-    const interval = setInterval(() => loadStats(true), 2000);
-    return () => clearInterval(interval);
-  }, [sourceId]);
+    const unsub = SourcePreparationRunner.subscribe(setIsRunning);
+    return () => unsub();
+  }, []);
 
-  const loadStats = async (silent = false) => {
+  useEffect(() => {
+    signatureRef.current = null;
+    void refresh();
+    const interval = setInterval(() => void refresh(true), 2500);
+    return () => clearInterval(interval);
+  }, [sourceId, showGlobal]);
+
+  const refresh = async (silent = false) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const sourceStats = await SourcePreparationRepository.getStats(sourceId);
-      const signature = JSON.stringify(sourceStats);
-      if (statsSignatureRef.current && statsSignatureRef.current !== signature) {
-        onContentUpdated?.();
-      }
-      statsSignatureRef.current = signature;
-      setStats(sourceStats);
+      const [nextDiagnosis, nextPlan, sourceJobs] = await Promise.all([
+        SourcePreparationEngine.diagnoseSource(sourceId),
+        SourcePreparationEngine.buildPlan(sourceId, PLAN_OPTIONS),
+        showGlobal ? AiJobRepository.getAll() : AiJobRepository.getByTarget(sourceId),
+      ]);
+      const signature = JSON.stringify({
+        diagnosis: nextDiagnosis.sentences,
+        dictionary: nextDiagnosis.dictionary,
+        jobs: nextDiagnosis.jobs,
+      });
+      if (signatureRef.current && signatureRef.current !== signature) onContentUpdated?.();
+      signatureRef.current = signature;
+      setDiagnosis(nextDiagnosis);
+      setPlan(nextPlan);
+      setJobs(sourceJobs);
       setLoadError(null);
     } catch (error: any) {
-      if (!silent) {
-        setLoadError(error?.message || "Não foi possível atualizar o diagnóstico da fonte.");
-      }
+      if (!silent) setLoadError(error?.message || 'Nao foi possivel atualizar o diagnostico da fonte.');
     } finally {
       loadingRef.current = false;
     }
   };
 
-  const phases = useMemo<PhaseView[]>(() => {
-    const s = stats || EMPTY_STATS;
-    return [
-      {
-        mode: "translate",
-        title: "Tradução natural",
-        purpose: "Cria português brasileiro natural somente para frases sem tradução.",
-        total: s.sTotal,
-        missing: s.sNoTrans,
-        done: Math.max(0, s.sTotal - s.sNoTrans),
-        actionLabel: "Adicionar traduções",
-      },
-      {
-        mode: "analyze",
-        title: "Leitura e termos",
-        purpose: "Gera kana, romaji e termos clicáveis para frases sem análise real.",
-        total: s.sTotal,
-        missing: s.sMissingAnalysis,
-        done: Math.max(0, s.sTotal - s.sMissingAnalysis),
-        actionLabel: "Adicionar análises",
-      },
-      {
-        mode: "dictionary",
-        title: "Dicionário e sentidos",
-        purpose: "Completa apenas os verbetes usados nesta fonte que ainda têm lacunas.",
-        total: s.dictTotal || s.dictPending,
-        missing: s.dictPending,
-        done: Math.max(0, (s.dictTotal || s.dictPending) - s.dictPending),
-        actionLabel: "Adicionar dicionário",
-      },
-    ];
-  }, [stats]);
-
-  const totalMissing = phases.reduce((sum, phase) => sum + phase.missing, 0);
-  const totalDone = phases.reduce((sum, phase) => sum + phase.done, 0);
-  const totalWork = Math.max(1, phases.reduce((sum, phase) => sum + Math.max(phase.total, phase.missing), 0));
-  const overallPercent = totalMissing === 0 ? 100 : Math.round((totalDone / totalWork) * 100);
-  const allDone = totalMissing === 0;
-
-  const queuePreparation = async (runMode: "all" | PhaseMode) => {
-    setIsQueueing(true);
-    setLastQueuedLabel(null);
+  const queueRealGaps = async () => {
+    setIsBusy(true);
     try {
-      const run = await ProcessingRunRepository.createRun(sourceId, runMode);
-      if (run) {
-        await SourcePreparationService.prepareSource(sourceId, { ...options, runMode }, run.id);
-      }
-      setLastQueuedLabel(runMode === "all" ? "As tarefas possíveis agora foram enviadas para a fila." : "Etapa enviada para a fila.");
-      await loadStats();
+      const result = await SourcePreparationEngine.createQueueForSource(sourceId, PLAN_OPTIONS);
+      setPlan(result.plan);
+      await refresh();
     } catch (error: any) {
-      setLoadError(error?.message || "Não foi possível adicionar tarefas à fila.");
+      setLoadError(error?.message || 'Nao foi possivel gerar a fila das pendencias.');
     } finally {
-      setIsQueueing(false);
+      setIsBusy(false);
     }
   };
 
-  const updateOptions = (patch: Partial<PreparationOptions>) => {
-    setOptions((current) => ({ ...current, ...patch }));
+  const startProcessing = () => {
+    SourcePreparationRunner.start(sourceId, () => void refresh(true));
   };
+
+  const stopProcessing = () => {
+    SourcePreparationRunner.stop();
+  };
+
+  const retryErrors = async () => {
+    setIsBusy(true);
+    try {
+      await SourcePreparationEngine.retryErrorJobs(sourceId);
+      await refresh();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const resumeStuck = async () => {
+    setIsBusy(true);
+    try {
+      await SourcePreparationEngine.resetStuckJobs(sourceId);
+      await refresh();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const clearPending = async () => {
+    if (!(await showConfirm('Limpar pendentes', 'Remover apenas jobs pendentes desta fonte? Concluidos, erros e historico serao preservados.'))) {
+      return;
+    }
+    setIsBusy(true);
+    try {
+      await SourcePreparationEngine.clearPendingJobs(sourceId);
+      await refresh();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const pendingTotals = useMemo(() => {
+    if (!diagnosis) return { translation: 0, analysis: 0, dictionary: 0, total: 0 };
+    const translation = diagnosis.sentences.needsAiTranslation;
+    const analysis = diagnosis.sentences.withoutValidLexicalAnalysis;
+    const dictionary = diagnosis.dictionary.needsAiEntries;
+    return { translation, analysis, dictionary, total: translation + analysis + dictionary };
+  }, [diagnosis]);
+
+  const plannedJobs = plan?.totals.jobs || 0;
 
   return (
     <section className="border-b border-[#E5E5E7] bg-white">
       <div className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-1">
-                <h2 className="flex items-center gap-2 text-lg font-black tracking-tight text-slate-900">
-                  <Sparkles className="h-5 w-5 text-indigo-600" />
-                  Preparar com IA
-                </h2>
-                <p className="max-w-2xl text-xs leading-relaxed text-slate-500">
-                  Diagnostica a fonte pelo banco real e adiciona à fila única somente o que falta.
-                  A fila não inicia sozinha.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
-                <button
-                  onClick={() => loadStats()}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  Atualizar
-                </button>
-                <button
-                  onClick={() => setShowSettings((value) => !value)}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50"
-                >
-                  <Settings2 className="h-4 w-4" />
-                  Ajustes
-                </button>
-                <button
-                  onClick={() => queuePreparation("all")}
-                  disabled={allDone || isQueueing}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 text-xs font-black uppercase tracking-wide text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
-                >
-                  <ListPlus className="h-4 w-4" />
-                  {isQueueing ? "Enfileirando..." : "Adicionar tudo à fila"}
-                </button>
-                <button
-                  onClick={onPreparationComplete}
-                  className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 text-xs font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50"
-                >
-                  Estudar
-                </button>
-              </div>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="space-y-1">
+              <h2 className="flex items-center gap-2 text-lg font-black tracking-tight text-slate-900">
+                <Database className="h-5 w-5 text-indigo-600" />
+                Auditoria de IA da fonte
+              </h2>
+              <p className="max-w-2xl text-xs leading-relaxed text-slate-500">
+                Diagnostica o banco, monta plano e enfileira somente lacunas reais desta fonte.
+              </p>
             </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    {allDone ? (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                    ) : (
-                      <Clock3 className="h-4 w-4 text-amber-600" />
-                    )}
-                    <span className="text-xs font-black uppercase tracking-wide text-slate-700">
-                      {allDone ? "Fonte pronta para estudar" : `${totalMissing} pendências reais encontradas`}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500">
-                    Tradução, leitura, termos e dicionário são recalculados ao abrir a fonte.
-                  </p>
-                </div>
-                <div className="text-3xl font-black text-slate-900">{overallPercent}%</div>
-              </div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
-                <div
-                  className="h-full rounded-full bg-indigo-600 transition-all duration-500"
-                  style={{ width: `${Math.max(allDone ? 100 : 5, overallPercent)}%` }}
-                />
-              </div>
+            <div className="flex flex-wrap gap-2">
+              <ToolbarButton onClick={() => refresh()} icon={<RefreshCw className="h-4 w-4" />} label="Atualizar diagnostico" />
+              <ToolbarButton
+                onClick={queueRealGaps}
+                disabled={isBusy || plannedJobs === 0}
+                primary
+                icon={<ListPlus className="h-4 w-4" />}
+                label="Gerar fila das pendencias reais"
+              />
+              <ToolbarButton
+                onClick={isRunning ? stopProcessing : startProcessing}
+                icon={isRunning ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                label={isRunning ? 'Pausar' : 'Iniciar processamento'}
+              />
+              <ToolbarButton onClick={onPreparationComplete} icon={<CheckCircle2 className="h-4 w-4" />} label="Estudar" />
             </div>
-
-            {showSettings && (
-              <div className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 text-xs sm:grid-cols-3">
-                <label className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 font-bold text-slate-700">
-                  Reusar cache
-                  <input
-                    type="checkbox"
-                    checked={options.useCache}
-                    onChange={(event) => updateOptions({ useCache: event.target.checked })}
-                    className="h-4 w-4 rounded text-indigo-600"
-                  />
-                </label>
-                <NumberOption
-                  label="Frases por tradução"
-                  value={options.translateBatchSize}
-                  min={5}
-                  max={80}
-                  onChange={(value) => updateOptions({ translateBatchSize: value })}
-                />
-                <NumberOption
-                  label="Frases por análise"
-                  value={options.analyzeBatchSize}
-                  min={2}
-                  max={30}
-                  onChange={(value) => updateOptions({ analyzeBatchSize: value })}
-                />
-                <NumberOption
-                  label="Verbetes por lote"
-                  value={options.dictFullBatchSize}
-                  min={4}
-                  max={40}
-                  onChange={(value) => updateOptions({ dictFullBatchSize: value })}
-                />
-              </div>
-            )}
-
-            {loadError && (
-              <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                {loadError}
-              </div>
-            )}
-
-            {lastQueuedLabel && (
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs font-bold text-emerald-700">
-                {lastQueuedLabel}
-              </div>
-            )}
-
-            <div className="flex flex-col gap-3">
-              {phases.map((phase) => (
-                <PhaseRow
-                  key={phase.mode}
-                  phase={phase}
-                  disabled={isQueueing}
-                  onQueue={() => queuePreparation(phase.mode)}
-                />
-              ))}
-            </div>
-
-            <GlobalAiQueueControl />
           </div>
+
+          {loadError && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              {loadError}
+            </div>
+          )}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Panel title="Raio-x da fonte">
+              {diagnosis ? (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <Metric label="Frases totais" value={diagnosis.sentences.total} />
+                  <Metric label="Frases unicas" value={diagnosis.sentences.unique} />
+                  <Metric label="Repetidas" value={diagnosis.sentences.repeatedInsideSource} />
+                  <Metric label="Ja traduzidas" value={diagnosis.sentences.withTranslation} />
+                  <Metric label="Sem traducao" value={diagnosis.sentences.withoutTranslation} />
+                  <Metric label="Reaproveitaveis" value={diagnosis.sentences.reusableTranslation} />
+                  <Metric label="Com analise" value={diagnosis.sentences.withValidLexicalAnalysis} />
+                  <Metric label="Sem analise" value={diagnosis.sentences.withoutValidLexicalAnalysis} />
+                  <Metric label="Termos" value={diagnosis.terms.found} />
+                  <Metric label="Verbetes completos" value={diagnosis.dictionary.completeEntries} />
+                  <Metric label="Verbetes incompletos" value={diagnosis.dictionary.incompleteEntries} />
+                  <Metric label="Duplicados possiveis" value={diagnosis.jobs.possibleDuplicates} />
+                </div>
+              ) : (
+                <EmptyState text="Carregando diagnostico..." />
+              )}
+            </Panel>
+
+            <Panel title="Pendencias reais">
+              <div className="grid gap-2">
+                <PendingLine value={pendingTotals.translation} text="frases precisam de traducao por IA" />
+                <PendingLine value={pendingTotals.analysis} text="frases precisam de analise lexical" />
+                <PendingLine value={pendingTotals.dictionary} text="verbetes precisam ser completados" />
+              </div>
+              {pendingTotals.total === 0 && (
+                <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs font-bold text-emerald-700">
+                  Nada a fazer para esta fonte.
+                </div>
+              )}
+            </Panel>
+          </div>
+
+          <Panel title="Plano de fila antes de gastar IA">
+            {plan ? (
+              <div className="grid gap-3 sm:grid-cols-4">
+                <Metric label="Traducoes" value={plan.totals.translationJobs} />
+                <Metric label="Analises" value={plan.totals.lexicalAnalysisJobs} />
+                <Metric label="Dicionario" value={plan.totals.dictionaryJobs} />
+                <Metric label="Jobs novos" value={plan.totals.jobs} />
+                <div className="sm:col-span-4 rounded-lg bg-slate-50 p-3 text-xs font-semibold leading-relaxed text-slate-600">
+                  Itens completos, reaproveitaveis ou ja enfileirados nao entram novamente no plano. Erros e travados exigem acao explicita.
+                </div>
+              </div>
+            ) : (
+              <EmptyState text="Atualize o diagnostico para montar o plano." />
+            )}
+          </Panel>
+
+          <Panel
+            title={showGlobal ? 'Fila global' : 'Fila da fonte'}
+            actions={
+              <div className="flex flex-wrap gap-2">
+                <ToolbarButton small onClick={() => setShowGlobal((value) => !value)} label={showGlobal ? 'Ver fonte' : 'Ver global'} />
+                <ToolbarButton small onClick={resumeStuck} disabled={isBusy || !diagnosis?.jobs.stuck} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retomar travados" />
+                <ToolbarButton small onClick={retryErrors} disabled={isBusy || !diagnosis?.jobs.error} icon={<RefreshCw className="h-3.5 w-3.5" />} label="Retentar erros" />
+                <ToolbarButton small onClick={clearPending} disabled={isBusy || !diagnosis?.jobs.pending} icon={<Eraser className="h-3.5 w-3.5" />} label="Limpar pendentes desta fonte" />
+              </div>
+            }
+          >
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+              <Metric label="Pendentes" value={diagnosis?.jobs.pending || 0} />
+              <Metric label="Rodando" value={diagnosis?.jobs.running || 0} />
+              <Metric label="Concluidos" value={diagnosis?.jobs.completed || 0} />
+              <Metric label="Erros" value={diagnosis?.jobs.error || 0} />
+              <Metric label="Travados" value={diagnosis?.jobs.stuck || 0} />
+            </div>
+            <JobList jobs={jobs} />
+          </Panel>
         </div>
       </div>
     </section>
   );
 }
 
-function PhaseRow({
-  phase,
-  disabled,
-  onQueue,
-}: {
-  phase: PhaseView;
-  disabled: boolean;
-  onQueue: () => void;
-  key?: React.Key;
-}) {
-  const complete = phase.missing === 0;
-  const percent = phase.total > 0 ? Math.round((phase.done / phase.total) * 100) : complete ? 100 : 0;
-
+function Panel({ title, actions, children }: { title: string; actions?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-black text-slate-900">{phase.title}</h3>
-            <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${
-                complete ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-              }`}
-            >
-              {complete ? "Completo" : `${phase.missing} pendências`}
-            </span>
-          </div>
-          <p className="text-xs leading-relaxed text-slate-500">{phase.purpose}</p>
-        </div>
-
-        <div className="flex shrink-0 items-center gap-3">
-          <div className="w-16 text-right text-xl font-black text-slate-900">{percent}%</div>
-          <button
-            onClick={onQueue}
-            disabled={disabled || complete}
-            className="inline-flex h-9 items-center justify-center rounded-xl bg-slate-900 px-3 text-xs font-black uppercase tracking-wide text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
-          >
-            {complete ? "Pronto" : phase.actionLabel}
-          </button>
-        </div>
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <h3 className="text-sm font-black text-slate-900">{title}</h3>
+        {actions}
       </div>
-
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-        <div
-          className="h-full rounded-full bg-indigo-600 transition-all duration-500"
-          style={{ width: `${Math.max(complete ? 100 : 5, percent)}%` }}
-        />
-      </div>
+      {children}
     </div>
   );
 }
 
-function NumberOption({
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+      <div className="text-xl font-black text-slate-900">{value}</div>
+      <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</div>
+    </div>
+  );
+}
+
+function PendingLine({ value, text }: { value: number; text: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+      <span className="font-semibold text-slate-600">{text}</span>
+      <span className="text-lg font-black text-slate-900">{value}</span>
+    </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return <div className="rounded-lg bg-slate-50 p-3 text-xs font-semibold text-slate-500">{text}</div>;
+}
+
+function ToolbarButton({
+  onClick,
+  icon,
   label,
-  value,
-  min,
-  max,
-  onChange,
+  disabled,
+  primary,
+  small,
 }: {
+  onClick: () => void;
+  icon?: React.ReactNode;
   label: string;
-  value: number;
-  min: number;
-  max: number;
-  onChange: (value: number) => void;
+  disabled?: boolean;
+  primary?: boolean;
+  small?: boolean;
 }) {
   return (
-    <label className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 font-bold text-slate-700">
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center justify-center gap-2 rounded-lg font-black uppercase tracking-wide disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 ${
+        small ? 'h-8 px-2.5 text-[10px]' : 'h-10 px-3 text-xs'
+      } ${primary ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+    >
+      {icon}
       {label}
-      <input
-        type="number"
-        min={min}
-        max={max}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="h-8 w-20 rounded-lg border border-slate-200 bg-white px-2 text-right font-black text-slate-900 outline-none"
-      />
-    </label>
+    </button>
   );
+}
+
+function JobList({ jobs }: { jobs: AiJob[] }) {
+  if (jobs.length === 0) return <EmptyState text="Nenhum job para exibir." />;
+  return (
+    <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+      {jobs.map((job) => {
+        const displayLabel = getJobHumanName(job.type);
+        const label = getJobLabel(job, displayLabel);
+        const input = typeof job.input === 'string' ? {} : job.input || {};
+        const itemCount = Array.isArray(input.items) ? input.items.length : 1;
+        return (
+          <div key={job.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="font-black text-slate-900">{label}</div>
+                <div className="mt-1 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                  <span>{displayLabel}</span>
+                  <span>{itemCount} itens</span>
+                  <span>{job.attempts || 0} tentativas</span>
+                  {job.updated_at && <span>{new Date(job.updated_at).toLocaleString()}</span>}
+                </div>
+              </div>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${statusClass(job.status)}`}>
+                {statusLabel(job.status)}
+              </span>
+            </div>
+            {job.error && (
+              <div className="mt-2 rounded border border-rose-100 bg-rose-50 p-2 text-[11px] font-semibold text-rose-700">
+                {job.error}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function getJobLabel(job: AiJob, fallback: string): string {
+  const input = typeof job.input === 'string' ? {} : job.input || {};
+  if (typeof input.label === 'string') return input.label;
+  return SourcePreparationEngine.getHumanJobLabel(job) || fallback;
+}
+
+function statusLabel(status: AiJob['status']): string {
+  if (status === 'pending') return 'pendente';
+  if (status === 'running') return 'rodando';
+  if (status === 'completed' || status === 'applied') return 'concluido';
+  if (status === 'error') return 'erro';
+  if (status === 'cancelled') return 'cancelado';
+  return status;
+}
+
+function statusClass(status: AiJob['status']): string {
+  if (status === 'running') return 'bg-sky-100 text-sky-700';
+  if (status === 'error') return 'bg-rose-100 text-rose-700';
+  if (status === 'pending') return 'bg-amber-100 text-amber-700';
+  if (status === 'completed' || status === 'applied') return 'bg-emerald-100 text-emerald-700';
+  return 'bg-slate-100 text-slate-700';
 }
