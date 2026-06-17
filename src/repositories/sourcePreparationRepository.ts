@@ -1,5 +1,4 @@
 import { supabase, isSupabaseConfigured } from '../core/supabaseClient';
-import { SentenceTerm } from '../types';
 import { chunkArray, getUserId } from './utils';
 
 export interface SourcePreparationStats {
@@ -15,12 +14,12 @@ export interface SourcePreparationStats {
 export class SourcePreparationRepository {
   static async getStats(sourceId: string): Promise<SourcePreparationStats> {
     if (!isSupabaseConfigured) {
-      return { sTotal: 0, sNoTrans: 0, sNoRead: 0, sNoTerms: 0, sMissingAnalysis: 0, dictTotal: 0, dictPending: 0 };
+      return emptyStats();
     }
 
     const { data: sentences, error: sentencesError } = await supabase!
       .from('sentences')
-      .select('id, portuguese, kana, romaji, terms_source')
+      .select('id, portuguese, kana, romaji')
       .eq('source_id', sourceId)
       .eq('user_id', getUserId());
     if (sentencesError) {
@@ -31,10 +30,10 @@ export class SourcePreparationRepository {
     const safeSentences = sentences || [];
     const sentenceIds = safeSentences.map((s) => s.id);
     if (sentenceIds.length === 0) {
-      return { sTotal: 0, sNoTrans: 0, sNoRead: 0, sNoTerms: 0, sMissingAnalysis: 0, dictTotal: 0, dictPending: 0 };
+      return emptyStats();
     }
 
-    let allTerms: Pick<SentenceTerm, 'sentence_id' | 'dictionary_form_id'>[] = [];
+    const allTerms: Array<{ sentence_id: string; dictionary_form_id: string | null }> = [];
     for (const chunk of chunkArray(sentenceIds, 100)) {
       const { data, error } = await supabase!
         .from('sentence_terms')
@@ -45,26 +44,31 @@ export class SourcePreparationRepository {
         console.error(error);
         throw new Error(`Erro do Supabase ao carregar estatísticas de termos: ${error.message}`);
       }
-      if (data) allTerms = allTerms.concat(data);
+      if (data) allTerms.push(...data);
     }
 
-    const validTerms = allTerms.filter(t => !!t.dictionary_form_id);
-    const termSentenceIds = new Set(validTerms.map((t) => t.sentence_id));
-    const legacyDictIds = validTerms.map((t: any) => t.dictionary_entry_id).filter(Boolean);
-    const formIds = Array.from(new Set(validTerms.map((t) => t.dictionary_form_id).filter(Boolean))) as string[];
-    let dictIds: string[] = legacyDictIds;
-    if (formIds.length > 0) {
-      for (const chunk of chunkArray(formIds, 100)) {
-        const { data, error } = await supabase!
-          .from('dictionary_forms')
-          .select('dictionary_entry_id')
-          .in('id', chunk)
-          .eq('user_id', getUserId());
-        if (error) throw new Error(`Erro do Supabase ao carregar formas para estatísticas: ${error.message}`);
-        dictIds = dictIds.concat((data || []).map((f: { dictionary_entry_id: string }) => f.dictionary_entry_id));
+    const formIds = Array.from(new Set(allTerms.map((term) => term.dictionary_form_id).filter(Boolean))) as string[];
+    const entryIdByFormId = new Map<string, string>();
+
+    for (const chunk of chunkArray(formIds, 100)) {
+      const { data, error } = await supabase!
+        .from('dictionary_forms')
+        .select('id, dictionary_entry_id')
+        .in('id', chunk)
+        .eq('user_id', getUserId());
+      if (error) {
+        console.error(error);
+        throw new Error(`Erro do Supabase ao carregar formas para estatísticas: ${error.message}`);
+      }
+      for (const form of data || []) {
+        if (form.dictionary_entry_id) {
+          entryIdByFormId.set(form.id, form.dictionary_entry_id);
+        }
       }
     }
-    dictIds = Array.from(new Set(dictIds.filter(Boolean)));
+
+    const dictIds = Array.from(new Set(Array.from(entryIdByFormId.values())));
+    const existingDictIds = new Set<string>();
     let dictPending = 0;
 
     for (const chunk of chunkArray(dictIds, 100)) {
@@ -77,37 +81,57 @@ export class SourcePreparationRepository {
         console.error(error);
         throw new Error(`Erro do Supabase ao carregar estatísticas de dicionário: ${error.message}`);
       }
-      
-      const returnedIds = new Set((data || []).map(e => e.id));
-      const missingTotal = chunk.filter(id => !returnedIds.has(id)).length;
-      dictPending += missingTotal;
-      
-      dictPending += (data || []).filter(
-        (e) =>
-          e.status === 'pending' ||
-          (!e.main_meaning ||
-            !e.kana ||
-            !e.romaji ||
-            !e.type),
-      ).length;
+
+      for (const entry of data || []) {
+        existingDictIds.add(entry.id);
+        if (
+          entry.status === 'pending' ||
+          !entry.main_meaning ||
+          !entry.kana ||
+          !entry.romaji ||
+          !entry.type
+        ) {
+          dictPending++;
+        }
+      }
+
+      dictPending += chunk.filter((id) => !existingDictIds.has(id)).length;
     }
 
-    const withTrans = safeSentences.filter((s) => !!s.portuguese).length;
-    const withReading = safeSentences.filter((s) => !!s.kana && !!s.romaji).length;
-    const missingAnalysis = safeSentences.filter((s) => {
-      const hasNoValidTerms = !termSentenceIds.has(s.id);
-      const wasEmptyByAi = s.terms_source === 'ai_empty';
-      return !s.kana || (hasNoValidTerms && !wasEmptyByAi);
+    const validTermSentenceIds = new Set<string>();
+    for (const term of allTerms) {
+      const entryId = term.dictionary_form_id ? entryIdByFormId.get(term.dictionary_form_id) : null;
+      if (entryId && existingDictIds.has(entryId)) {
+        validTermSentenceIds.add(term.sentence_id);
+      }
+    }
+
+    const withTrans = safeSentences.filter((sentence) => !!sentence.portuguese).length;
+    const withReading = safeSentences.filter((sentence) => !!sentence.kana && !!sentence.romaji).length;
+    const missingAnalysis = safeSentences.filter((sentence) => {
+      return !sentence.kana || !sentence.romaji || !validTermSentenceIds.has(sentence.id);
     }).length;
 
     return {
       sTotal: safeSentences.length,
       sNoTrans: safeSentences.length - withTrans,
       sNoRead: safeSentences.length - withReading,
-      sNoTerms: safeSentences.filter((s) => !termSentenceIds.has(s.id)).length,
+      sNoTerms: safeSentences.filter((sentence) => !validTermSentenceIds.has(sentence.id)).length,
       sMissingAnalysis: missingAnalysis,
       dictTotal: dictIds.length,
       dictPending,
     };
   }
+}
+
+function emptyStats(): SourcePreparationStats {
+  return {
+    sTotal: 0,
+    sNoTrans: 0,
+    sNoRead: 0,
+    sNoTerms: 0,
+    sMissingAnalysis: 0,
+    dictTotal: 0,
+    dictPending: 0,
+  };
 }

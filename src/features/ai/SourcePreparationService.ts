@@ -27,6 +27,15 @@ export class SourcePreparationService {
     );
   }
 
+  private static getSentencesWithValidDictionaryTerms(terms: any[]): Set<string> {
+    const sentenceIds = new Set<string>();
+    for (const term of terms) {
+      const hasEntry = Boolean(term.entry?.id || term.form?.entry?.id || term.dictionary_entry_id || term.form?.dictionary_entry_id);
+      if (hasEntry) sentenceIds.add(term.sentence_id);
+    }
+    return sentenceIds;
+  }
+
   private static isPreparing = false;
 
   static async prepareSource(sourceId: string, options: PreparationOptions, runId: string): Promise<void> {
@@ -134,6 +143,7 @@ export class SourcePreparationService {
             completed_steps: 3,
             current_step: 'Aguardando conclusão da tradução antes de iniciar a análise...'
           });
+          await ProcessingRunRepository.finishRun(run.id);
           return;
         }
       }
@@ -145,21 +155,14 @@ export class SourcePreparationService {
       if (runAnalyze) {
          await ProcessingRunRepository.updateRun(run.id, { current_step: 'Identificando frases para leitura e segmentação...' });
          
-         const allTerms = await TermRepository.getBySentences(sentences.map(s => s.id));
-         const termCountBySentId: Record<string, number> = {};
-         for (const t of allTerms) {
-            // Count ONLY valid terms (that actually link to a dictionary form)
-            // orphaned terms without a dictionary form are considered deleted and require re-analysis.
-            if (t.dictionary_form_id) {
-               termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
-            }
-         }
+         const allTerms = await TermRepository.getBySentencesWithDictionary(sentences.map(s => s.id));
+         const validTermSentenceIds = this.getSentencesWithValidDictionaryTerms(allTerms);
          
          const sentencesToAnalyze = sentences.filter(s => {
             const lacksKana = !s.kana;
-            const hasNoValidTerms = !termCountBySentId[s.id] || termCountBySentId[s.id] === 0;
-            const wasEmptyByAi = s.terms_source === "ai_empty";
-            return lacksKana || (hasNoValidTerms && !wasEmptyByAi);
+            const lacksRomaji = !s.romaji;
+            const hasNoValidTerms = !validTermSentenceIds.has(s.id);
+            return lacksKana || lacksRomaji || hasNoValidTerms;
          });
          
          const targetJobs = await AiJobRepository.getByStatuses(['pending', 'running', 'error']);
@@ -207,23 +210,17 @@ export class SourcePreparationService {
           ['pending', 'running', 'error'],
         );
         const currentSentences = await SentenceRepository.getBySourceId(sourceId);
-        const currentTerms = await TermRepository.getBySentences(currentSentences.map(s => s.id));
-        const termCountBySentId: Record<string, number> = {};
-        for (const t of currentTerms) {
-          if (t.dictionary_form_id) {
-            termCountBySentId[t.sentence_id] = (termCountBySentId[t.sentence_id] || 0) + 1;
-          }
-        }
+        const currentTerms = await TermRepository.getBySentencesWithDictionary(currentSentences.map(s => s.id));
+        const validTermSentenceIds = this.getSentencesWithValidDictionaryTerms(currentTerms);
         const stillMissingAnalysis = currentSentences.some(s => {
-           const hasNoValidTerms = !termCountBySentId[s.id];
-           const wasEmptyByAi = s.terms_source === "ai_empty";
-           return !s.kana || (hasNoValidTerms && !wasEmptyByAi);
+           return !s.kana || !s.romaji || !validTermSentenceIds.has(s.id);
         });
         if (pendingAnalyzeJobs || stillMissingAnalysis) {
           await ProcessingRunRepository.updateRun(run.id, {
             completed_steps: 4,
             current_step: 'Aguardando conclusão da leitura/segmentação antes de enriquecer o dicionário...'
           });
+          await ProcessingRunRepository.finishRun(run.id);
           return;
         }
       }
@@ -283,6 +280,7 @@ export class SourcePreparationService {
       }
 
       await ProcessingRunRepository.updateRun(run.id, { completed_steps: 5 });
+      await ProcessingRunRepository.finishRun(run.id);
       await ProcessingRunRepository.appendLog(run.id, 'Preparação de tarefas agendada. O executor processará a fila em seguida.');
 
     } catch (e: any) {
