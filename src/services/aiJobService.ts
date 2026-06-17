@@ -93,24 +93,6 @@ export class AiJobService {
     const hash = await stableHash(input);
     const existing = await AiJobRepository.getPendingByTarget('enrich_dictionary_entry', 'dictionary_entry', entryId);
     if (existing && existing.input_hash === hash) return existing;
-    const previousJobs = await AiJobRepository.getByTarget(entryId);
-    const reusable = previousJobs.find((job) =>
-      job.type === 'enrich_dictionary_entry' &&
-      job.target_type === 'dictionary_entry' &&
-      job.input_hash === hash &&
-      ['completed', 'error', 'cancelled', 'rejected', 'applied'].includes(job.status)
-    );
-    if (reusable) {
-      return AiJobRepository.updateStatus(reusable.id, {
-        status: 'pending',
-        error: null,
-        result: null,
-        completed_at: null,
-        started_at: null,
-        locked_by: null,
-        locked_until: null,
-      });
-    }
     return AiJobRepository.add({
       user_id: AuthService.getCurrentUserId(),
       type: 'enrich_dictionary_entry',
