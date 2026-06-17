@@ -237,9 +237,6 @@ export default function App() {
                   handleNavigate("standard_study", { sourceId, mode })
                 }
                 onStartCustom={() => handleNavigate("study_setup")}
-                onStartSession={(config) =>
-                  handleNavigate("study_player", { config })
-                }
               />
             </div>
           )}

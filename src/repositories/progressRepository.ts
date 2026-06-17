@@ -23,16 +23,6 @@ export class ProgressRepository {
     return allData;
   }
 
-  static async getAllSentenceProgress(): Promise<SentenceProgress[]> {
-    if (!isSupabaseConfigured) return [];
-    try {
-      const { data } = await supabase!.from('sentence_progress').select('*').eq('user_id', getUserId());
-      return data || [];
-    } catch {
-      return [];
-    }
-  }
-
   static async upsertSentenceProgress(progress: Partial<SentenceProgress>): Promise<SentenceProgress | null> {
     if (!isSupabaseConfigured) return null;
     const enriched = { ...progress, user_id: progress.user_id || getUserId() };

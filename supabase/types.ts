@@ -218,7 +218,7 @@ export interface AiJob {
 export interface StudySession {
   id: string;
   user_id: string;
-  type: 'phrases' | 'words' | 'word_context' | 'source_offset' | 'custom_template';
+  type: 'phrases' | 'words' | 'word_context' | 'source_offset';
   source_id: string | null;
   config: any;
   started_at?: string | null;
@@ -242,7 +242,7 @@ export interface StudySessionItem {
 
 export type StudyEntityType = 'sentence' | 'word' | 'word_context';
 
-export type StudyTargetType = 'all' | 'source' | 'favorites' | 'difficult' | 'new' | 'untranslated' | 'unread' | 'pending_words' | 'specific_word' | 'pending' | 'review_due' | 'difficult_words' | 'reviewed' | 'ai_enriched' | 'no_meaning' | 'frequent' | 'verb' | 'particle' | 'proper_noun' | 'expression' | 'specific';
+export type StudyTargetType = 'all' | 'source' | 'favorites' | 'difficult' | 'new' | 'untranslated' | 'unread' | 'pending_words' | 'specific_word' | 'pending' | 'reviewed' | 'ai_enriched' | 'no_meaning' | 'frequent' | 'verb' | 'particle' | 'proper_noun' | 'expression' | 'specific';
 
 export interface StudySessionConfig {
   entityType: StudyEntityType;
@@ -250,7 +250,7 @@ export interface StudySessionConfig {
   sourceId?: string | null;
   wordId?: string | null;
   limit?: number;
-  order?: 'original' | 'random' | 'due' | 'priority';
+  order?: 'original' | 'random';
   studyMode?: 'jp-pt' | 'pt-jp' | 'pt-jp-jp' | 'jp-repeat' | 'shadowing' | 'jp-meaning' | 'meaning-jp' | 'jp-reading-meaning' | 'reading-jp-meaning' | 'meaning-jp-example';
 }
 
