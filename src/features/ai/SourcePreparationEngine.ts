@@ -90,14 +90,22 @@ export interface SourcePreparationPlan {
     duplicates: AiJob[];
   };
   totals: {
+    reusableTranslationActions: number;
     translationJobs: number;
     lexicalAnalysisJobs: number;
     dictionaryJobs: number;
     jobs: number;
+    actions: number;
     translationItems: number;
     lexicalAnalysisItems: number;
     dictionaryItems: number;
   };
+}
+
+export interface SourcePreparationQueueResult {
+  plan: SourcePreparationPlan;
+  jobs: AiJob[];
+  appliedReusableTranslations: number;
 }
 
 export interface PlannedPreparationJob {
@@ -272,6 +280,8 @@ export class SourcePreparationEngine {
     let withoutTranslation = 0;
     let withValidLexicalAnalysis = 0;
 
+    const aiTranslationKeys = new Set<string>();
+
     for (const sentence of sourceSentences) {
       const key = sentence.japanese_key || makeJapaneseKey(sentence.japanese);
       const otherMatches = (allByKey.get(key) || []).filter((match) => match.id !== sentence.id);
@@ -288,7 +298,8 @@ export class SourcePreparationEngine {
             reusableSentenceId: reusable.id,
             translation: reusable.portuguese,
           });
-        } else {
+        } else if (!aiTranslationKeys.has(key)) {
+          aiTranslationKeys.add(key);
           aiTranslations.push({ sentenceId: sentence.id, japanese: sentence.japanese });
         }
       }
@@ -296,7 +307,7 @@ export class SourcePreparationEngine {
       const sentenceTerms = termsBySentence.get(sentence.id) || [];
       if (hasValidLexicalAnalysis(sentence, sentenceTerms)) {
         withValidLexicalAnalysis++;
-      } else {
+      } else if (hasExistingTranslation(sentence)) {
         lexicalAnalyses.push({
           sentenceId: sentence.id,
           japanese: sentence.japanese,
@@ -395,24 +406,30 @@ export class SourcePreparationEngine {
       return !itemStatus.activeOrDone.has(key) && !itemStatus.error.has(key) && !itemStatus.stuck.has(key);
     });
 
+    const shouldPlanTranslation = diagnosis.sentences.withoutTranslation > 0;
+    const shouldPlanLexicalAnalysis = !shouldPlanTranslation && diagnosis.sentences.withoutValidLexicalAnalysis > 0;
+    const shouldPlanDictionary = !shouldPlanTranslation && !shouldPlanLexicalAnalysis;
+
     const translation = this.createPlannedJobs(
       sourceId,
       'translation',
-      translationTargets.map((target) => ({ id: target.sentenceId, japanese: target.japanese })),
+      shouldPlanTranslation ? translationTargets.map((target) => ({ id: target.sentenceId, japanese: target.japanese })) : [],
       options.translateBatchSize || 30,
       (item) => item.japanese,
     );
     const lexicalAnalysis = this.createPlannedJobs(
       sourceId,
       'lexical_analysis',
-      lexicalTargets.map((target) => ({ id: target.sentenceId, japanese: target.japanese, portuguese: target.portuguese })),
+      shouldPlanLexicalAnalysis
+        ? lexicalTargets.map((target) => ({ id: target.sentenceId, japanese: target.japanese, portuguese: target.portuguese }))
+        : [],
       options.analyzeBatchSize || 10,
       (item) => `${item.japanese}${item.portuguese || ''}`,
     );
     const dictionary = this.createPlannedJobs(
       sourceId,
       'dictionary',
-      dictionaryTargets.map((target) => ({ id: target.entryId, lemma: target.lemma })),
+      shouldPlanDictionary ? dictionaryTargets.map((target) => ({ id: target.entryId, lemma: target.lemma })) : [],
       options.dictionaryBatchSize || 12,
       (item) => item.lemma,
     );
@@ -430,19 +447,21 @@ export class SourcePreparationEngine {
         duplicates: diagnosis.targets.duplicateJobs,
       },
       totals: {
+        reusableTranslationActions: diagnosis.targets.reusableTranslations.length,
         translationJobs: translation.length,
         lexicalAnalysisJobs: lexicalAnalysis.length,
         dictionaryJobs: dictionary.length,
         jobs: translation.length + lexicalAnalysis.length + dictionary.length,
-        translationItems: translationTargets.length,
-        lexicalAnalysisItems: lexicalTargets.length,
-        dictionaryItems: dictionaryTargets.length,
+        actions: diagnosis.targets.reusableTranslations.length + translation.length + lexicalAnalysis.length + dictionary.length,
+        translationItems: shouldPlanTranslation ? translationTargets.length : 0,
+        lexicalAnalysisItems: shouldPlanLexicalAnalysis ? lexicalTargets.length : 0,
+        dictionaryItems: shouldPlanDictionary ? dictionaryTargets.length : 0,
       },
     };
   }
 
-  static async createQueueFromPlan(plan: SourcePreparationPlan): Promise<AiJob[]> {
-    await this.applyReusableTranslations(plan.reuse.translations);
+  static async createQueueFromPlan(plan: SourcePreparationPlan): Promise<SourcePreparationQueueResult> {
+    const appliedReusableTranslations = await this.applyReusableTranslations(plan.reuse.translations);
     const created: AiJob[] = [];
     for (const planned of [...plan.jobs.translation, ...plan.jobs.lexicalAnalysis, ...plan.jobs.dictionary]) {
       const inputHash = await stableHash({
@@ -465,13 +484,12 @@ export class SourcePreparationEngine {
       } as any);
       if (job) created.push(job);
     }
-    return created;
+    return { plan, jobs: created, appliedReusableTranslations };
   }
 
-  static async createQueueForSource(sourceId: string, options: PreparationBatchOptions = {}): Promise<{ plan: SourcePreparationPlan; jobs: AiJob[] }> {
+  static async createQueueForSource(sourceId: string, options: PreparationBatchOptions = {}): Promise<SourcePreparationQueueResult> {
     const plan = await this.buildPlan(sourceId, options);
-    const jobs = await this.createQueueFromPlan(plan);
-    return { plan, jobs };
+    return this.createQueueFromPlan(plan);
   }
 
   static async resetStuckJobs(sourceId: string): Promise<boolean> {
@@ -566,7 +584,8 @@ export class SourcePreparationEngine {
     return typeWeight - (job.priority || 0);
   }
 
-  private static async applyReusableTranslations(reusable: SourcePreparationDiagnosis['targets']['reusableTranslations']): Promise<void> {
+  private static async applyReusableTranslations(reusable: SourcePreparationDiagnosis['targets']['reusableTranslations']): Promise<number> {
+    let applied = 0;
     for (const item of reusable) {
       const sentence = await SentenceRepository.getById(item.sentenceId);
       if (!sentence || hasExistingTranslation(sentence)) continue;
@@ -575,6 +594,8 @@ export class SourcePreparationEngine {
         translation_source: 'cache',
         status: sentence.kana && sentence.romaji ? 'reading_ready' : 'translated',
       });
+      applied++;
     }
+    return applied;
   }
 }

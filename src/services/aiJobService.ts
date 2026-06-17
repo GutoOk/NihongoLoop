@@ -11,6 +11,7 @@ import { AuthService } from '../core/authService';
 import { generateDictionaryUniqueKey } from './termDetectionService';
 import { stableHash } from '../core/hash';
 import { simpleKanaToRomaji } from './romajiHelper';
+import { makeJapaneseKey } from '../core/japaneseNormalize';
 
 async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 0, initialDelay = 1000): Promise<Response> {
   const { supabase } = await import('../core/supabaseClient');
@@ -325,6 +326,7 @@ export class AiJobService {
           status: sentence.kana && sentence.romaji ? 'reading_ready' : 'translated',
           translation_source: 'ai',
         });
+        await this.propagateTranslationInsideSource(sentence, item.translation);
       }
       if (Object.keys(failed).length > 0) {
         result.failed_count = Object.keys(failed).length;
@@ -354,6 +356,7 @@ export class AiJobService {
         status: sentence.kana && sentence.romaji ? 'reading_ready' : 'translated',
         translation_source: 'ai',
       });
+      await this.propagateTranslationInsideSource(sentence, result.translation);
       return;
     }
 
@@ -416,7 +419,7 @@ export class AiJobService {
 
         const type = rawTerm.type || 'outro';
         const entryKey = generateDictionaryUniqueKey(lemma, rawTerm.entry_kana || rawTerm.kana || null, type);
-        let entry = await DictionaryRepository.getByUniqueKey(entryKey);
+        let entry = await this.resolveDictionaryEntry(entryKey, lemma, surface, type);
         if (!entry) {
           const created = await DictionaryRepository.addBatch([{
             user_id: userId,
@@ -479,6 +482,40 @@ export class AiJobService {
       } else {
         await SentenceRepository.update(sentence.id, { terms_source: 'ai_empty' });
       }
+    }
+  }
+
+  private static async resolveDictionaryEntry(entryKey: string, lemma: string, surface: string, type: string) {
+    let entry = await DictionaryRepository.getByUniqueKey(entryKey);
+    if (entry) return entry;
+
+    const sameLemma = await DictionaryRepository.getByLemma(lemma);
+    entry = sameLemma.find((candidate) => candidate.type === type) || sameLemma[0] || null;
+    if (entry) return entry;
+
+    if (surface !== lemma) {
+      const sameSurface = await DictionaryRepository.getByLemma(surface);
+      entry = sameSurface.find((candidate) => candidate.type === type) || sameSurface[0] || null;
+      if (entry) return entry;
+    }
+
+    return null;
+  }
+
+  private static async propagateTranslationInsideSource(sentence: any, translation: string): Promise<void> {
+    if (!sentence?.source_id || !sentence?.japanese || !translation) return;
+    const sourceSentences = await SentenceRepository.getBySourceId(sentence.source_id);
+    const key = sentence.japanese_key || makeJapaneseKey(sentence.japanese);
+    for (const candidate of sourceSentences) {
+      if (candidate.id === sentence.id || candidate.status === 'reviewed') continue;
+      const candidateKey = candidate.japanese_key || makeJapaneseKey(candidate.japanese);
+      if (candidateKey !== key) continue;
+      if (candidate.portuguese && makeJapaneseKey(candidate.portuguese) !== makeJapaneseKey(candidate.japanese)) continue;
+      await SentenceRepository.update(candidate.id, {
+        portuguese: translation,
+        status: candidate.kana && candidate.romaji ? 'reading_ready' : 'translated',
+        translation_source: 'cache',
+      });
     }
   }
 

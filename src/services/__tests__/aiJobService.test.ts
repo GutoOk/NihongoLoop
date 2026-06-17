@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AiJobService } from '../aiJobService';
-import { AiJobRepository } from '../../repositories';
+import { AiJobRepository, DictionaryRepository, SentenceRepository } from '../../repositories';
 import { AuthService } from '../../core/authService';
 import { stableHash } from '../../core/hash';
 
@@ -15,12 +15,16 @@ vi.mock('../../repositories', () => ({
   SentenceRepository: {
     getById: vi.fn(),
     getByIds: vi.fn(),
+    getBySourceId: vi.fn(),
     update: vi.fn(),
   },
   DictionaryRepository: {
     getAll: vi.fn().mockResolvedValue([]),
     getByIds: vi.fn(),
     getById: vi.fn(),
+    getByUniqueKey: vi.fn(),
+    getByLemma: vi.fn(),
+    addBatch: vi.fn(),
     update: vi.fn(),
     makeEntryKey: vi.fn((lemma: string, kana?: string | null, type?: string | null) => `${lemma}|${kana || ''}|${type || 'outro'}`),
   },
@@ -49,6 +53,10 @@ describe('AiJobService', () => {
     vi.mocked(AiJobRepository.updateStatus).mockResolvedValue({} as any);
     vi.mocked(AiJobRepository.updateStatuses).mockResolvedValue(true);
     vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([]);
+    vi.mocked(DictionaryRepository.getByUniqueKey).mockResolvedValue(null);
+    vi.mocked(DictionaryRepository.getByLemma).mockResolvedValue([]);
+    vi.mocked(DictionaryRepository.addBatch).mockResolvedValue([]);
   });
 
   describe('requestSentenceTranslation', () => {
@@ -169,6 +177,65 @@ describe('AiJobService', () => {
       );
     });
 
+    it('copies an AI translation to repeated untranslated sentences inside the same source', async () => {
+      const job = {
+        id: 'batch-repeat',
+        user_id: 'user-123',
+        type: 'batch_translate_sentences',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: { items: [{ id: 'canonical', japanese: 'è¡Œããž' }] },
+      } as any;
+
+      const canonical = {
+        id: 'canonical',
+        source_id: 'source-1',
+        japanese: 'è¡Œããž',
+        japanese_key: 'è¡Œããž',
+        portuguese: null,
+        status: 'raw',
+        kana: null,
+        romaji: null,
+      };
+      const duplicate = {
+        id: 'duplicate',
+        source_id: 'source-1',
+        japanese: 'è¡Œããž',
+        japanese_key: 'è¡Œããž',
+        portuguese: null,
+        status: 'raw',
+        kana: null,
+        romaji: null,
+      };
+
+      vi.mocked(SentenceRepository.getByIds)
+        .mockResolvedValueOnce([canonical] as any)
+        .mockResolvedValueOnce([canonical] as any);
+      vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([canonical, duplicate] as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'batch-repeat',
+            type: 'batch_translate_sentences',
+            items: [{ job_id: 'canonical', translation: 'Vamos.' }],
+          }],
+        }),
+      } as any);
+
+      await AiJobService.processJobsBatch([job]);
+
+      expect(SentenceRepository.update).toHaveBeenCalledWith(
+        'canonical',
+        expect.objectContaining({ portuguese: 'Vamos.', translation_source: 'ai' }),
+      );
+      expect(SentenceRepository.update).toHaveBeenCalledWith(
+        'duplicate',
+        expect.objectContaining({ portuguese: 'Vamos.', translation_source: 'cache' }),
+      );
+    });
+
     it('splits failed batch items into smaller retry jobs', async () => {
       const job = {
         id: 'batch-3',
@@ -219,6 +286,59 @@ describe('AiJobService', () => {
       expect(AiJobRepository.add).toHaveBeenCalledTimes(2);
       expect(vi.mocked(AiJobRepository.add).mock.calls[0][0].input.items).toHaveLength(2);
       expect(vi.mocked(AiJobRepository.add).mock.calls[1][0].input.items).toHaveLength(1);
+    });
+
+    it('reuses a dictionary entry by lemma before creating a new one during lexical analysis', async () => {
+      const job = {
+        id: 'analysis-job',
+        user_id: 'user-123',
+        type: 'batch_analyze_sentences',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: { items: [{ id: 's1', japanese: 'è¡Œããž', portuguese: 'Vamos.' }] },
+      } as any;
+
+      vi.mocked(SentenceRepository.getByIds)
+        .mockResolvedValueOnce([{ id: 's1', japanese: 'è¡Œããž', portuguese: 'Vamos.', status: 'translated' }] as any)
+        .mockResolvedValueOnce([{ id: 's1', japanese: 'è¡Œããž', portuguese: 'Vamos.', status: 'translated' }] as any);
+      vi.mocked(DictionaryRepository.getByUniqueKey).mockResolvedValue(null);
+      vi.mocked(DictionaryRepository.getByLemma).mockResolvedValue([{ id: 'entry-existing', lemma: 'è¡Œã', type: 'verbo', main_meaning: 'ir' }] as any);
+
+      const { DictionaryFormRepository } = await import('../../repositories');
+      vi.mocked(DictionaryFormRepository.resolveOrCreate).mockResolvedValue({ id: 'form-existing' } as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'analysis-job',
+            type: 'batch_analyze_sentences',
+            items: [{
+              job_id: 's1',
+              kana: 'ã„ããž',
+              romaji: 'iku zo',
+              terms: [{
+                surface: 'è¡Œã',
+                lemma: 'è¡Œã',
+                kana: 'ã„ã',
+                romaji: 'iku',
+                type: 'verbo',
+                start_index: 0,
+                end_index: 2,
+                meaning: 'ir',
+              }],
+            }],
+          }],
+        }),
+      } as any);
+
+      await AiJobService.processJobsBatch([job]);
+
+      expect(DictionaryRepository.addBatch).not.toHaveBeenCalled();
+      expect(DictionaryFormRepository.resolveOrCreate).toHaveBeenCalledWith(expect.objectContaining({
+        dictionary_entry_id: 'entry-existing',
+        form: 'è¡Œã',
+      }));
     });
 
     it('completes dictionary gaps without overwriting valid existing fields', async () => {

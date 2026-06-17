@@ -127,7 +127,7 @@ describe('SourcePreparationEngine', () => {
     expect(diagnosis.sentences.unique).toBe(2);
     expect(diagnosis.sentences.repeatedInsideSource).toBe(1);
     expect(diagnosis.sentences.reusableTranslation).toBe(1);
-    expect(diagnosis.sentences.needsAiTranslation).toBe(2);
+    expect(diagnosis.sentences.needsAiTranslation).toBe(1);
   });
 
   it('diagnoses lexical analysis and complete or incomplete dictionary entries', async () => {
@@ -241,7 +241,7 @@ describe('SourcePreparationEngine', () => {
     });
     vi.mocked(SentenceRepository.getById).mockResolvedValue(sentence({ id: 's-cache' }));
 
-    const jobs = await SourcePreparationEngine.createQueueFromPlan(plan);
+    const result = await SourcePreparationEngine.createQueueFromPlan(plan);
 
     expect(SentenceRepository.update).toHaveBeenCalledWith('s-cache', expect.objectContaining({ translation_source: 'cache' }));
     expect(AiJobRepository.add).toHaveBeenCalledWith(expect.objectContaining({
@@ -250,7 +250,78 @@ describe('SourcePreparationEngine', () => {
       input: expect.objectContaining({ label: 'Traduzir frases - lote 1/1' }),
     }));
     expect(AiJobRepository.delete).not.toHaveBeenCalled();
-    expect(jobs).toHaveLength(1);
+    expect(result.jobs).toHaveLength(1);
+    expect(result.appliedReusableTranslations).toBe(1);
+  });
+
+  it('applies reusable translations even when no AI job is planned', async () => {
+    const sourceSentence = sentence({ id: 'needs-cache', japanese: 'ã‚ã‚‹', japanese_key: 'ã‚ã‚‹' });
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([sourceSentence]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sourceSentence,
+      sentence({ id: 'translated-match', source_id: 'source-2', japanese: 'ã‚ã‚‹', japanese_key: 'ã‚ã‚‹', portuguese: 'Existe.' }),
+    ]);
+    vi.mocked(SentenceRepository.getById).mockResolvedValue(sourceSentence);
+
+    const result = await SourcePreparationEngine.createQueueForSource('source-1', { translateBatchSize: 30 });
+
+    expect(result.plan.totals.jobs).toBe(0);
+    expect(result.plan.totals.actions).toBe(1);
+    expect(result.appliedReusableTranslations).toBe(1);
+    expect(SentenceRepository.update).toHaveBeenCalledWith(
+      'needs-cache',
+      expect.objectContaining({ portuguese: 'Existe.', translation_source: 'cache' }),
+    );
+    expect(AiJobRepository.add).not.toHaveBeenCalled();
+  });
+
+  it('waits for translation before planning lexical analysis and waits for analysis before planning dictionary', async () => {
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
+      sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: null }),
+    ]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: null }),
+    ]);
+
+    const translationPlan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
+    expect(translationPlan.totals.translationJobs).toBe(1);
+    expect(translationPlan.totals.lexicalAnalysisJobs).toBe(0);
+    expect(translationPlan.totals.dictionaryJobs).toBe(0);
+
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
+      sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: 'Vou.' }),
+    ]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: 'Vou.' }),
+    ]);
+
+    const lexicalPlan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
+    expect(lexicalPlan.totals.translationJobs).toBe(0);
+    expect(lexicalPlan.totals.lexicalAnalysisJobs).toBe(1);
+    expect(lexicalPlan.totals.dictionaryJobs).toBe(0);
+
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
+      sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: 'Vou.', kana: 'ã„ã', romaji: 'iku' }),
+    ]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: 'Vou.', kana: 'ã„ã', romaji: 'iku' }),
+    ]);
+    vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([
+      {
+        id: 't1',
+        sentence_id: 's1',
+        dictionary_entry_id: 'entry-needs-ai',
+        form: { dictionary_entry_id: 'entry-needs-ai' },
+      },
+    ] as any);
+    vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
+      entry({ id: 'entry-needs-ai', main_meaning: null, status: 'pending' }),
+    ]);
+
+    const dictionaryPlan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
+    expect(dictionaryPlan.totals.translationJobs).toBe(0);
+    expect(dictionaryPlan.totals.lexicalAnalysisJobs).toBe(0);
+    expect(dictionaryPlan.totals.dictionaryJobs).toBe(1);
   });
 
   it('handles a realistic 300 sentence source without duplicate queue generation or repeated translation', async () => {
@@ -295,8 +366,8 @@ describe('SourcePreparationEngine', () => {
 
     expect(first.plan.totals.translationItems).toBe(300);
     expect(first.plan.totals.translationJobs).toBe(10);
-    expect(first.plan.totals.lexicalAnalysisJobs).toBe(30);
-    expect(createdJobs).toHaveLength(40);
+    expect(first.plan.totals.lexicalAnalysisJobs).toBe(0);
+    expect(createdJobs).toHaveLength(10);
     expect(second.plan.totals.jobs).toBe(0);
 
     const reused = sentence({ id: 'other-source-same', source_id: 'source-2', japanese: '文42', japanese_key: '文42' });

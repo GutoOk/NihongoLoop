@@ -5,6 +5,11 @@ export class SourcePreparationRunner {
   private static abortController: AbortController | null = null;
   private static runnerId = `source-prep-${Math.random().toString(36).slice(2)}`;
   private static listeners = new Set<(isRunning: boolean) => void>();
+  private static readonly planOptions = {
+    translateBatchSize: 30,
+    analyzeBatchSize: 10,
+    dictionaryBatchSize: 12,
+  };
 
   static get isRunning(): boolean {
     return this.running;
@@ -49,7 +54,14 @@ export class SourcePreparationRunner {
           this.abortController.signal,
         );
         onProgress?.();
-        if (!processed) {
+        if (processed) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          continue;
+        }
+
+        const queued = await SourcePreparationEngine.createQueueForSource(sourceId, this.planOptions);
+        onProgress?.();
+        if (queued.jobs.length === 0 && queued.appliedReusableTranslations === 0) {
           this.stop();
           return;
         }

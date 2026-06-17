@@ -150,7 +150,7 @@ export default function SourcePreparationPanel({
     return { translation, analysis, dictionary, total: translation + analysis + dictionary };
   }, [diagnosis]);
 
-  const plannedJobs = plan?.totals.jobs || 0;
+  const plannedActions = plan?.totals.actions || 0;
 
   return (
     <section className="border-b border-[#E5E5E7] bg-white">
@@ -170,7 +170,7 @@ export default function SourcePreparationPanel({
               <ToolbarButton onClick={() => refresh()} icon={<RefreshCw className="h-4 w-4" />} label="Atualizar diagnostico" />
               <ToolbarButton
                 onClick={queueRealGaps}
-                disabled={isBusy || plannedJobs === 0}
+                disabled={isBusy || plannedActions === 0}
                 primary
                 icon={<ListPlus className="h-4 w-4" />}
                 label="Gerar fila das pendencias reais"
@@ -215,7 +215,7 @@ export default function SourcePreparationPanel({
 
             <Panel title="Pendencias reais">
               <div className="grid gap-2">
-                <PendingLine value={pendingTotals.translation} text="frases precisam de traducao por IA" />
+                <PendingLine value={pendingTotals.translation} text="textos unicos precisam de traducao por IA" />
                 <PendingLine value={pendingTotals.analysis} text="frases precisam de analise lexical" />
                 <PendingLine value={pendingTotals.dictionary} text="verbetes precisam ser completados" />
               </div>
@@ -229,13 +229,14 @@ export default function SourcePreparationPanel({
 
           <Panel title="Plano de fila antes de gastar IA">
             {plan ? (
-              <div className="grid gap-3 sm:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-5">
                 <Metric label="Traducoes" value={plan.totals.translationJobs} />
                 <Metric label="Analises" value={plan.totals.lexicalAnalysisJobs} />
                 <Metric label="Dicionario" value={plan.totals.dictionaryJobs} />
+                <Metric label="Reaproveitar" value={plan.totals.reusableTranslationActions} />
                 <Metric label="Jobs novos" value={plan.totals.jobs} />
-                <div className="sm:col-span-4 rounded-lg bg-slate-50 p-3 text-xs font-semibold leading-relaxed text-slate-600">
-                  Itens completos, reaproveitaveis ou ja enfileirados nao entram novamente no plano. Erros e travados exigem acao explicita.
+                <div className="sm:col-span-5 rounded-lg bg-slate-50 p-3 text-xs font-semibold leading-relaxed text-slate-600">
+                  O plano roda em esteira: primeiro traducao e reaproveitamento, depois analise lexical, depois dicionario. Cada etapa recalcula o banco antes da proxima.
                 </div>
               </div>
             ) : (
