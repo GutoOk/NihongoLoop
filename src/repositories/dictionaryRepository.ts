@@ -107,11 +107,17 @@ export class DictionaryRepository {
 
   static async deleteAll(): Promise<boolean> {
     if (!isSupabaseConfigured) return false;
-    await supabase!.from('sentence_terms').delete().eq('user_id', getUserId());
-    await supabase!.from('dictionary_senses').delete().eq('user_id', getUserId());
-    await supabase!.from('dictionary_forms').delete().eq('user_id', getUserId());
-    const { error } = await supabase!.from('dictionary_entries').delete().eq('user_id', getUserId());
-    return !error;
+    const userId = getUserId();
+    const { error: termsError } = await supabase!.from('sentence_terms').delete().eq('user_id', userId);
+    const { error: resetError } = await supabase!
+      .from('sentences')
+      .update({ terms_source: null })
+      .eq('user_id', userId)
+      .in('terms_source', ['ai', 'cache']);
+    const { error: sensesError } = await supabase!.from('dictionary_senses').delete().eq('user_id', userId);
+    const { error: formsError } = await supabase!.from('dictionary_forms').delete().eq('user_id', userId);
+    const { error: entriesError } = await supabase!.from('dictionary_entries').delete().eq('user_id', userId);
+    return !termsError && !resetError && !sensesError && !formsError && !entriesError;
   }
 
   static makeEntryKey(lemma: string, kana?: string | null, type?: string | null): string {

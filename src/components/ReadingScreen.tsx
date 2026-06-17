@@ -576,6 +576,7 @@ export default function ReadingScreen({
           <div className="mb-8">
             <SourcePreparationPanel
               sourceId={sourceId}
+              onDataChanged={() => loadData(true)}
               onPreparationComplete={() => {
                 setShowPrep(false);
                 loadData(false);
