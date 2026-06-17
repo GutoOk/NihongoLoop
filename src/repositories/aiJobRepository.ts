@@ -200,21 +200,6 @@ export class AiJobRepository {
     return !error;
   }
 
-  static async resetRunningJobs(): Promise<boolean> {
-    if (!isSupabaseConfigured) return false;
-    const { error } = await supabase!.from('ai_jobs')
-      .update({
-        status: 'pending',
-        error: null,
-        locked_by: null,
-        locked_until: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('user_id', getUserId())
-      .eq('status', 'running');
-    return !error;
-  }
-
   static async resetRunningJobsByTarget(targetId: string): Promise<boolean> {
     if (!isSupabaseConfigured) return false;
     const { error } = await supabase!.from('ai_jobs')

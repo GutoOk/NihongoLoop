@@ -9,7 +9,6 @@ vi.mock('../../repositories', () => ({
     getPendingByTarget: vi.fn(),
     add: vi.fn(),
     updateStatus: vi.fn(),
-    updateStatuses: vi.fn(),
     getByTargetAndStatuses: vi.fn(),
   },
   SentenceRepository: {
@@ -43,7 +42,6 @@ describe('AiJobService', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', vi.fn());
     vi.mocked(AiJobRepository.updateStatus).mockResolvedValue({} as any);
-    vi.mocked(AiJobRepository.updateStatuses).mockResolvedValue(true);
     vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
   });
 

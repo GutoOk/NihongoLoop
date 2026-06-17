@@ -10,7 +10,6 @@ import {
   SourcePreparationService,
 } from "../features/ai/SourcePreparationService";
 import {
-  ProcessingRunRepository,
   SourcePreparationRepository,
   SourcePreparationStats,
 } from "../repositories";
@@ -127,7 +126,10 @@ export default function SourcePreparationPanel({
     setIsPreparing(true);
     const runOptions = { ...options, runMode };
     try {
-      const run = await ProcessingRunRepository.createRun(sourceId, runMode);
+      let run = await ProcessingRunRepository.getActiveRun(sourceId);
+      if (!run) {
+        run = await ProcessingRunRepository.createRun(sourceId, runMode);
+      }
       if (run) {
          await SourcePreparationService.prepareSource(sourceId, runOptions, run.id);
       }
@@ -174,7 +176,7 @@ export default function SourcePreparationPanel({
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-50 sm:w-auto"
               >
                 <Zap className="h-4 w-4" />
-                {isPreparing ? "Enfileirando..." : "Adicionar tudo à fila"}
+                {isPreparing ? "Enfileirando..." : "Preparar tudo"}
               </button>
               <button
                 onClick={onPreparationComplete}
@@ -232,7 +234,6 @@ function PhaseCard({
   phase: PhaseView;
   onStart: () => void;
   isPreparing: boolean;
-  key?: React.Key;
 }) {
   const complete = phase.missing === 0;
   const percent = phase.total > 0 ? Math.round((phase.done / phase.total) * 100) : complete ? 100 : 0;
@@ -269,7 +270,7 @@ function PhaseCard({
           disabled={isPreparing || complete}
           className="w-full rounded-xl bg-slate-50 py-2.5 text-xs font-black uppercase tracking-wide text-indigo-600 hover:bg-slate-100 hover:text-indigo-900 disabled:opacity-50"
         >
-          {complete ? "Concluído" : "Adicionar etapa à fila"}
+          {complete ? "Concluído" : "Preparar Etapa"}
         </button>
       </div>
     </div>

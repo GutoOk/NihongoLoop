@@ -142,33 +142,13 @@ export class DictionaryRepository {
     return data || null;
   }
 
-  static async updateStatus(id: string, status: DictionaryEntry['status']): Promise<DictionaryEntry | null> {
-    return this.update(id, { status });
-  }
-
-  static async delete(id: string): Promise<boolean> {
-    if (!isSupabaseConfigured) return false;
-    const { error } = await supabase!
-      .from('dictionary_entries')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', getUserId());
-    return !error;
-  }
-
   static async deleteAll(): Promise<boolean> {
     if (!isSupabaseConfigured) return false;
-    const userId = getUserId();
-    const { error: termsError } = await supabase!.from('sentence_terms').delete().eq('user_id', userId);
-    const { error: resetError } = await supabase!
-      .from('sentences')
-      .update({ terms_source: null })
-      .eq('user_id', userId)
-      .in('terms_source', ['ai', 'cache', 'ai_empty']);
-    const { error: sensesError } = await supabase!.from('dictionary_senses').delete().eq('user_id', userId);
-    const { error: formsError } = await supabase!.from('dictionary_forms').delete().eq('user_id', userId);
-    const { error: entriesError } = await supabase!.from('dictionary_entries').delete().eq('user_id', userId);
-    return !termsError && !resetError && !sensesError && !formsError && !entriesError;
+    await supabase!.from('sentence_terms').delete().eq('user_id', getUserId());
+    await supabase!.from('dictionary_senses').delete().eq('user_id', getUserId());
+    await supabase!.from('dictionary_forms').delete().eq('user_id', getUserId());
+    const { error } = await supabase!.from('dictionary_entries').delete().eq('user_id', getUserId());
+    return !error;
   }
 
   static makeEntryKey(lemma: string, kana?: string | null, type?: string | null): string {

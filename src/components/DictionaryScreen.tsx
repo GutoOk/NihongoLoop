@@ -15,8 +15,6 @@ import {
   TermRepository,
 } from "../repositories";
 import { DictionaryEntry, Source } from "../types";
-import { stableHash } from "../core/hash";
-import { chunkByCountAndChars } from "../features/ai/batching";
 import { useModal } from "./ModalProvider";
 import { GlobalAiQueueControl } from "./GlobalAiQueueControl";
 
@@ -48,9 +46,19 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
 
   const loadEntries = async (silent = false) => {
     if (!silent) setLoading(true);
-    let data = await getEntriesForCurrentScope();
+    let data = await DictionaryRepository.getAll();
 
-    const totalPending = data.filter(needsDictionaryEnrichment).length;
+    if (sourceFilter !== "all") {
+      const sentences = await SentenceRepository.getBySourceId(sourceFilter);
+      const sentenceIds = sentences.map((s) => s.id);
+      const terms = await TermRepository.getBySentences(sentenceIds);
+      const validEntryIds = new Set(
+        terms.map((t) => t.dictionary_entry_id).filter(Boolean),
+      );
+      data = data.filter((e) => validEntryIds.has(e.id));
+    }
+
+    const totalPending = data.filter((e) => e.status === "pending").length;
     setPendingCount(totalPending);
 
     const availableTypes = Array.from(
@@ -69,29 +77,6 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
 
     setEntries(data);
     if (!silent) setLoading(false);
-  };
-
-  const getEntriesForCurrentScope = async () => {
-    let data = await DictionaryRepository.getAll();
-    if (sourceFilter === "all") return data;
-
-    const sentences = await SentenceRepository.getBySourceId(sourceFilter);
-    const sentenceIds = sentences.map((s) => s.id);
-    const terms = await TermRepository.getBySentencesWithDictionary(sentenceIds);
-    const validEntryIds = new Set(
-      terms.map((t) => t.dictionary_entry_id || t.form?.dictionary_entry_id).filter(Boolean),
-    );
-    return data.filter((entry) => validEntryIds.has(entry.id));
-  };
-
-  const needsDictionaryEnrichment = (entry: DictionaryEntry) => {
-    return (
-      entry.status === "pending" ||
-      !entry.main_meaning ||
-      !entry.kana ||
-      !entry.romaji ||
-      !entry.type
-    );
   };
 
   const handleClearDictionary = () => {
@@ -125,6 +110,30 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
     );
   };
 
+  const chunkByCountAndChars = (items: any[], serialize: (i: any) => string, limits: { maxItems: number, maxChars: number, perItemOverhead: number }) => {
+    const chunks: any[][] = [];
+    let currentChunk: any[] = [];
+    let currentCharCount = 0;
+
+    for (const item of items) {
+      const len = serialize(item).length + limits.perItemOverhead;
+      if (
+        currentChunk.length > 0 && 
+        (currentChunk.length >= limits.maxItems || currentCharCount + len > limits.maxChars)
+      ) {
+        chunks.push(currentChunk);
+        currentChunk = [];
+        currentCharCount = 0;
+      }
+      currentChunk.push(item);
+      currentCharCount += len;
+    }
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+    return chunks;
+  };
+
   const handleAddToQueue = async () => {
     if (pendingCount === 0) {
       showAlert("Aviso", "Não há palavras pendentes no dicionário.");
@@ -137,17 +146,23 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
       async () => {
         setIsQueuing(true);
         try {
-          const data = await getEntriesForCurrentScope();
-          const pendings = data.filter(needsDictionaryEnrichment);
+          let data = await DictionaryRepository.getAll();
+
+          if (sourceFilter !== "all") {
+            const sentences = await SentenceRepository.getBySourceId(sourceFilter);
+            const sentenceIds = sentences.map((s) => s.id);
+            const terms = await TermRepository.getBySentences(sentenceIds);
+            const validEntryIds = new Set(
+              terms.map((t) => t.dictionary_entry_id).filter(Boolean),
+            );
+            data = data.filter((e) => validEntryIds.has(e.id));
+          }
+          
+          const pendings = data.filter((e) => e.status === "pending");
 
           const allJobs = await AiJobRepository.getAll();
           const pendingDictItemIds = new Set<string>();
-          allJobs
-            .filter((job) =>
-              (job.type === 'enrich_dictionary_entry' || job.type === 'batch_enrich_dictionary_entries_full') &&
-              ['pending', 'running', 'error'].includes(job.status)
-            )
-            .forEach(job => {
+          allJobs.filter(j => j.type === 'enrich_dictionary_entry' || j.type === 'batch_enrich_dictionary_entries_full').forEach(job => {
             if (job?.input?.items) {
                job.input.items.forEach((it: any) => pendingDictItemIds.add(it.id));
             } else if (job?.input?.id) {
@@ -170,25 +185,18 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
           });
 
           for (const chunk of dictChunks) {
-             const input = {
-                mode: 'full',
-                items: chunk.map((e) => ({
-                   id: e.id,
-                   lemma: e.lemma,
-                })),
-             };
-             const inputHash = await stableHash({ type: dictType, input });
              await AiJobRepository.add({
                 type: dictType,
-                user_id: "",
-                target_type: 'batch',
-                target_id: sourceFilter === "all" ? "dictionary" : sourceFilter,
-                input_hash: inputHash,
-                input,
+                target_id: "global",
+                input: {
+                   items: chunk.map((e) => ({
+                      id: e.id,
+                      lemma: e.lemma,
+                      reading: e.reading,
+                   })),
+                },
                 status: 'pending',
                 priority: 2,
-                result: null,
-                error: null,
              });
           }
 
