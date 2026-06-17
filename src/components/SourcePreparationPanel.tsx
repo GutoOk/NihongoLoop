@@ -32,7 +32,6 @@ import { countJobsByStatus, getJobHumanName } from "./sourcePreparation/jobDispl
 interface SourcePreparationPanelProps {
   sourceId: string;
   onPreparationComplete: () => void;
-  onDataChanged?: () => void;
 }
 
 type PhaseMode = "translate" | "analyze" | "dictionary";
@@ -62,7 +61,6 @@ const DEFAULT_OPTIONS: PreparationOptions = {
 export default function SourcePreparationPanel({
   sourceId,
   onPreparationComplete,
-  onDataChanged,
 }: SourcePreparationPanelProps) {
   const [run, setRun] = useState<ProcessingRun | null>(null);
   const [stats, setStats] = useState<SourcePreparationStats | null>(null);
@@ -73,11 +71,9 @@ export default function SourcePreparationPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [localRunnerActive, setLocalRunnerActive] = useState(false);
   const loadingRef = useRef(false);
-  const lastDataSignatureRef = useRef<string | null>(null);
   const { showAlert, showConfirm } = useModal();
 
   useEffect(() => {
-    lastDataSignatureRef.current = null;
     loadPanel();
     const interval = setInterval(loadPanel, 2000);
     return () => clearInterval(interval);
@@ -98,19 +94,6 @@ export default function SourcePreparationPanel({
       setJobs(targetJobs);
       setLocalRunnerActive(ProcessingRunner.isRunning);
       setLoadError(null);
-      const dataSignature = [
-        sourceStats.sNoTrans,
-        sourceStats.sMissingAnalysis,
-        sourceStats.dictPending,
-        targetJobs.filter((job) => job.status === "pending" || job.status === "running").length,
-        targetJobs.filter((job) => job.status === "completed" || job.status === "applied").length,
-      ].join(":");
-      if (lastDataSignatureRef.current === null) {
-        lastDataSignatureRef.current = dataSignature;
-      } else if (lastDataSignatureRef.current !== dataSignature) {
-        lastDataSignatureRef.current = dataSignature;
-        onDataChanged?.();
-      }
     } catch (error: any) {
       setLoadError(error?.message || "Não foi possível atualizar a preparação.");
     } finally {

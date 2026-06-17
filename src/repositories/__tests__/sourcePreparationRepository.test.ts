@@ -22,36 +22,30 @@ function createStatsBuilders() {
     { id: 's-no-reading', portuguese: 'Sem leitura', kana: null, romaji: null, terms_source: 'ai' },
     { id: 's-no-terms', portuguese: 'Sem termos', kana: 'かな', romaji: 'kana', terms_source: null },
     { id: 's-ai-empty', portuguese: 'Vazio', kana: 'かな', romaji: 'kana', terms_source: 'ai_empty' },
-    { id: 's-stale-ai', portuguese: 'Marcador antigo', kana: 'かな', romaji: 'kana', terms_source: 'ai' },
   ];
 
   const terms = [
-    { sentence_id: 's-ready', dictionary_form_id: 'f-ready' },
-    { sentence_id: 's-no-trans', dictionary_form_id: 'f-pending' },
-    { sentence_id: 's-no-reading', dictionary_form_id: 'f-ready' },
-  ];
-
-  const forms = [
-    { id: 'f-ready', dictionary_entry_id: 'd-ready' },
-    { id: 'f-pending', dictionary_entry_id: 'd-pending' },
+    { sentence_id: 's-ready', dictionary_entry_id: 'd-ready' },
+    { sentence_id: 's-no-trans', dictionary_entry_id: 'd-pending' },
+    { sentence_id: 's-no-reading', dictionary_entry_id: 'd-ready' },
   ];
 
   const dictEntries = [
     {
-      id: 'd-ready',
       status: 'reviewed',
       main_meaning: 'ok',
       kana: 'かな',
       romaji: 'kana',
       type: 'substantivo',
+      meanings: ['ok'],
     },
     {
-      id: 'd-pending',
       status: 'pending',
       main_meaning: null,
       kana: null,
       romaji: null,
       type: null,
+      meanings: [],
     },
   ];
 
@@ -67,12 +61,6 @@ function createStatsBuilders() {
     eq: vi.fn().mockResolvedValue({ data: terms, error: null }),
   };
 
-  const formsBuilder: any = {
-    select: vi.fn(() => formsBuilder),
-    in: vi.fn(() => formsBuilder),
-    eq: vi.fn().mockResolvedValue({ data: forms, error: null }),
-  };
-
   const dictionaryBuilder: any = {
     select: vi.fn(() => dictionaryBuilder),
     in: vi.fn(() => dictionaryBuilder),
@@ -82,7 +70,6 @@ function createStatsBuilders() {
   vi.mocked(supabase!.from).mockImplementation((table: string) => {
     if (table === 'sentences') return sentencesBuilder;
     if (table === 'sentence_terms') return termsBuilder;
-    if (table === 'dictionary_forms') return formsBuilder;
     if (table === 'dictionary_entries') return dictionaryBuilder;
     throw new Error(`Unexpected table ${table}`);
   });
@@ -95,15 +82,15 @@ describe('SourcePreparationRepository', () => {
     createStatsBuilders();
   });
 
-  it('getStats derives preparation gaps from real linked data instead of terms_source labels', async () => {
+  it('getStats counts preparation gaps and respects ai_empty analysis attempts', async () => {
     const stats = await SourcePreparationRepository.getStats('source-1');
 
     expect(stats).toEqual({
-      sTotal: 6,
+      sTotal: 5,
       sNoTrans: 1,
       sNoRead: 1,
-      sNoTerms: 3,
-      sMissingAnalysis: 4,
+      sNoTerms: 2,
+      sMissingAnalysis: 2,
       dictTotal: 2,
       dictPending: 1,
     });

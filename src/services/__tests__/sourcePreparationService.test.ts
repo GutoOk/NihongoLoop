@@ -21,12 +21,10 @@ vi.mock('../../repositories', () => ({
     update: vi.fn()
   },
   TermRepository: {
-    getBySentences: vi.fn().mockResolvedValue([]),
-    getBySentencesWithDictionary: vi.fn().mockResolvedValue([])
+    getBySentences: vi.fn().mockResolvedValue([])
   },
   DictionaryRepository: {
     getByUniqueKey: vi.fn().mockResolvedValue(null),
-    getByIds: vi.fn().mockResolvedValue([]),
     addBatch: vi.fn()
   },
   ProcessingRunRepository: {
