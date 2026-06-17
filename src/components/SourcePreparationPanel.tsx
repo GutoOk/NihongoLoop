@@ -49,9 +49,8 @@ interface PhaseView {
 const DEFAULT_OPTIONS: PreparationOptions = {
   translateBatchSize: 30,
   analyzeBatchSize: 10,
-  dictFastBatchSize: 40,
   dictFullBatchSize: 12,
-  dictMode: "fast",
+  dictMode: "full",
   useCache: true,
   overwriteReviewed: false,
   processMode: (localStorage.getItem("ai_process_mode") as "local" | "server") || "server",
@@ -135,7 +134,7 @@ export default function SourcePreparationPanel({
         total: s.dictTotal || s.dictPending,
         missing: s.dictPending,
         done: Math.max(0, (s.dictTotal || s.dictPending) - s.dictPending),
-        jobTypes: ["batch_enrich_dictionary_entries_fast", "batch_enrich_dictionary_entries_full"],
+        jobTypes: ["batch_enrich_dictionary_entries_full"],
       },
     ];
   }, [stats]);
@@ -363,15 +362,10 @@ export default function SourcePreparationPanel({
                   ["5", "5 agressivo"],
                 ]}
               />
-              <SelectSetting
-                label="Dicionário"
-                value={options.dictMode}
-                onChange={(value) => updateOptions({ dictMode: value as "fast" | "full" })}
-                options={[
-                  ["fast", "Rápido"],
-                  ["full", "Completo"],
-                ]}
-              />
+                            <div className="rounded-xl bg-slate-50 px-3 py-2 font-bold text-slate-700">
+                <div className="text-[10px] uppercase tracking-wide text-slate-400">Dicionário</div>
+                <div className="mt-1 text-xs font-black text-indigo-700">Sempre completo</div>
+              </div>
               <label className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 font-bold text-slate-700">
                 Reusar cache
                 <input
