@@ -43,11 +43,36 @@ jobs:
           gcloud auth configure-docker us-east1-docker.pkg.dev --quiet
 
       - name: Build and push Docker image
+        env:
+          IMAGE: us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/nihongo-loop:${{ github.sha }}
         run: |
-          docker build -t us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/nihongo-loop:latest .
-          docker push us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/nihongo-loop:latest
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
 
       - name: Replace Cloud Run service configuration
+        env:
+          IMAGE: us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/nihongo-loop:${{ github.sha }}
+          APP_VERSION: ${{ github.run_number }}-${{ github.sha }}
         run: |
           sed -i "s/GEMINI_API_KEY_PLACEHOLDER/${{ secrets.GEMINI_API_KEY }}/g" clean_service.yaml
+          sed -i "s|IMAGE_PLACEHOLDER|$IMAGE|g" clean_service.yaml
+          sed -i "s|APP_VERSION_PLACEHOLDER|$APP_VERSION|g" clean_service.yaml
           gcloud run services replace clean_service.yaml --project ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Verify deployed commit
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          SERVICE_URL="$(gcloud run services describe nihongo-loop --region us-east1 --project ${{ secrets.GCP_PROJECT_ID }} --format='value(status.url)')"
+          echo "Verifying $SERVICE_URL"
+          for attempt in 1 2 3 4 5 6; do
+            RESPONSE="$(curl -fsS "$SERVICE_URL/api/version" || true)"
+            echo "Attempt $attempt: $RESPONSE"
+            if echo "$RESPONSE" | grep -q "$EXPECTED_SHA"; then
+              echo "Cloud Run is serving commit $EXPECTED_SHA"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Cloud Run did not report expected commit $EXPECTED_SHA"
+          exit 1

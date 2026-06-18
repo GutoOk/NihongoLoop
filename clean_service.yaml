@@ -56,7 +56,9 @@ spec:
           value: GEMINI_API_KEY_PLACEHOLDER
         - name: APP_URL
           value: https://nihongo-loop-32998941345.us-east1.run.app
-        image: us-east1-docker.pkg.dev/nihongoloop-498802/cloud-run-source-deploy/nihongo-loop:latest
+        - name: APP_VERSION
+          value: APP_VERSION_PLACEHOLDER
+        image: IMAGE_PLACEHOLDER
         name: app-container
         ports:
         - containerPort: 3000

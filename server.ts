@@ -201,6 +201,16 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  app.get("/api/version", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.json({
+      version: process.env.APP_VERSION || "dev",
+      commit: process.env.APP_VERSION || "dev",
+      nodeEnv: process.env.NODE_ENV || "development",
+      servedAt: new Date().toISOString(),
+    });
+  });
+
   app.post("/api/ai/trigger-batch-jobs", ipRateLimit, authenticateRequest, async (req: any, res: any) => {
     try {
       const { targetId, concurrencyLimit } = req.body;
