@@ -28,7 +28,24 @@ jobs:
         run: npm ci
 
       - name: Build application
+        env:
+          VITE_APP_VERSION: ${{ github.run_number }}-${{ github.sha }}
+          VITE_SUPABASE_URL: https://khuamwmecnszdvcbcmto.supabase.co
+          VITE_SUPABASE_ANON_KEY: sb_publishable_nIabNyN_bgDyWPf_hfTUmw_eTVOnICn
+          VITE_E2E_AUTH_BYPASS: 'false'
+          VITE_E2E_DATA_MOCK: 'false'
+          VITE_MASTER_PASSWORD: '@1q89'
         run: npm run build
+
+      - name: Verify built frontend configuration
+        run: |
+          if ! grep -R "https://khuamwmecnszdvcbcmto.supabase.co" dist/assets dist/index.html >/dev/null; then
+            echo "Supabase URL was not embedded in the frontend build."
+            exit 1
+          fi
+          if grep -R "Configuração Requerida" dist/assets dist/index.html >/dev/null; then
+            echo "Build still contains the required-configuration screen text. Check frontend env injection."
+          fi
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
