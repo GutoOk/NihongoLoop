@@ -503,5 +503,58 @@ describe('AiJobService', () => {
         expect.objectContaining({ status: 'error' }),
       );
     });
+
+    it('does not update dictionary unique_key when the enriched key already belongs to another entry', async () => {
+      const job = {
+        id: 'dict-duplicate-key',
+        user_id: 'user-123',
+        type: 'batch_enrich_dictionary_entries_full',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: { items: [{ id: 'entry-current', lemma: 'jp' }] },
+      } as any;
+
+      vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
+        { id: 'entry-current', status: 'pending', main_meaning: null, kana: null, romaji: null, type: 'verbo' },
+      ] as any);
+      vi.mocked(DictionaryRepository.getById).mockResolvedValue({
+        id: 'entry-current',
+        lemma: 'jp',
+        status: 'pending',
+        main_meaning: null,
+        kana: null,
+        romaji: null,
+        type: 'verbo',
+        tags: [],
+      } as any);
+      vi.mocked(DictionaryRepository.getByUniqueKey).mockResolvedValue({
+        id: 'entry-other',
+        lemma: 'jp',
+        unique_key: 'jp|kana|verbo',
+      } as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'dict-duplicate-key',
+            type: 'batch_enrich_dictionary_entries_full',
+            items: [{ job_id: 'entry-current', main_meaning: 'ir', kana: 'kana', romaji: 'romaji', type: 'verbo' }],
+          }],
+        }),
+      } as any);
+
+      const result = await AiJobService.processJobsBatch([job]);
+
+      expect(result.errorCount).toBe(0);
+      expect(DictionaryRepository.update).toHaveBeenCalledWith(
+        'entry-current',
+        expect.not.objectContaining({ unique_key: expect.any(String) }),
+      );
+      expect(DictionaryRepository.update).toHaveBeenCalledWith(
+        'entry-current',
+        expect.objectContaining({ status: 'ai_enriched', kana: 'kana', romaji: 'romaji' }),
+      );
+    });
   });
 });

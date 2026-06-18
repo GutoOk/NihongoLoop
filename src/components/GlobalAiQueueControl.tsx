@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, Database, RefreshCw } from 'lucide-react';
+import { AlertCircle, Database, Eraser, RefreshCw } from 'lucide-react';
 import { AiJobRepository } from '../repositories';
 import { AiJob } from '../types';
 import { SourcePreparationEngine } from '../features/ai/SourcePreparationEngine';
 import { getJobHumanName } from './sourcePreparation/jobDisplay';
+import { useModal } from './ModalProvider';
 
 export function GlobalAiQueueControl() {
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isClearing, setIsClearing] = useState(false);
+  const { showConfirm } = useModal();
 
   const loadJobs = async () => {
     try {
@@ -26,8 +29,22 @@ export function GlobalAiQueueControl() {
 
   const pending = jobs.filter((job) => job.status === 'pending').length;
   const running = jobs.filter((job) => job.status === 'running').length;
-  const completed = jobs.filter((job) => job.status === 'completed' || job.status === 'applied').length;
   const error = jobs.filter((job) => job.status === 'error').length;
+  const clearable = jobs.filter(isClearableQueueJob).length;
+  const visibleJobs = jobs.filter(isVisibleQueueJob);
+
+  const clearQueue = async () => {
+    if (!(await showConfirm('Excluir fila global', 'Remover tarefas pendentes, com erro e concluidas da fila global? Tarefas rodando serao preservadas.'))) {
+      return;
+    }
+    setIsClearing(true);
+    try {
+      await SourcePreparationEngine.clearAllQueueJobs();
+      await loadJobs();
+    } finally {
+      setIsClearing(false);
+    }
+  };
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-4">
@@ -36,13 +53,23 @@ export function GlobalAiQueueControl() {
           <Database className="h-5 w-5 text-indigo-500" />
           <h3 className="font-bold text-slate-800">Fila global de IA</h3>
         </div>
-        <button
-          onClick={() => void loadJobs()}
-          className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50"
-        >
-          <RefreshCw className="h-3.5 w-3.5" />
-          Atualizar
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => void loadJobs()}
+            className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-[11px] font-black uppercase tracking-wide text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Atualizar
+          </button>
+          <button
+            onClick={() => void clearQueue()}
+            disabled={isClearing || clearable === 0}
+            className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-rose-100 bg-white px-3 text-[11px] font-black uppercase tracking-wide text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+          >
+            <Eraser className="h-3.5 w-3.5" />
+            Excluir fila global
+          </button>
+        </div>
       </div>
 
       {loadError && (
@@ -52,18 +79,17 @@ export function GlobalAiQueueControl() {
         </div>
       )}
 
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
         <QueueMetric label="Pendentes" value={pending} />
         <QueueMetric label="Rodando" value={running} />
-        <QueueMetric label="Concluidos" value={completed} />
         <QueueMetric label="Erros" value={error} />
       </div>
 
       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-        {jobs.length === 0 ? (
+        {visibleJobs.length === 0 ? (
           <div className="rounded-lg bg-slate-50 p-3 text-xs font-semibold text-slate-500">Nenhum job registrado.</div>
         ) : (
-          jobs.map((job) => {
+          visibleJobs.map((job) => {
             const input = typeof job.input === 'string' ? {} : job.input || {};
             const label = typeof input.label === 'string' ? input.label : SourcePreparationEngine.getHumanJobLabel(job);
             return (
@@ -87,6 +113,14 @@ export function GlobalAiQueueControl() {
       </div>
     </div>
   );
+}
+
+function isClearableQueueJob(job: AiJob): boolean {
+  return job.status === 'pending' || job.status === 'error' || job.status === 'completed' || job.status === 'applied' || job.status === 'cancelled';
+}
+
+function isVisibleQueueJob(job: AiJob): boolean {
+  return job.status === 'pending' || job.status === 'running' || job.status === 'error';
 }
 
 function QueueMetric({ label, value }: { label: string; value: number }) {

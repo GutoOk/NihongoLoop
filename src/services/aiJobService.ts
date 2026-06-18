@@ -557,7 +557,9 @@ export class AiJobService {
     if (!finalKana || !finalRomaji) {
       throw new Error('Resultado invalido: kana ou romaji ausente.');
     }
-    await DictionaryRepository.update(entry.id, {
+    const targetUniqueKey = DictionaryRepository.makeEntryKey(entry.lemma, finalKana, finalType);
+    const existingWithTargetKey = await DictionaryRepository.getByUniqueKey(targetUniqueKey);
+    const updates: Record<string, unknown> = {
       main_meaning: mainMeaning,
       type: finalType,
       kana: finalKana,
@@ -569,8 +571,12 @@ export class AiJobService {
       grammar_info: entry.grammar_info || result.grammar_info || null,
       short_note: entry.short_note || result.short_note || null,
       status: 'ai_enriched',
-      unique_key: DictionaryRepository.makeEntryKey(entry.lemma, finalKana, finalType),
-    });
+    };
+    if (!existingWithTargetKey || existingWithTargetKey.id === entry.id) {
+      updates.unique_key = targetUniqueKey;
+    }
+
+    await DictionaryRepository.update(entry.id, updates);
 
     const meanings = Array.isArray(result.meanings) && result.meanings.length > 0 ? result.meanings : [mainMeaning];
     await DictionarySenseRepository.upsertBatch(meanings.filter(Boolean).map((meaning: string, index: number) => ({

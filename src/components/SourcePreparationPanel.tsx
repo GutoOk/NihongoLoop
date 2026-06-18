@@ -139,7 +139,7 @@ export default function SourcePreparationPanel({
 
   const clearPending = async () => {
     const scopeLabel = showGlobal ? 'global' : 'desta fonte';
-    if (!(await showConfirm('Limpar fila', `Remover tarefas pendentes, com erro e concluídas da fila ${scopeLabel}? Tarefas rodando serao preservadas.`))) {
+    if (!(await showConfirm('Excluir fila', `Remover tarefas pendentes, com erro e concluidas da fila ${scopeLabel}? Tarefas rodando serao preservadas.`))) {
       return;
     }
     setIsBusy(true);
@@ -266,7 +266,7 @@ export default function SourcePreparationPanel({
                 <ToolbarButton small onClick={() => setShowGlobal((value) => !value)} label={showGlobal ? 'Ver fonte' : 'Ver global'} />
                 <ToolbarButton small onClick={resumeStuck} disabled={isBusy || !queueCounts.stuck} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retomar travados" />
                 <ToolbarButton small onClick={retryErrors} disabled={isBusy || !queueCounts.error} icon={<RefreshCw className="h-3.5 w-3.5" />} label="Retentar erros" />
-                <ToolbarButton small onClick={clearPending} disabled={isBusy || !queueCounts.clearable} icon={<Eraser className="h-3.5 w-3.5" />} label={showGlobal ? 'Limpar fila global' : 'Limpar fila da fonte'} />
+                <ToolbarButton small onClick={clearPending} disabled={isBusy || !queueCounts.clearable} icon={<Eraser className="h-3.5 w-3.5" />} label={showGlobal ? 'Excluir fila global' : 'Excluir fila da fonte'} />
               </div>
             }
           >
