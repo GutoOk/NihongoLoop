@@ -12,6 +12,13 @@ import { SourceRepository } from "../repositories";
 import { Source } from "../types";
 import { AppNavigate, ScreenType } from "../navigation";
 
+declare const __APP_VERSION_INFO__: {
+  version: string;
+  commit: string;
+  commitDate: string;
+  commitCount: string;
+};
+
 interface HomeScreenProps {
   onNavigate: AppNavigate;
 }
@@ -64,8 +71,18 @@ const NAV_CARDS: NavCard[] = [
   },
 ];
 
+function formatCommitDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
 export default function HomeScreen({ onNavigate }: HomeScreenProps) {
   const [lastSource, setLastSource] = useState<Source | null>(null);
+  const versionInfo = typeof __APP_VERSION_INFO__ !== "undefined" ? __APP_VERSION_INFO__ : null;
 
   useEffect(() => {
     SourceRepository.getAll().then((sources) => {
@@ -135,6 +152,12 @@ export default function HomeScreen({ onNavigate }: HomeScreenProps) {
             </button>
           ))}
         </section>
+
+        {versionInfo && (
+          <p className="text-center text-[10px] font-bold uppercase tracking-[0.14em] text-[#86868B]">
+            Versao {versionInfo.version} · Commit {versionInfo.commit} · {formatCommitDate(versionInfo.commitDate)}
+          </p>
+        )}
       </main>
     </div>
   );
