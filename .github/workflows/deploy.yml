@@ -38,9 +38,14 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Submit build to Google Cloud Build
+      - name: Configure Docker for Google Cloud
         run: |
-          gcloud builds submit --tag us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/nihongo-loop:latest --project ${{ secrets.GCP_PROJECT_ID }}
+          gcloud auth configure-docker us-east1-docker.pkg.dev --quiet
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/nihongo-loop:latest .
+          docker push us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-source-deploy/nihongo-loop:latest
 
       - name: Replace Cloud Run service configuration
         run: |
