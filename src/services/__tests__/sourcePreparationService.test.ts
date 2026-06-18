@@ -69,7 +69,7 @@ describe('SourcePreparationService', () => {
     vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([]);
   });
 
-  it('creates translation jobs only for sentences that really need AI', async () => {
+  it('creates individual translation jobs only for sentences that really need AI', async () => {
     const sentences = [
       sentence({ id: 'needs-ai', japanese: '待って', japanese_key: '待って' }),
       sentence({ id: 'ready', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos.' }),
@@ -82,9 +82,10 @@ describe('SourcePreparationService', () => {
     expect(AiJobRepository.add).toHaveBeenCalledWith(
       expect.objectContaining({
         target_id: 'source-1',
-        type: 'batch_translate_sentences',
+        type: 'translate_sentence',
         input: expect.objectContaining({
-          items: [{ id: 'needs-ai', japanese: '待って' }],
+          id: 'needs-ai',
+          japanese: '待って',
         }),
       }),
     );
@@ -103,15 +104,15 @@ describe('SourcePreparationService', () => {
         id: 'job-1',
         target_id: 'source-1',
         status: 'pending',
-        type: 'batch_translate_sentences',
-        input: { items: [{ id: 'sent-2' }] },
+        type: 'translate_sentence',
+        input: { id: 'sent-2' },
       } as any,
     ]);
 
     await SourcePreparationService.prepareSource('source-1', options, 'run-1');
 
     expect(AiJobRepository.add).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'batch_translate_sentences' }),
+      expect.objectContaining({ type: 'translate_sentence' }),
     );
   });
 
@@ -131,7 +132,7 @@ describe('SourcePreparationService', () => {
       expect.objectContaining({ portuguese: 'Existe.', translation_source: 'cache' }),
     );
     expect(AiJobRepository.add).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'batch_translate_sentences' }),
+      expect.objectContaining({ type: 'translate_sentence' }),
     );
   });
 });

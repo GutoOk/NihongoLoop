@@ -5,10 +5,11 @@ export class SourcePreparationRunner {
   private static abortController: AbortController | null = null;
   private static runnerId = `source-prep-${Math.random().toString(36).slice(2)}`;
   private static listeners = new Set<(isRunning: boolean) => void>();
+  private static readonly concurrencyLimit = 6;
   private static readonly planOptions = {
-    translateBatchSize: 30,
-    analyzeBatchSize: 10,
-    dictionaryBatchSize: 12,
+    translateBatchSize: 1,
+    analyzeBatchSize: 1,
+    dictionaryBatchSize: 1,
   };
 
   static get isRunning(): boolean {
@@ -39,9 +40,9 @@ export class SourcePreparationRunner {
 
   static async drainSource(sourceId: string, onProgress?: () => void, signal?: AbortSignal, delayMs = 250): Promise<void> {
     while (!signal?.aborted) {
-      const processed = await SourcePreparationEngine.processNextSourceJob(sourceId, this.runnerId, signal);
+      const processed = await SourcePreparationEngine.processNextSourceJobs(sourceId, this.runnerId, this.concurrencyLimit, signal);
       onProgress?.();
-      if (processed) {
+      if (processed.length > 0) {
         if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
         continue;
       }

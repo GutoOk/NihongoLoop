@@ -28,6 +28,7 @@ vi.mock('../../../repositories', () => ({
 vi.mock('../../../services/aiJobService', () => ({
   AiJobService: {
     processJobsBatch: vi.fn().mockResolvedValue({ success: true, successCount: 1, errorCount: 0 }),
+    processJob: vi.fn().mockResolvedValue({ success: true }),
   },
 }));
 
@@ -288,7 +289,7 @@ describe('SourcePreparationEngine', () => {
 
     expect(plan.reuse.translations).toHaveLength(1);
     expect(plan.totals.translationItems).toBe(2);
-    expect((plan.jobs.translation[0].input.items as any[]).map((item) => item.id)).toEqual(['missing', 'completed-target']);
+    expect(plan.jobs.translation.map((planned) => planned.input.id)).toEqual(['missing', 'completed-target']);
     expect(plan.blocked.errors).toHaveLength(1);
     expect(plan.blocked.stuck).toHaveLength(1);
   });
@@ -297,14 +298,14 @@ describe('SourcePreparationEngine', () => {
     const plan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
     plan.reuse.translations.push({ sentenceId: 's-cache', reusableSentenceId: 'old', translation: 'Cache.' });
     plan.jobs.translation.push({
-      type: 'batch_translate_sentences',
+      type: 'translate_sentence',
       targetType: 'batch',
       targetId: 'source-1',
       stage: 'translation',
-      label: 'Traduzir frases - lote 1/1',
+      label: 'Traduzir frase 1/1',
       itemCount: 1,
-      input: { sourceId: 'source-1', stage: 'translation', label: 'Traduzir frases - lote 1/1', items: [{ id: 's1', japanese: '待って' }] },
-      targetKeys: ['batch_translate_sentences:s1'],
+      input: { sourceId: 'source-1', stage: 'translation', label: 'Traduzir frase 1/1', id: 's1', sentence: '待って', japanese: '待って' },
+      targetKeys: ['translate_sentence:s1'],
     });
     vi.mocked(SentenceRepository.getById).mockResolvedValue(sentence({ id: 's-cache' }));
 
@@ -312,9 +313,9 @@ describe('SourcePreparationEngine', () => {
 
     expect(SentenceRepository.update).toHaveBeenCalledWith('s-cache', expect.objectContaining({ translation_source: 'cache' }));
     expect(AiJobRepository.add).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'batch_translate_sentences',
+      type: 'translate_sentence',
       target_id: 'source-1',
-      input: expect.objectContaining({ label: 'Traduzir frases - lote 1/1' }),
+      input: expect.objectContaining({ label: 'Traduzir frase 1/1' }),
     }));
     expect(AiJobRepository.delete).not.toHaveBeenCalled();
     expect(result.jobs).toHaveLength(1);
@@ -404,7 +405,7 @@ describe('SourcePreparationEngine', () => {
 
     const plan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
 
-    expect((plan.jobs.translation[0].input.items as any[]).map((item) => item.id)).toEqual(['needs-translation']);
+    expect(plan.jobs.translation.map((planned) => planned.input.id)).toEqual(['needs-translation']);
   });
 
   it('does not let a completed analysis job block a sentence without valid lexical analysis', async () => {
@@ -425,7 +426,7 @@ describe('SourcePreparationEngine', () => {
 
     const plan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
 
-    expect((plan.jobs.lexicalAnalysis[0].input.items as any[]).map((item) => item.id)).toEqual(['needs-analysis']);
+    expect(plan.jobs.lexicalAnalysis.map((planned) => planned.input.id)).toEqual(['needs-analysis']);
   });
 
   it('does not let a completed dictionary job block an entry that is still incomplete', async () => {
@@ -457,7 +458,7 @@ describe('SourcePreparationEngine', () => {
 
     const plan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
 
-    expect((plan.jobs.dictionary[0].input.items as any[]).map((item) => item.id)).toEqual(['entry-incomplete']);
+    expect(plan.jobs.dictionary.map((planned) => planned.input.id)).toEqual(['entry-incomplete']);
   });
 
   it('handles a realistic 300 sentence source without duplicate queue generation or repeated translation', async () => {
@@ -501,9 +502,9 @@ describe('SourcePreparationEngine', () => {
     });
 
     expect(first.plan.totals.translationItems).toBe(300);
-    expect(first.plan.totals.translationJobs).toBe(10);
+    expect(first.plan.totals.translationJobs).toBe(300);
     expect(first.plan.totals.lexicalAnalysisJobs).toBe(0);
-    expect(createdJobs).toHaveLength(10);
+    expect(createdJobs).toHaveLength(300);
     expect(second.plan.totals.jobs).toBe(0);
 
     const reused = sentence({ id: 'other-source-same', source_id: 'source-2', japanese: '文42', japanese_key: '文42' });

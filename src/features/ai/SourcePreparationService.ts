@@ -40,7 +40,7 @@ export class SourcePreparationService {
           current_step:
             result.jobs.length === 0 && result.appliedReusableTranslations === 0
               ? 'Nada a fazer: nenhuma lacuna real sem fila existente.'
-              : `${result.jobs.length} lote(s) criados e ${result.appliedReusableTranslations} reaproveitamento(s) aplicados a partir de pendencias reais.`,
+              : `${result.jobs.length} tarefa(s) individuais criadas e ${result.appliedReusableTranslations} reaproveitamento(s) aplicados a partir de pendencias reais.`,
           total_items:
             plan.totals.translationItems + plan.totals.lexicalAnalysisItems + plan.totals.dictionaryItems,
           created_jobs: result.jobs.length,

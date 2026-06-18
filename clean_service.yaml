@@ -52,6 +52,12 @@ spec:
           value: sb_publishable_nIabNyN_bgDyWPf_hfTUmw_eTVOnICn
         - name: GEMINI_MODEL
           value: gemini-2.5-flash-lite
+        - name: GEMINI_MODEL_FAST
+          value: gemini-2.5-flash-lite
+        - name: GEMINI_MODEL_ANALYZE
+          value: gemini-2.5-flash-lite
+        - name: GEMINI_MODEL_FULL
+          value: gemini-2.5-flash-lite
         - name: GEMINI_API_KEY
           value: GEMINI_API_KEY_PLACEHOLDER
         - name: APP_URL

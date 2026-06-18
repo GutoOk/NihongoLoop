@@ -28,7 +28,7 @@ vi.mock('../../../repositories', () => ({
 
 vi.mock('../../../services/aiJobService', () => ({
   AiJobService: {
-    processJobsBatch: vi.fn(),
+    processJob: vi.fn(),
   },
 }));
 
@@ -79,13 +79,12 @@ describe('Source preparation pipeline integration', () => {
       jobs.push(created);
       return created;
     });
-    vi.mocked(AiJobService.processJobsBatch).mockImplementation(async (batch: any[]) => {
-      for (const job of batch) {
-        if (job.type === 'batch_translate_sentences') {
+    vi.mocked(AiJobService.processJob).mockImplementation(async (job: any) => {
+        if (job.type === 'translate_sentence') {
           sentences[0].portuguese = 'pt';
           sentences[0].status = 'translated';
         }
-        if (job.type === 'batch_analyze_sentences') {
+        if (job.type === 'generate_sentence_reading') {
           sentences[0].kana = 'kana';
           sentences[0].romaji = 'romaji';
           sentences[0].terms_source = 'ai';
@@ -105,7 +104,7 @@ describe('Source preparation pipeline integration', () => {
             form: { dictionary_entry_id: 'entry-1' },
           }];
         }
-        if (job.type === 'batch_enrich_dictionary_entries_full') {
+        if (job.type === 'enrich_dictionary_entry') {
           entries[0] = {
             ...entries[0],
             kana: 'kana',
@@ -115,8 +114,7 @@ describe('Source preparation pipeline integration', () => {
           };
         }
         job.status = 'completed';
-      }
-      return { success: true, successCount: batch.length, errorCount: 0 };
+      return { success: true };
     });
   });
 
@@ -124,9 +122,9 @@ describe('Source preparation pipeline integration', () => {
     await SourcePreparationRunner.drainSource('source-1', undefined, undefined, 0);
 
     expect(jobs.map((job) => job.type)).toEqual([
-      'batch_translate_sentences',
-      'batch_analyze_sentences',
-      'batch_enrich_dictionary_entries_full',
+      'translate_sentence',
+      'generate_sentence_reading',
+      'enrich_dictionary_entry',
     ]);
     expect(sentences[0]).toEqual(expect.objectContaining({
       portuguese: 'pt',
@@ -153,7 +151,7 @@ describe('Source preparation pipeline integration', () => {
     entries[0].romaji = null;
     entries[0].status = 'pending';
     const result = await SourcePreparationEngine.createQueueForSource('source-1');
-    expect(result.jobs.map((job) => job.type)).toEqual(['batch_enrich_dictionary_entries_full']);
+    expect(result.jobs.map((job) => job.type)).toEqual(['enrich_dictionary_entry']);
     expect(result.plan.totals.dictionaryItems).toBe(1);
   });
 });

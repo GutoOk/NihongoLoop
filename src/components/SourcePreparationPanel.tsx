@@ -27,9 +27,9 @@ interface SourcePreparationPanelProps {
 }
 
 const PLAN_OPTIONS = {
-  translateBatchSize: 30,
-  analyzeBatchSize: 10,
-  dictionaryBatchSize: 12,
+  translateBatchSize: 1,
+  analyzeBatchSize: 1,
+  dictionaryBatchSize: 1,
 };
 
 export default function SourcePreparationPanel({
@@ -236,7 +236,7 @@ export default function SourcePreparationPanel({
                 <Metric label="Reaproveitar" value={plan.totals.reusableTranslationActions} />
                 <Metric label="Jobs novos" value={plan.totals.jobs} />
                 <div className="sm:col-span-5 rounded-lg bg-slate-50 p-3 text-xs font-semibold leading-relaxed text-slate-600">
-                  O plano roda em esteira: primeiro traducao e reaproveitamento, depois analise lexical, depois dicionario. Cada etapa recalcula o banco antes da proxima.
+                  O plano roda em esteira com jobs individuais em paralelo: primeiro traducao e reaproveitamento, depois analise lexical, depois dicionario. Cada etapa recalcula o banco antes da proxima.
                 </div>
               </div>
             ) : (

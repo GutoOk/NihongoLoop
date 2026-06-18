@@ -290,6 +290,11 @@ export class AiJobService {
     return job.input || {};
   }
 
+  private static getRealTargetId(job: AiJob): string {
+    const input = this.getJobInput(job);
+    return input.id || input.sentenceId || input.entryId || job.target_id;
+  }
+
   private static async jobStillExists(job: AiJob): Promise<boolean> {
     if (!job.target_id) return true;
     const jobs = await AiJobRepository.getByTarget(job.target_id);
@@ -414,7 +419,8 @@ export class AiJobService {
     }
 
     if (job.type === 'translate_sentence') {
-      const sentence = await SentenceRepository.getById(job.target_id);
+      const sentenceId = this.getRealTargetId(job);
+      const sentence = await SentenceRepository.getById(sentenceId);
       if (!sentence || sentence.status === 'reviewed') return;
       if (!result.translation) throw new Error('Resultado inválido: tradução ausente.');
       if (isSameAsJapanese(sentence.japanese, result.translation)) {
@@ -430,13 +436,13 @@ export class AiJobService {
     }
 
     if (job.type === 'generate_sentence_reading' || job.type === 'detect_sentence_terms') {
-      const failed = await this.applySentenceAnalysisBatch([{ job_id: job.target_id, ...result }]);
+      const failed = await this.applySentenceAnalysisBatch([{ job_id: this.getRealTargetId(job), ...result }]);
       if (Object.keys(failed).length > 0) throw new Error(Object.values(failed)[0]);
       return;
     }
 
     if (job.type === 'enrich_dictionary_entry' || job.type === 'generate_dictionary_senses') {
-      await this.applyDictionaryEnrichment(job.target_id, result);
+      await this.applyDictionaryEnrichment(this.getRealTargetId(job), result);
     }
   }
 

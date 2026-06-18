@@ -6,7 +6,6 @@ import {
 } from '../../repositories';
 import { stableHash } from '../../core/hash';
 import { makeJapaneseKey } from '../../core/japaneseNormalize';
-import { chunkByCountAndChars } from './batching';
 import { AiJob, AiJobStatus, AiJobType, DictionaryEntry, Sentence, SentenceTermWithDictionary } from '../../types';
 import { AiJobService } from '../../services/aiJobService';
 
@@ -122,9 +121,9 @@ export interface PlannedPreparationJob {
 type PreparationStage = PlannedPreparationJob['stage'];
 
 const JOB_TYPES = {
-  translation: 'batch_translate_sentences',
-  lexical_analysis: 'batch_analyze_sentences',
-  dictionary: 'batch_enrich_dictionary_entries_full',
+  translation: 'translate_sentence',
+  lexical_analysis: 'generate_sentence_reading',
+  dictionary: 'enrich_dictionary_entry',
 } as const satisfies Record<PreparationStage, AiJobType>;
 
 const JOB_STATUSES_FOR_DUPLICATE_AUDIT: AiJobStatus[] = ['pending', 'running', 'completed', 'applied'];
@@ -166,15 +165,25 @@ function getInput(job: AiJob): any {
   return job.input || {};
 }
 
+function canonicalJobType(type: string): string {
+  if (type === 'batch_translate_sentences') return JOB_TYPES.translation;
+  if (type === 'batch_analyze_sentences') return JOB_TYPES.lexical_analysis;
+  if (type === 'batch_enrich_dictionary_entries_fast' || type === 'batch_enrich_dictionary_entries_full') return JOB_TYPES.dictionary;
+  return type;
+}
+
 function getJobItemTargetKeys(job: AiJob): string[] {
   const input = getInput(job);
+  const type = canonicalJobType(job.type);
   if (Array.isArray(input.items)) {
     return input.items
       .map((item: any) => item?.id || item?.entryId || item?.sentenceId)
       .filter(Boolean)
-      .map((id: string) => `${job.type}:${id}`);
+      .map((id: string) => `${type}:${id}`);
   }
-  return [`${job.type}:${job.target_type}:${job.target_id}:${job.input_hash}`];
+  const directId = input.id || input.entryId || input.sentenceId;
+  if (directId) return [`${type}:${directId}`];
+  return [`${type}:${job.target_type}:${job.target_id}:${job.input_hash}`];
 }
 
 function getJobHumanLabel(job: Pick<AiJob, 'type' | 'input'>): string {
@@ -549,17 +558,25 @@ export class SourcePreparationEngine {
   }
 
   static async processNextSourceJob(sourceId: string, runnerId: string, signal?: AbortSignal): Promise<AiJob | null> {
+    const [processed] = await this.processNextSourceJobs(sourceId, runnerId, 1, signal);
+    return processed || null;
+  }
+
+  static async processNextSourceJobs(sourceId: string, runnerId: string, concurrencyLimit: number, signal?: AbortSignal): Promise<AiJob[]> {
     await this.requeueStuckJobsForSource(sourceId);
     const jobs = await AiJobRepository.getByTarget(sourceId);
     const pending = jobs
       .filter((job) => job.status === 'pending')
       .sort((a, b) => this.jobSortValue(a) - this.jobSortValue(b));
-    const next = pending[0];
-    if (!next) return null;
-    const claimed = await AiJobRepository.claimJob(next.id, runnerId);
-    if (!claimed) return null;
-    await AiJobService.processJobsBatch([next], signal);
-    return next;
+    const selected: AiJob[] = [];
+    for (const job of pending) {
+      if (selected.length >= Math.max(1, concurrencyLimit)) break;
+      const claimed = await AiJobRepository.claimJob(job.id, runnerId);
+      if (claimed) selected.push(job);
+    }
+    if (selected.length === 0) return [];
+    await Promise.all(selected.map((job) => AiJobService.processJob(job)));
+    return selected;
   }
 
   private static createPlannedJobs<T extends { id: string }>(
@@ -569,33 +586,31 @@ export class SourcePreparationEngine {
     maxItems: number,
     getText: (item: T) => string,
   ): PlannedPreparationJob[] {
-    const chunks = chunkByCountAndChars(items, getText, {
-      maxItems,
-      maxChars: stage === 'lexical_analysis' ? 4200 : 5200,
-      perItemOverhead: stage === 'lexical_analysis' ? 220 : 100,
-    });
     const type = JOB_TYPES[stage];
-    return chunks.map((chunk, index) => ({
+    return items.map((item, index) => ({
       type,
       targetType: 'batch',
       targetId: sourceId,
       stage,
-      label: this.createPlannedJobLabel(stage, index + 1, chunks.length),
-      itemCount: chunk.length,
+      label: this.createPlannedJobLabel(stage, index + 1, items.length),
+      itemCount: 1,
       input: {
         sourceId,
         stage,
-        label: this.createPlannedJobLabel(stage, index + 1, chunks.length),
-        items: chunk,
+        label: this.createPlannedJobLabel(stage, index + 1, items.length),
+        id: item.id,
+        ...(stage === 'translation' ? { sentence: (item as any).japanese, japanese: (item as any).japanese } : {}),
+        ...(stage === 'lexical_analysis' ? { sentence: (item as any).japanese, japanese: (item as any).japanese, portuguese: (item as any).portuguese } : {}),
+        ...(stage === 'dictionary' ? { lemma: (item as any).lemma } : {}),
       },
-      targetKeys: chunk.map((item) => `${type}:${item.id}`),
+      targetKeys: [`${type}:${item.id}`],
     }));
   }
 
   private static createPlannedJobLabel(stage: PreparationStage, batch: number, total: number): string {
-    if (stage === 'translation') return `Traduzir frases - lote ${batch}/${total}`;
-    if (stage === 'lexical_analysis') return `Analisar frases - lote ${batch}/${total}`;
-    return `Completar dicionario - lote ${batch}/${total}`;
+    if (stage === 'translation') return `Traduzir frase ${batch}/${total}`;
+    if (stage === 'lexical_analysis') return `Analisar frase ${batch}/${total}`;
+    return `Completar verbete ${batch}/${total}`;
   }
 
   private static priorityForStage(stage: PreparationStage): number {

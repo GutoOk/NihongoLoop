@@ -124,30 +124,6 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
     );
   };
 
-  const chunkByCountAndChars = (items: any[], serialize: (i: any) => string, limits: { maxItems: number, maxChars: number, perItemOverhead: number }) => {
-    const chunks: any[][] = [];
-    let currentChunk: any[] = [];
-    let currentCharCount = 0;
-
-    for (const item of items) {
-      const len = serialize(item).length + limits.perItemOverhead;
-      if (
-        currentChunk.length > 0 && 
-        (currentChunk.length >= limits.maxItems || currentCharCount + len > limits.maxChars)
-      ) {
-        chunks.push(currentChunk);
-        currentChunk = [];
-        currentCharCount = 0;
-      }
-      currentChunk.push(item);
-      currentCharCount += len;
-    }
-    if (currentChunk.length > 0) {
-      chunks.push(currentChunk);
-    }
-    return chunks;
-  };
-
   const handleAddToQueue = async () => {
     if (pendingCount === 0) {
       showAlert("Aviso", "Não há palavras pendentes no dicionário.");
@@ -185,27 +161,21 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
             return;
           }
 
-          const dictType = 'batch_enrich_dictionary_entries_full';
-          const bSize = 12; // default 
-          
-          const dictChunks = chunkByCountAndChars(entriesToBatch, e => e.lemma, {
-             maxItems: bSize, maxChars: 5200, perItemOverhead: 180
-          });
+          const dictType = 'enrich_dictionary_entry';
 
-          for (const chunk of dictChunks) {
+          for (const entry of entriesToBatch) {
              const input = {
+                id: entry.id,
+                entryId: entry.id,
+                lemma: entry.lemma,
                 mode: 'full',
-                items: chunk.map((e) => ({
-                   id: e.id,
-                   lemma: e.lemma,
-                })),
              };
-             const inputHash = await stableHash({ type: dictType, input });
+             const inputHash = await stableHash({ type: dictType, targetId: entry.id, input });
              await AiJobRepository.add({
                 type: dictType,
                 user_id: "",
-                target_type: 'batch',
-                target_id: sourceFilter === "all" ? "dictionary" : sourceFilter,
+                target_type: sourceFilter === "all" ? 'dictionary_entry' : 'batch',
+                target_id: sourceFilter === "all" ? entry.id : sourceFilter,
                 input_hash: inputHash,
                 input,
                 status: 'pending',
@@ -215,7 +185,7 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
              });
           }
 
-          showAlert("Fila atualizada", `${dictChunks.length} lotes adicionados com um total de ${entriesToBatch.length} palavras.`);
+          showAlert("Fila atualizada", `${entriesToBatch.length} tarefas individuais adicionadas.`);
         } catch (e: any) {
           showAlert("Erro", `Falha ao adicionar na fila: ${e.message}`);
         } finally {
