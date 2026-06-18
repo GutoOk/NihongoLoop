@@ -138,6 +138,17 @@ export default function HomeScreen({ onNavigate }: HomeScreenProps) {
           </div>
         )}
 
+        {versionInfo && (
+          <div className="bg-white border border-[#E5E5E7] rounded-xl px-4 py-3 text-center shadow-sm">
+            <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[#1D1D1F]">
+              Versao {versionInfo.version}
+            </p>
+            <p className="mt-1 text-[10px] font-bold text-[#86868B]">
+              Commit {versionInfo.commit} · {formatCommitDate(versionInfo.commitDate)}
+            </p>
+          </div>
+        )}
+
         <section className="grid grid-cols-2 gap-3">
           {NAV_CARDS.map(({ screen, icon, label, description, wide }) => (
             <button
@@ -152,12 +163,6 @@ export default function HomeScreen({ onNavigate }: HomeScreenProps) {
             </button>
           ))}
         </section>
-
-        {versionInfo && (
-          <p className="text-center text-[10px] font-bold uppercase tracking-[0.14em] text-[#86868B]">
-            Versao {versionInfo.version} · Commit {versionInfo.commit} · {formatCommitDate(versionInfo.commitDate)}
-          </p>
-        )}
       </main>
     </div>
   );
