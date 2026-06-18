@@ -112,7 +112,11 @@ export default function SourcePreparationPanel({
   const retryErrors = async () => {
     setIsBusy(true);
     try {
-      await SourcePreparationEngine.retryErrorJobs(sourceId);
+      if (showGlobal) {
+        await SourcePreparationEngine.retryAllErrorJobs();
+      } else {
+        await SourcePreparationEngine.retryErrorJobs(sourceId);
+      }
       await refresh();
     } finally {
       setIsBusy(false);
@@ -122,7 +126,11 @@ export default function SourcePreparationPanel({
   const resumeStuck = async () => {
     setIsBusy(true);
     try {
-      await SourcePreparationEngine.resetStuckJobs(sourceId);
+      if (showGlobal) {
+        await SourcePreparationEngine.resetAllStuckJobs();
+      } else {
+        await SourcePreparationEngine.resetStuckJobs(sourceId);
+      }
       await refresh();
     } finally {
       setIsBusy(false);
@@ -130,12 +138,17 @@ export default function SourcePreparationPanel({
   };
 
   const clearPending = async () => {
-    if (!(await showConfirm('Limpar pendentes', 'Remover apenas jobs pendentes desta fonte? Concluidos, erros e historico serao preservados.'))) {
+    const scopeLabel = showGlobal ? 'global' : 'desta fonte';
+    if (!(await showConfirm('Limpar fila', `Remover tarefas pendentes, com erro e concluídas da fila ${scopeLabel}? Tarefas rodando serao preservadas.`))) {
       return;
     }
     setIsBusy(true);
     try {
-      await SourcePreparationEngine.clearPendingJobs(sourceId);
+      if (showGlobal) {
+        await SourcePreparationEngine.clearAllQueueJobs();
+      } else {
+        await SourcePreparationEngine.clearQueueJobs(sourceId);
+      }
       await refresh();
     } finally {
       setIsBusy(false);
@@ -151,6 +164,8 @@ export default function SourcePreparationPanel({
   }, [diagnosis]);
 
   const plannedActions = plan?.totals.actions || 0;
+  const queueCounts = useMemo(() => summarizeJobs(jobs), [jobs]);
+  const visibleJobs = useMemo(() => jobs.filter(isVisibleQueueJob), [jobs]);
 
   return (
     <section className="border-b border-[#E5E5E7] bg-white">
@@ -249,20 +264,19 @@ export default function SourcePreparationPanel({
             actions={
               <div className="flex flex-wrap gap-2">
                 <ToolbarButton small onClick={() => setShowGlobal((value) => !value)} label={showGlobal ? 'Ver fonte' : 'Ver global'} />
-                <ToolbarButton small onClick={resumeStuck} disabled={isBusy || !diagnosis?.jobs.stuck} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retomar travados" />
-                <ToolbarButton small onClick={retryErrors} disabled={isBusy || !diagnosis?.jobs.error} icon={<RefreshCw className="h-3.5 w-3.5" />} label="Retentar erros" />
-                <ToolbarButton small onClick={clearPending} disabled={isBusy || !diagnosis?.jobs.pending} icon={<Eraser className="h-3.5 w-3.5" />} label="Limpar pendentes desta fonte" />
+                <ToolbarButton small onClick={resumeStuck} disabled={isBusy || !queueCounts.stuck} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retomar travados" />
+                <ToolbarButton small onClick={retryErrors} disabled={isBusy || !queueCounts.error} icon={<RefreshCw className="h-3.5 w-3.5" />} label="Retentar erros" />
+                <ToolbarButton small onClick={clearPending} disabled={isBusy || !queueCounts.clearable} icon={<Eraser className="h-3.5 w-3.5" />} label={showGlobal ? 'Limpar fila global' : 'Limpar fila da fonte'} />
               </div>
             }
           >
-            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
-              <Metric label="Pendentes" value={diagnosis?.jobs.pending || 0} />
-              <Metric label="Rodando" value={diagnosis?.jobs.running || 0} />
-              <Metric label="Concluidos" value={diagnosis?.jobs.completed || 0} />
-              <Metric label="Erros" value={diagnosis?.jobs.error || 0} />
-              <Metric label="Travados" value={diagnosis?.jobs.stuck || 0} />
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <Metric label="Pendentes" value={queueCounts.pending} />
+              <Metric label="Rodando" value={queueCounts.running} />
+              <Metric label="Erros" value={queueCounts.error} />
+              <Metric label="Travados" value={queueCounts.stuck} />
             </div>
-            <JobList jobs={jobs} />
+            <JobList jobs={visibleJobs} />
           </Panel>
         </div>
       </div>
@@ -331,6 +345,34 @@ function ToolbarButton({
       {label}
     </button>
   );
+}
+
+function isStuckJob(job: AiJob): boolean {
+  if (job.status !== 'running') return false;
+  const now = Date.now();
+  if (job.locked_until && new Date(job.locked_until).getTime() < now) return true;
+  if (!job.locked_until && job.last_heartbeat_at) {
+    return now - new Date(job.last_heartbeat_at).getTime() > 5 * 60_000;
+  }
+  return false;
+}
+
+function isClearableQueueJob(job: AiJob): boolean {
+  return job.status === 'pending' || job.status === 'error' || job.status === 'completed' || job.status === 'applied' || job.status === 'cancelled';
+}
+
+function isVisibleQueueJob(job: AiJob): boolean {
+  return job.status === 'pending' || job.status === 'running' || job.status === 'error';
+}
+
+function summarizeJobs(jobs: AiJob[]) {
+  return {
+    pending: jobs.filter((job) => job.status === 'pending').length,
+    running: jobs.filter((job) => job.status === 'running').length,
+    error: jobs.filter((job) => job.status === 'error').length,
+    stuck: jobs.filter(isStuckJob).length,
+    clearable: jobs.filter(isClearableQueueJob).length,
+  };
 }
 
 function JobList({ jobs }: { jobs: AiJob[] }) {

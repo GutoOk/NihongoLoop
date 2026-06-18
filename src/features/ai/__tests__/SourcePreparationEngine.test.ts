@@ -7,6 +7,7 @@ vi.mock('../../../repositories', () => ({
     add: vi.fn(),
     claimJob: vi.fn(),
     delete: vi.fn(),
+    getAll: vi.fn(),
     getByTarget: vi.fn(),
     updateStatuses: vi.fn(),
   },
@@ -95,6 +96,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getAll).mockResolvedValue([]);
     vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([]);
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([]);
+    vi.mocked(AiJobRepository.getAll).mockResolvedValue([]);
     vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([]);
     vi.mocked(AiJobRepository.add).mockImplementation(async (input: any) => ({ id: `job-${input.input_hash}`, ...input } as any));
     vi.mocked(AiJobRepository.updateStatuses).mockResolvedValue(true);
@@ -193,6 +195,46 @@ describe('SourcePreparationEngine', () => {
     expect(diagnosis.jobs.stuck).toBe(1);
     expect(diagnosis.jobs.completed).toBe(1);
     expect(diagnosis.jobs.possibleDuplicates).toBe(2);
+  });
+
+  it('clears source queue jobs that are pending, errored or terminal while preserving running jobs', async () => {
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+      job({ id: 'pending-job', status: 'pending' }),
+      job({ id: 'error-job', status: 'error' }),
+      job({ id: 'completed-job', status: 'completed' }),
+      job({ id: 'applied-job', status: 'applied' }),
+      job({ id: 'cancelled-job', status: 'cancelled' }),
+      job({ id: 'running-job', status: 'running' }),
+    ]);
+
+    await SourcePreparationEngine.clearQueueJobs('source-1');
+
+    expect(AiJobRepository.delete).toHaveBeenCalledTimes(5);
+    expect(vi.mocked(AiJobRepository.delete).mock.calls.map(([id]) => id)).toEqual([
+      'pending-job',
+      'error-job',
+      'completed-job',
+      'applied-job',
+      'cancelled-job',
+    ]);
+  });
+
+  it('clears global queue jobs that are pending, errored or terminal while preserving running jobs', async () => {
+    vi.mocked(AiJobRepository.getAll).mockResolvedValue([
+      job({ id: 'global-pending', status: 'pending' }),
+      job({ id: 'global-error', status: 'error' }),
+      job({ id: 'global-completed', status: 'completed' }),
+      job({ id: 'global-running', status: 'running' }),
+    ]);
+
+    await SourcePreparationEngine.clearAllQueueJobs();
+
+    expect(AiJobRepository.delete).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(AiJobRepository.delete).mock.calls.map(([id]) => id)).toEqual([
+      'global-pending',
+      'global-error',
+      'global-completed',
+    ]);
   });
 
   it('builds an idempotent plan that ignores resolved, reusable, queued, running, errored and stuck targets but retries unresolved completed targets', async () => {

@@ -7,7 +7,7 @@ interface ModalOptions {
   type: ModalType;
   title: string;
   message: string;
-  onConfirm?: () => void;
+  onConfirm?: () => void | Promise<void>;
   onCancel?: () => void;
   confirmLabel?: string;
   cancelLabel?: string;
@@ -18,9 +18,9 @@ interface ModalContextType {
   showConfirm: (
     title: string,
     message: string,
-    onConfirm: () => void,
+    onConfirm?: () => void | Promise<void>,
     confirmLabel?: string,
-  ) => void;
+  ) => Promise<boolean>;
 }
 
 const ModalContext = createContext<ModalContextType | undefined>(undefined);
@@ -43,19 +43,28 @@ export const ModalProvider: React.FC<{ children: ReactNode }> = ({
   const showConfirm = (
     title: string,
     message: string,
-    onConfirm: () => void,
+    onConfirm?: () => void | Promise<void>,
     confirmLabel: string = "Confirmar",
-  ) => {
-    setModal({
-      type: "confirm",
-      title,
-      message,
-      confirmLabel,
-      onConfirm: () => {
-        onConfirm();
-        setModal(null);
-      },
-      onCancel: () => setModal(null),
+  ): Promise<boolean> => {
+    return new Promise((resolve) => {
+      setModal({
+        type: "confirm",
+        title,
+        message,
+        confirmLabel,
+        onConfirm: async () => {
+          try {
+            await onConfirm?.();
+            resolve(true);
+          } finally {
+            setModal(null);
+          }
+        },
+        onCancel: () => {
+          resolve(false);
+          setModal(null);
+        },
+      });
     });
   };
 

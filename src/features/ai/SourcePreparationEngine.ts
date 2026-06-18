@@ -130,6 +130,7 @@ const JOB_TYPES = {
 const JOB_STATUSES_FOR_DUPLICATE_AUDIT: AiJobStatus[] = ['pending', 'running', 'completed', 'applied'];
 const ACTIVE_STATUSES: AiJobStatus[] = ['pending', 'running'];
 const BLOCKING_STATUSES: AiJobStatus[] = ['error'];
+const CLEARABLE_STATUSES: AiJobStatus[] = ['pending', 'error', 'completed', 'applied', 'cancelled'];
 
 function hasText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -495,6 +496,15 @@ export class SourcePreparationEngine {
 
   static async resetStuckJobs(sourceId: string): Promise<boolean> {
     const jobs = await AiJobRepository.getByTarget(sourceId);
+    return this.resetStuckJobsFromList(jobs);
+  }
+
+  static async resetAllStuckJobs(): Promise<boolean> {
+    const jobs = await AiJobRepository.getAll();
+    return this.resetStuckJobsFromList(jobs);
+  }
+
+  private static async resetStuckJobsFromList(jobs: AiJob[]): Promise<boolean> {
     const now = new Date();
     const stuckIds = jobs.filter((job) => isJobStuck(job, now)).map((job) => job.id);
     if (stuckIds.length === 0) return true;
@@ -509,18 +519,40 @@ export class SourcePreparationEngine {
 
   static async retryErrorJobs(sourceId: string): Promise<boolean> {
     const jobs = await AiJobRepository.getByTarget(sourceId);
+    return this.retryErrorJobsFromList(jobs);
+  }
+
+  static async retryAllErrorJobs(): Promise<boolean> {
+    const jobs = await AiJobRepository.getAll();
+    return this.retryErrorJobsFromList(jobs);
+  }
+
+  private static async retryErrorJobsFromList(jobs: AiJob[]): Promise<boolean> {
     const errorIds = jobs.filter((job) => job.status === 'error').map((job) => job.id);
     if (errorIds.length === 0) return true;
     return AiJobRepository.updateStatuses(errorIds, { status: 'pending', error: null } as any);
   }
 
-  static async clearPendingJobs(sourceId: string): Promise<boolean> {
+  static async clearQueueJobs(sourceId: string): Promise<boolean> {
     const jobs = await AiJobRepository.getByTarget(sourceId);
-    const pending = jobs.filter((job) => job.status === 'pending');
-    for (const job of pending) {
+    const clearable = jobs.filter((job) => CLEARABLE_STATUSES.includes(job.status));
+    for (const job of clearable) {
       await AiJobRepository.delete(job.id);
     }
     return true;
+  }
+
+  static async clearAllQueueJobs(): Promise<boolean> {
+    const jobs = await AiJobRepository.getAll();
+    const clearable = jobs.filter((job) => CLEARABLE_STATUSES.includes(job.status));
+    for (const job of clearable) {
+      await AiJobRepository.delete(job.id);
+    }
+    return true;
+  }
+
+  static async clearPendingJobs(sourceId: string): Promise<boolean> {
+    return this.clearQueueJobs(sourceId);
   }
 
   static async processNextSourceJob(sourceId: string, runnerId: string, signal?: AbortSignal): Promise<AiJob | null> {
