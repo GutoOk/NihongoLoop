@@ -66,6 +66,10 @@ describe('AiJobService', () => {
       'dict-job',
       'dict-invalid',
       'dict-duplicate-key',
+      'dict-partial',
+      'dict-race-23505',
+      'batch-attempts',
+      'single-job',
     ].map((id) => ({ id, target_id: targetId })) as any));
     vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([]);
@@ -222,6 +226,69 @@ describe('AiJobService', () => {
       expect(SentenceRepository.update).toHaveBeenCalledWith(
         'sent-missing',
         expect.objectContaining({ portuguese: 'Vamos.', translation_source: 'ai' }),
+      );
+    });
+
+    it('increments attempts when a batch job starts running', async () => {
+      const job = {
+        id: 'batch-attempts',
+        user_id: 'user-123',
+        type: 'batch_translate_sentences',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        attempts: 2,
+        input: { items: [{ id: 'sent-attempts', japanese: 'jp' }] },
+      } as any;
+
+      vi.mocked(SentenceRepository.getByIds)
+        .mockResolvedValueOnce([{ id: 'sent-attempts', japanese: 'jp', portuguese: null, status: 'raw' }] as any)
+        .mockResolvedValueOnce([{ id: 'sent-attempts', japanese: 'jp', portuguese: null, status: 'raw' }] as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'batch-attempts',
+            type: 'batch_translate_sentences',
+            items: [{ job_id: 'sent-attempts', translation: 'pt' }],
+          }],
+        }),
+      } as any);
+
+      await AiJobService.processJobsBatch([job]);
+
+      expect(AiJobRepository.updateStatus).toHaveBeenCalledWith(
+        'batch-attempts',
+        expect.objectContaining({ status: 'running', attempts: 3 }),
+      );
+    });
+
+    it('does not apply an individual job result when the job was removed before apply', async () => {
+      const job = {
+        id: 'single-job',
+        user_id: 'user-123',
+        type: 'translate_sentence',
+        target_type: 'sentence',
+        target_id: 'sent-single',
+        status: 'pending',
+        attempts: 0,
+      } as any;
+
+      vi.mocked(AiJobRepository.getByTarget)
+        .mockResolvedValueOnce([{ id: 'single-job', target_id: 'sent-single', status: 'running' }] as any)
+        .mockResolvedValueOnce([]);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({ result: { translation: 'pt' } }),
+      } as any);
+
+      const result = await AiJobService.processJob(job);
+
+      expect(result.success).toBe(false);
+      expect(SentenceRepository.update).not.toHaveBeenCalledWith('sent-single', expect.objectContaining({ portuguese: 'pt' }));
+      expect(AiJobRepository.updateStatus).not.toHaveBeenCalledWith(
+        'single-job',
+        expect.objectContaining({ status: 'completed' }),
       );
     });
 
@@ -546,6 +613,113 @@ describe('AiJobService', () => {
         'dict-invalid',
         expect.objectContaining({ status: 'error' }),
       );
+    });
+
+    it('retries only failed dictionary items when a batch is partially applied', async () => {
+      const job = {
+        id: 'dict-partial',
+        user_id: 'user-123',
+        type: 'batch_enrich_dictionary_entries_full',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: {
+          items: [
+            { id: 'entry-ok', lemma: 'ok' },
+            { id: 'entry-bad', lemma: 'bad' },
+          ],
+        },
+      } as any;
+
+      vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
+        { id: 'entry-ok', status: 'pending', main_meaning: null, kana: null, romaji: null, type: 'verbo' },
+        { id: 'entry-bad', status: 'pending', main_meaning: null, kana: null, romaji: null, type: 'verbo' },
+      ] as any);
+      vi.mocked(DictionaryRepository.getById).mockImplementation(async (id: string) => ({
+        id,
+        lemma: id === 'entry-ok' ? 'ok' : 'bad',
+        status: 'pending',
+        main_meaning: null,
+        kana: null,
+        romaji: null,
+        type: 'verbo',
+        tags: [],
+      }) as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'dict-partial',
+            type: 'batch_enrich_dictionary_entries_full',
+            items: [
+              { job_id: 'entry-ok', main_meaning: 'ir', kana: 'kana', romaji: 'romaji', type: 'verbo' },
+              { job_id: 'entry-bad', main_meaning: 'falhar', type: 'verbo' },
+            ],
+          }],
+        }),
+      } as any);
+
+      const result = await AiJobService.processJobsBatch([job]);
+
+      expect(result.successCount).toBe(1);
+      expect(result.errorCount).toBe(0);
+      expect(DictionaryRepository.update).toHaveBeenCalledWith('entry-ok', expect.objectContaining({ status: 'ai_enriched' }));
+      expect(AiJobRepository.add).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(AiJobRepository.add).mock.calls[0][0].input.items).toEqual([{ id: 'entry-bad', lemma: 'bad' }]);
+      expect(AiJobRepository.updateStatus).toHaveBeenCalledWith(
+        'dict-partial',
+        expect.objectContaining({ status: 'completed' }),
+      );
+    });
+
+    it('falls back to merge when dictionary update hits unique_key constraint during a race', async () => {
+      const job = {
+        id: 'dict-race-23505',
+        user_id: 'user-123',
+        type: 'batch_enrich_dictionary_entries_full',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: { items: [{ id: 'entry-race', lemma: 'jp' }] },
+      } as any;
+
+      vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
+        { id: 'entry-race', status: 'pending', main_meaning: null, kana: null, romaji: null, type: 'verbo' },
+      ] as any);
+      vi.mocked(DictionaryRepository.getById).mockResolvedValue({
+        id: 'entry-race',
+        lemma: 'jp',
+        status: 'pending',
+        main_meaning: null,
+        kana: null,
+        romaji: null,
+        type: 'verbo',
+        tags: [],
+      } as any);
+      vi.mocked(DictionaryRepository.getByUniqueKey)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'entry-winner', lemma: 'jp', unique_key: 'jp|kana|verbo' } as any);
+      vi.mocked(DictionaryRepository.update).mockRejectedValueOnce(
+        new Error('Erro do Supabase ao atualizar verbete de dicionario: duplicate key value violates unique constraint "uk_dictionary_entries_user_key"'),
+      );
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'dict-race-23505',
+            type: 'batch_enrich_dictionary_entries_full',
+            items: [{ job_id: 'entry-race', main_meaning: 'ir', kana: 'kana', romaji: 'romaji', type: 'verbo' }],
+          }],
+        }),
+      } as any);
+
+      const result = await AiJobService.processJobsBatch([job]);
+
+      expect(result.errorCount).toBe(0);
+      expect(DictionaryRepository.mergeDuplicateIntoPrimary).toHaveBeenCalledWith(expect.objectContaining({
+        duplicateId: 'entry-race',
+        primaryId: 'entry-winner',
+      }));
     });
 
     it('merges dictionary entries when enrichment converges to an existing unique_key', async () => {

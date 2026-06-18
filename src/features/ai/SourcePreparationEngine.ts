@@ -492,17 +492,8 @@ export class SourcePreparationEngine {
     return this.createQueueFromPlan(plan);
   }
 
-  static async resetStuckJobs(sourceId: string): Promise<boolean> {
+  private static async requeueStuckJobsForSource(sourceId: string): Promise<boolean> {
     const jobs = await AiJobRepository.getByTarget(sourceId);
-    return this.resetStuckJobsFromList(jobs);
-  }
-
-  static async resetAllStuckJobs(): Promise<boolean> {
-    const jobs = await AiJobRepository.getAll();
-    return this.resetStuckJobsFromList(jobs);
-  }
-
-  private static async resetStuckJobsFromList(jobs: AiJob[]): Promise<boolean> {
     const now = new Date();
     const stuckIds = jobs.filter((job) => isJobStuck(job, now)).map((job) => job.id);
     if (stuckIds.length === 0) return true;
@@ -513,22 +504,6 @@ export class SourcePreparationEngine {
       locked_until: null,
       last_heartbeat_at: null,
     } as any);
-  }
-
-  static async retryErrorJobs(sourceId: string): Promise<boolean> {
-    const jobs = await AiJobRepository.getByTarget(sourceId);
-    return this.retryErrorJobsFromList(jobs);
-  }
-
-  static async retryAllErrorJobs(): Promise<boolean> {
-    const jobs = await AiJobRepository.getAll();
-    return this.retryErrorJobsFromList(jobs);
-  }
-
-  private static async retryErrorJobsFromList(jobs: AiJob[]): Promise<boolean> {
-    const errorIds = jobs.filter((job) => job.status === 'error').map((job) => job.id);
-    if (errorIds.length === 0) return true;
-    return AiJobRepository.updateStatuses(errorIds, { status: 'pending', error: null } as any);
   }
 
   static async retryProblemJobs(sourceId: string): Promise<boolean> {
@@ -573,12 +548,8 @@ export class SourcePreparationEngine {
     return true;
   }
 
-  static async clearPendingJobs(sourceId: string): Promise<boolean> {
-    return this.clearQueueJobs(sourceId);
-  }
-
   static async processNextSourceJob(sourceId: string, runnerId: string, signal?: AbortSignal): Promise<AiJob | null> {
-    await this.resetStuckJobs(sourceId);
+    await this.requeueStuckJobsForSource(sourceId);
     const jobs = await AiJobRepository.getByTarget(sourceId);
     const pending = jobs
       .filter((job) => job.status === 'pending')

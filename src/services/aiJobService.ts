@@ -48,6 +48,12 @@ function hasValidTranslation(sentence: any): boolean {
   );
 }
 
+function isDictionaryUniqueKeyConflict(message: string): boolean {
+  return message.includes('23505') ||
+    message.includes('duplicate key') ||
+    message.includes('uk_dictionary_entries_user_key');
+}
+
 export class AiJobService {
   static async triggerBatchJobs(targetId: string, concurrencyLimit?: number, signal?: AbortSignal) {
     const response = await fetchWithRetry('/api/ai/trigger-batch-jobs', {
@@ -117,6 +123,9 @@ export class AiJobService {
   static async processJob(job: AiJob) {
     try {
       await AiJobRepository.updateStatus(job.id, { status: 'running', attempts: (job.attempts || 0) + 1 });
+      if (!(await this.jobStillExists(job))) {
+        return { success: false, error: 'Job removido ou cancelado antes do processamento.' };
+      }
       const optimized = await this.tryOptimizeJob(job);
       if (optimized) return { success: true };
 
@@ -135,7 +144,13 @@ export class AiJobService {
       }
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      if (!(await this.jobStillExists(job))) {
+        return { success: false, error: 'Job removido ou cancelado antes da aplicacao do resultado.' };
+      }
       await this.applyJobResult(job, data.result);
+      if (!(await this.jobStillExists(job))) {
+        return { success: false, error: 'Job removido ou cancelado antes da conclusao.' };
+      }
       await AiJobRepository.updateStatus(job.id, {
         status: 'completed',
         result: data.result,
@@ -156,8 +171,11 @@ export class AiJobService {
     let successCount = 0;
     let errorCount = 0;
 
-    // Set all jobs to running in a single optimized query
-    await AiJobRepository.updateStatuses(jobs.map(j => j.id), { status: 'running' });
+    // Keep attempts faithful for audit: every job that starts processing counts once.
+    await Promise.all(jobs.map((job) => AiJobRepository.updateStatus(job.id, {
+      status: 'running',
+      attempts: (job.attempts || 0) + 1,
+    })));
 
     if (signal?.aborted) {
       // Revert if aborted immediately after running state change
@@ -265,7 +283,7 @@ export class AiJobService {
   private static async jobStillExists(job: AiJob): Promise<boolean> {
     if (!job.target_id) return true;
     const jobs = await AiJobRepository.getByTarget(job.target_id);
-    return jobs.some((current) => current.id === job.id);
+    return jobs.some((current) => current.id === job.id && current.status !== 'cancelled');
   }
 
   private static async tryOptimizeJob(job: AiJob): Promise<boolean> {
@@ -366,8 +384,18 @@ export class AiJobService {
     }
 
     if (job.type.startsWith('batch_enrich_dictionary')) {
+      const failed: Record<string, string> = {};
       for (const item of result.items || result.results || []) {
-        await this.applyDictionaryEnrichment(item.job_id || item.id, item);
+        const entryId = item.job_id || item.id;
+        try {
+          await this.applyDictionaryEnrichment(entryId, item);
+        } catch (error: any) {
+          if (entryId) failed[entryId] = error.message || String(error);
+        }
+      }
+      if (Object.keys(failed).length > 0) {
+        result.failed_count = Object.keys(failed).length;
+        result.errors_by_item = failed;
       }
       return;
     }
@@ -592,7 +620,20 @@ export class AiJobService {
       finalEntryId = existingWithTargetKey.id;
     } else {
       updates.unique_key = targetUniqueKey;
-      await DictionaryRepository.update(entry.id, updates);
+      try {
+        await DictionaryRepository.update(entry.id, updates);
+      } catch (error: any) {
+        const message = error.message || String(error);
+        if (!isDictionaryUniqueKeyConflict(message)) throw error;
+        const winner = await DictionaryRepository.getByUniqueKey(targetUniqueKey);
+        if (!winner || winner.id === entry.id) throw error;
+        await DictionaryRepository.mergeDuplicateIntoPrimary({
+          duplicateId: entry.id,
+          primaryId: winner.id,
+          preferredUpdates: updates,
+        } as any);
+        finalEntryId = winner.id;
+      }
     }
 
     const meanings = Array.isArray(result.meanings) && result.meanings.length > 0 ? result.meanings : [mainMeaning];
