@@ -126,6 +126,17 @@ export class TermRepository {
     return data || null;
   }
 
+  static async replaceDictionaryForm(oldFormId: string, newFormId: string): Promise<boolean> {
+    if (!isSupabaseConfigured || oldFormId === newFormId) return true;
+    const { error } = await supabase!
+      .from('sentence_terms')
+      .update({ dictionary_form_id: newFormId })
+      .eq('dictionary_form_id', oldFormId)
+      .eq('user_id', getUserId());
+    if (error) throw new Error(`Erro do Supabase ao religar termos de dicionario: ${error.message}`);
+    return true;
+  }
+
   static async delete(id: string): Promise<boolean> {
     if (!isSupabaseConfigured) return false;
     const { error } = await supabase!.from('sentence_terms').delete().eq('id', id).eq('user_id', getUserId());

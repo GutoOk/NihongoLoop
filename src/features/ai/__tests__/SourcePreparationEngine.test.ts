@@ -197,7 +197,7 @@ describe('SourcePreparationEngine', () => {
     expect(diagnosis.jobs.possibleDuplicates).toBe(2);
   });
 
-  it('clears source queue jobs that are pending, errored or terminal while preserving running jobs', async () => {
+  it('aborts and clears every source queue job including running history', async () => {
     vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
       job({ id: 'pending-job', status: 'pending' }),
       job({ id: 'error-job', status: 'error' }),
@@ -209,17 +209,18 @@ describe('SourcePreparationEngine', () => {
 
     await SourcePreparationEngine.clearQueueJobs('source-1');
 
-    expect(AiJobRepository.delete).toHaveBeenCalledTimes(5);
+    expect(AiJobRepository.delete).toHaveBeenCalledTimes(6);
     expect(vi.mocked(AiJobRepository.delete).mock.calls.map(([id]) => id)).toEqual([
       'pending-job',
       'error-job',
       'completed-job',
       'applied-job',
       'cancelled-job',
+      'running-job',
     ]);
   });
 
-  it('clears global queue jobs that are pending, errored or terminal while preserving running jobs', async () => {
+  it('aborts and clears every global queue job including running history', async () => {
     vi.mocked(AiJobRepository.getAll).mockResolvedValue([
       job({ id: 'global-pending', status: 'pending' }),
       job({ id: 'global-error', status: 'error' }),
@@ -229,12 +230,36 @@ describe('SourcePreparationEngine', () => {
 
     await SourcePreparationEngine.clearAllQueueJobs();
 
-    expect(AiJobRepository.delete).toHaveBeenCalledTimes(3);
+    expect(AiJobRepository.delete).toHaveBeenCalledTimes(4);
     expect(vi.mocked(AiJobRepository.delete).mock.calls.map(([id]) => id)).toEqual([
       'global-pending',
       'global-error',
       'global-completed',
+      'global-running',
     ]);
+  });
+
+  it('retries errored and stuck jobs with one problem retry command', async () => {
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+      job({ id: 'error-job', status: 'error', error: 'falhou' }),
+      job({ id: 'stuck-job', status: 'running', locked_until: '2026-06-17T11:00:00.000Z' }),
+      job({ id: 'ok-running', status: 'running', locked_until: '2099-06-17T13:00:00.000Z' }),
+      job({ id: 'done-job', status: 'completed' }),
+    ]);
+
+    await SourcePreparationEngine.retryProblemJobs('source-1');
+
+    expect(AiJobRepository.updateStatuses).toHaveBeenCalledWith(
+      ['error-job', 'stuck-job'],
+      expect.objectContaining({
+        status: 'pending',
+        error: null,
+        locked_by: null,
+        locked_until: null,
+        last_heartbeat_at: null,
+        attempts: 0,
+      }),
+    );
   });
 
   it('builds an idempotent plan that ignores resolved, reusable, queued, running, errored and stuck targets but retries unresolved completed targets', async () => {

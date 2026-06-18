@@ -1,10 +1,23 @@
 import { supabase, isSupabaseConfigured } from '../core/supabaseClient';
 import { DictionaryEntry, DictionaryForm, DictionarySense } from '../types';
 import { defaultMockDict } from './mockData';
+import { TermRepository } from './termRepository';
 import { chunkArray, getUserId, isE2EMockMode, normalizeTagsForUpdate } from './utils';
 
 export function normalizeDictionaryKey(value: string | null | undefined): string {
   return String(value || '').trim().replace(/\s+/g, '').toLowerCase();
+}
+
+function maxIsoDate(...values: Array<string | null | undefined>): string | null {
+  const valid = values.filter((value): value is string => Boolean(value));
+  if (valid.length === 0) return null;
+  return valid.sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+}
+
+function minIsoDate(...values: Array<string | null | undefined>): string | null {
+  const valid = values.filter((value): value is string => Boolean(value));
+  if (valid.length === 0) return null;
+  return valid.sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0];
 }
 
 export class DictionaryRepository {
@@ -156,6 +169,96 @@ export class DictionaryRepository {
     return !error;
   }
 
+  static async mergeDuplicateIntoPrimary(params: {
+    duplicateId: string;
+    primaryId: string;
+    preferredUpdates?: Partial<DictionaryEntry>;
+  }): Promise<DictionaryEntry | null> {
+    const { duplicateId, primaryId, preferredUpdates = {} } = params;
+    if (duplicateId === primaryId) return this.update(primaryId, preferredUpdates);
+    if (!isSupabaseConfigured) return null;
+
+    const [duplicate, primary] = await Promise.all([
+      this.getById(duplicateId),
+      this.getById(primaryId),
+    ]);
+    if (!duplicate || !primary) return primary || null;
+
+    const merged: Partial<DictionaryEntry> = {
+      main_meaning: primary.main_meaning || preferredUpdates.main_meaning || duplicate.main_meaning || null,
+      kana: primary.kana || preferredUpdates.kana || duplicate.kana || null,
+      romaji: primary.romaji || preferredUpdates.romaji || duplicate.romaji || null,
+      type: primary.type || preferredUpdates.type || duplicate.type || 'outro',
+      jlpt_level: primary.jlpt_level || preferredUpdates.jlpt_level || duplicate.jlpt_level || null,
+      tags: primary.tags?.length ? primary.tags : preferredUpdates.tags || duplicate.tags || [],
+      subtype: primary.subtype || preferredUpdates.subtype || duplicate.subtype || null,
+      components: primary.components || preferredUpdates.components || duplicate.components || null,
+      grammar_info: primary.grammar_info || preferredUpdates.grammar_info || duplicate.grammar_info || null,
+      short_note: primary.short_note || preferredUpdates.short_note || duplicate.short_note || null,
+      status: primary.status === 'reviewed' ? 'reviewed' : preferredUpdates.status || primary.status || 'ai_enriched',
+    };
+
+    await this.update(primaryId, merged);
+    await DictionaryFormRepository.moveFormsToEntry(duplicateId, primaryId);
+    await DictionarySenseRepository.moveSensesToEntry(duplicateId, primaryId);
+    await this.mergeDictionaryProgress(duplicateId, primaryId);
+    await this.delete(duplicateId);
+    return this.getById(primaryId);
+  }
+
+  private static async mergeDictionaryProgress(duplicateId: string, primaryId: string): Promise<void> {
+    if (!isSupabaseConfigured || duplicateId === primaryId) return;
+    const userId = getUserId();
+    const { data, error } = await supabase!
+      .from('dictionary_progress')
+      .select('*')
+      .in('dictionary_entry_id', [duplicateId, primaryId])
+      .eq('user_id', userId);
+    if (error) throw new Error(`Erro do Supabase ao carregar progresso de dicionario: ${error.message}`);
+
+    const rows = data || [];
+    const duplicateProgress = rows.find((row: any) => row.dictionary_entry_id === duplicateId);
+    if (!duplicateProgress) return;
+    const primaryProgress = rows.find((row: any) => row.dictionary_entry_id === primaryId);
+    if (!primaryProgress) {
+      const { error: moveError } = await supabase!
+        .from('dictionary_progress')
+        .update({ dictionary_entry_id: primaryId })
+        .eq('id', duplicateProgress.id)
+        .eq('user_id', userId);
+      if (moveError) throw new Error(`Erro do Supabase ao mover progresso de dicionario: ${moveError.message}`);
+      return;
+    }
+
+    const mergedProgress = {
+      seen_count: Math.max(primaryProgress.seen_count || 0, duplicateProgress.seen_count || 0),
+      correct_count: Math.max(primaryProgress.correct_count || 0, duplicateProgress.correct_count || 0),
+      wrong_count: Math.max(primaryProgress.wrong_count || 0, duplicateProgress.wrong_count || 0),
+      mastery: Math.max(primaryProgress.mastery || 0, duplicateProgress.mastery || 0),
+      favorite: Boolean(primaryProgress.favorite || duplicateProgress.favorite),
+      suspended: Boolean(primaryProgress.suspended || duplicateProgress.suspended),
+      difficulty: primaryProgress.difficulty ?? duplicateProgress.difficulty ?? null,
+      last_seen_at: maxIsoDate(primaryProgress.last_seen_at, duplicateProgress.last_seen_at),
+      due_at: minIsoDate(primaryProgress.due_at, duplicateProgress.due_at),
+      srs_interval_minutes: Math.max(primaryProgress.srs_interval_minutes || 0, duplicateProgress.srs_interval_minutes || 0),
+      srs_ease_factor: Math.max(primaryProgress.srs_ease_factor || 0, duplicateProgress.srs_ease_factor || 0),
+    };
+
+    const { error: updateError } = await supabase!
+      .from('dictionary_progress')
+      .update(mergedProgress)
+      .eq('id', primaryProgress.id)
+      .eq('user_id', userId);
+    if (updateError) throw new Error(`Erro do Supabase ao mesclar progresso de dicionario: ${updateError.message}`);
+
+    const { error: deleteError } = await supabase!
+      .from('dictionary_progress')
+      .delete()
+      .eq('id', duplicateProgress.id)
+      .eq('user_id', userId);
+    if (deleteError) throw new Error(`Erro do Supabase ao apagar progresso duplicado: ${deleteError.message}`);
+  }
+
   static async deleteAll(): Promise<boolean> {
     if (!isSupabaseConfigured) return false;
     const userId = getUserId();
@@ -215,6 +318,45 @@ export class DictionaryFormRepository {
     return data || null;
   }
 
+  static async update(id: string, updates: Partial<DictionaryForm>): Promise<DictionaryForm | null> {
+    if (!isSupabaseConfigured) return null;
+    const copy: Record<string, unknown> = { ...updates };
+    const { data, error } = await supabase!
+      .from('dictionary_forms')
+      .update(copy)
+      .eq('id', id)
+      .eq('user_id', getUserId())
+      .select()
+      .maybeSingle();
+    if (error) throw new Error(`Erro do Supabase ao atualizar forma de dicionario: ${error.message}`);
+    return data || null;
+  }
+
+  static async delete(id: string): Promise<boolean> {
+    if (!isSupabaseConfigured) return false;
+    const { error } = await supabase!.from('dictionary_forms').delete().eq('id', id).eq('user_id', getUserId());
+    if (error) throw new Error(`Erro do Supabase ao apagar forma de dicionario: ${error.message}`);
+    return true;
+  }
+
+  static async moveFormsToEntry(fromEntryId: string, toEntryId: string): Promise<void> {
+    if (!isSupabaseConfigured || fromEntryId === toEntryId) return;
+    const forms = await this.getByEntryId(fromEntryId);
+    for (const form of forms) {
+      const nextKey = this.makeFormKey(toEntryId, form.form, form.form_type);
+      const existing = await this.getByUniqueKey(nextKey);
+      if (existing && existing.id !== form.id) {
+        await TermRepository.replaceDictionaryForm(form.id, existing.id);
+        await this.delete(form.id);
+      } else {
+        await this.update(form.id, {
+          dictionary_entry_id: toEntryId,
+          unique_key: nextKey,
+        });
+      }
+    }
+  }
+
   static async upsertBatch(forms: Array<Partial<DictionaryForm> & Pick<DictionaryForm, 'dictionary_entry_id' | 'form'>>): Promise<DictionaryForm[]> {
     if (!isSupabaseConfigured || forms.length === 0) return [];
     const enriched = forms.map((form) => ({
@@ -257,6 +399,33 @@ export class DictionarySenseRepository {
     if (!isSupabaseConfigured) return [];
     const { data } = await supabase!.from('dictionary_senses').select('*').eq('dictionary_entry_id', entryId).eq('user_id', getUserId()).order('sense_order', { ascending: true });
     return data || [];
+  }
+
+  static async deleteByEntryId(entryId: string): Promise<boolean> {
+    if (!isSupabaseConfigured) return false;
+    const { error } = await supabase!
+      .from('dictionary_senses')
+      .delete()
+      .eq('dictionary_entry_id', entryId)
+      .eq('user_id', getUserId());
+    if (error) throw new Error(`Erro do Supabase ao apagar sentidos: ${error.message}`);
+    return true;
+  }
+
+  static async moveSensesToEntry(fromEntryId: string, toEntryId: string): Promise<void> {
+    if (!isSupabaseConfigured || fromEntryId === toEntryId) return;
+    const senses = await this.getByEntryId(fromEntryId);
+    await this.upsertBatch(
+      senses.map((sense) => ({
+        dictionary_entry_id: toEntryId,
+        meaning: sense.meaning,
+        meaning_type: sense.meaning_type,
+        explanation: sense.explanation,
+        sense_order: sense.sense_order,
+        status: sense.status,
+      })),
+    );
+    await this.deleteByEntryId(fromEntryId);
   }
 
   static async upsertBatch(senses: Array<Partial<DictionarySense> & Pick<DictionarySense, 'dictionary_entry_id' | 'meaning'>>): Promise<DictionarySense[]> {

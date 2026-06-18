@@ -34,7 +34,7 @@ export function GlobalAiQueueControl() {
   const visibleJobs = jobs.filter(isVisibleQueueJob);
 
   const clearQueue = async () => {
-    if (!(await showConfirm('Excluir fila global', 'Remover tarefas pendentes, com erro e concluidas da fila global? Tarefas rodando serao preservadas.'))) {
+    if (!(await showConfirm('Abortar e zerar fila global', 'Isso vai apagar todos os jobs da fila global: pendentes, rodando, erros, concluidos, cancelados e historico. Nao apaga frases, traducoes, termos nem dicionario.'))) {
       return;
     }
     setIsClearing(true);
@@ -67,7 +67,7 @@ export function GlobalAiQueueControl() {
             className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-rose-100 bg-white px-3 text-[11px] font-black uppercase tracking-wide text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
           >
             <Eraser className="h-3.5 w-3.5" />
-            Excluir fila global
+            Abortar e zerar fila global
           </button>
         </div>
       </div>
@@ -116,7 +116,7 @@ export function GlobalAiQueueControl() {
 }
 
 function isClearableQueueJob(job: AiJob): boolean {
-  return job.status === 'pending' || job.status === 'error' || job.status === 'completed' || job.status === 'applied' || job.status === 'cancelled';
+  return Boolean(job.id);
 }
 
 function isVisibleQueueJob(job: AiJob): boolean {

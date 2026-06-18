@@ -130,8 +130,6 @@ const JOB_TYPES = {
 const JOB_STATUSES_FOR_DUPLICATE_AUDIT: AiJobStatus[] = ['pending', 'running', 'completed', 'applied'];
 const ACTIVE_STATUSES: AiJobStatus[] = ['pending', 'running'];
 const BLOCKING_STATUSES: AiJobStatus[] = ['error'];
-const CLEARABLE_STATUSES: AiJobStatus[] = ['pending', 'error', 'completed', 'applied', 'cancelled'];
-
 function hasText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -533,10 +531,35 @@ export class SourcePreparationEngine {
     return AiJobRepository.updateStatuses(errorIds, { status: 'pending', error: null } as any);
   }
 
+  static async retryProblemJobs(sourceId: string): Promise<boolean> {
+    const jobs = await AiJobRepository.getByTarget(sourceId);
+    return this.retryProblemJobsFromList(jobs);
+  }
+
+  static async retryAllProblemJobs(): Promise<boolean> {
+    const jobs = await AiJobRepository.getAll();
+    return this.retryProblemJobsFromList(jobs);
+  }
+
+  private static async retryProblemJobsFromList(jobs: AiJob[]): Promise<boolean> {
+    const now = new Date();
+    const ids = jobs
+      .filter((job) => job.status === 'error' || isJobStuck(job, now))
+      .map((job) => job.id);
+    if (ids.length === 0) return true;
+    return AiJobRepository.updateStatuses(ids, {
+      status: 'pending',
+      error: null,
+      locked_by: null,
+      locked_until: null,
+      last_heartbeat_at: null,
+      attempts: 0,
+    } as any);
+  }
+
   static async clearQueueJobs(sourceId: string): Promise<boolean> {
     const jobs = await AiJobRepository.getByTarget(sourceId);
-    const clearable = jobs.filter((job) => CLEARABLE_STATUSES.includes(job.status));
-    for (const job of clearable) {
+    for (const job of jobs) {
       await AiJobRepository.delete(job.id);
     }
     return true;
@@ -544,8 +567,7 @@ export class SourcePreparationEngine {
 
   static async clearAllQueueJobs(): Promise<boolean> {
     const jobs = await AiJobRepository.getAll();
-    const clearable = jobs.filter((job) => CLEARABLE_STATUSES.includes(job.status));
-    for (const job of clearable) {
+    for (const job of jobs) {
       await AiJobRepository.delete(job.id);
     }
     return true;

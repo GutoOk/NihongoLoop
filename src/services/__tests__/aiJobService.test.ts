@@ -10,6 +10,7 @@ vi.mock('../../repositories', () => ({
     add: vi.fn(),
     updateStatus: vi.fn(),
     updateStatuses: vi.fn(),
+    getByTarget: vi.fn(),
     getByTargetAndStatuses: vi.fn(),
   },
   SentenceRepository: {
@@ -25,6 +26,7 @@ vi.mock('../../repositories', () => ({
     getByUniqueKey: vi.fn(),
     getByLemma: vi.fn(),
     addBatch: vi.fn(),
+    mergeDuplicateIntoPrimary: vi.fn(),
     update: vi.fn(),
     makeEntryKey: vi.fn((lemma: string, kana?: string | null, type?: string | null) => `${lemma}|${kana || ''}|${type || 'outro'}`),
   },
@@ -54,11 +56,23 @@ describe('AiJobService', () => {
     vi.stubGlobal('fetch', vi.fn());
     vi.mocked(AiJobRepository.updateStatus).mockResolvedValue({} as any);
     vi.mocked(AiJobRepository.updateStatuses).mockResolvedValue(true);
+    vi.mocked(AiJobRepository.getByTarget).mockImplementation(async (targetId: string) => ([
+      'batch-1',
+      'batch-2',
+      'batch-3',
+      'batch-repeat',
+      'analysis-invalid',
+      'analysis-job',
+      'dict-job',
+      'dict-invalid',
+      'dict-duplicate-key',
+    ].map((id) => ({ id, target_id: targetId })) as any));
     vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([]);
     vi.mocked(DictionaryRepository.getByUniqueKey).mockResolvedValue(null);
     vi.mocked(DictionaryRepository.getByLemma).mockResolvedValue([]);
     vi.mocked(DictionaryRepository.addBatch).mockResolvedValue([]);
+    vi.mocked(DictionaryRepository.mergeDuplicateIntoPrimary).mockResolvedValue({ id: 'entry-primary' } as any);
     vi.mocked(TermRepository.deleteBySentenceIds).mockResolvedValue(true);
     vi.mocked(TermRepository.addBatch).mockResolvedValue([] as any);
   });
@@ -132,6 +146,36 @@ describe('AiJobService', () => {
           result: expect.objectContaining({ optimization: 'skipped_resolved_batch' }),
         }),
       );
+    });
+
+    it('does not apply a batch result when the job was removed from the queue before the response', async () => {
+      const job = {
+        id: 'deleted-before-apply',
+        user_id: 'user-123',
+        type: 'batch_translate_sentences',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: { items: [{ id: 'sent-1', japanese: 'jp' }] },
+      } as any;
+
+      vi.mocked(SentenceRepository.getByIds)
+        .mockResolvedValueOnce([{ id: 'sent-1', japanese: 'jp', portuguese: null, status: 'raw' }] as any);
+      vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([]);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'deleted-before-apply',
+            type: 'batch_translate_sentences',
+            items: [{ job_id: 'sent-1', translation: 'pt' }],
+          }],
+        }),
+      } as any);
+
+      await AiJobService.processJobsBatch([job]);
+
+      expect(SentenceRepository.update).not.toHaveBeenCalledWith('sent-1', expect.objectContaining({ portuguese: 'pt' }));
     });
 
     it('sends only unresolved items from a mixed translation batch', async () => {
@@ -504,7 +548,7 @@ describe('AiJobService', () => {
       );
     });
 
-    it('does not update dictionary unique_key when the enriched key already belongs to another entry', async () => {
+    it('merges dictionary entries when enrichment converges to an existing unique_key', async () => {
       const job = {
         id: 'dict-duplicate-key',
         user_id: 'user-123',
@@ -547,14 +591,12 @@ describe('AiJobService', () => {
       const result = await AiJobService.processJobsBatch([job]);
 
       expect(result.errorCount).toBe(0);
-      expect(DictionaryRepository.update).toHaveBeenCalledWith(
-        'entry-current',
-        expect.not.objectContaining({ unique_key: expect.any(String) }),
-      );
-      expect(DictionaryRepository.update).toHaveBeenCalledWith(
-        'entry-current',
-        expect.objectContaining({ status: 'ai_enriched', kana: 'kana', romaji: 'romaji' }),
-      );
+      expect(DictionaryRepository.update).not.toHaveBeenCalledWith('entry-current', expect.objectContaining({ unique_key: expect.any(String) }));
+      expect(DictionaryRepository.mergeDuplicateIntoPrimary).toHaveBeenCalledWith(expect.objectContaining({
+        duplicateId: 'entry-current',
+        primaryId: 'entry-other',
+        preferredUpdates: expect.objectContaining({ status: 'ai_enriched', kana: 'kana', romaji: 'romaji' }),
+      }));
     });
   });
 });

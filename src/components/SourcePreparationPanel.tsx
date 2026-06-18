@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
-  CheckCircle2,
   Database,
   Eraser,
   ListPlus,
@@ -109,27 +108,13 @@ export default function SourcePreparationPanel({
     SourcePreparationRunner.stop();
   };
 
-  const retryErrors = async () => {
+  const retryProblems = async () => {
     setIsBusy(true);
     try {
       if (showGlobal) {
-        await SourcePreparationEngine.retryAllErrorJobs();
+        await SourcePreparationEngine.retryAllProblemJobs();
       } else {
-        await SourcePreparationEngine.retryErrorJobs(sourceId);
-      }
-      await refresh();
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const resumeStuck = async () => {
-    setIsBusy(true);
-    try {
-      if (showGlobal) {
-        await SourcePreparationEngine.resetAllStuckJobs();
-      } else {
-        await SourcePreparationEngine.resetStuckJobs(sourceId);
+        await SourcePreparationEngine.retryProblemJobs(sourceId);
       }
       await refresh();
     } finally {
@@ -139,11 +124,12 @@ export default function SourcePreparationPanel({
 
   const clearPending = async () => {
     const scopeLabel = showGlobal ? 'global' : 'desta fonte';
-    if (!(await showConfirm('Excluir fila', `Remover tarefas pendentes, com erro e concluidas da fila ${scopeLabel}? Tarefas rodando serao preservadas.`))) {
+    if (!(await showConfirm('Abortar e zerar fila', `Isso vai parar o processamento e apagar todos os jobs ${scopeLabel}: pendentes, rodando, erros, concluidos, cancelados e historico. Nao apaga frases, traducoes, termos nem dicionario. Depois voce podera gerar uma nova fila a partir do diagnostico atual.`))) {
       return;
     }
     setIsBusy(true);
     try {
+      SourcePreparationRunner.stop();
       if (showGlobal) {
         await SourcePreparationEngine.clearAllQueueJobs();
       } else {
@@ -195,7 +181,6 @@ export default function SourcePreparationPanel({
                 icon={isRunning ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                 label={isRunning ? 'Pausar' : 'Iniciar processamento'}
               />
-              <ToolbarButton onClick={onPreparationComplete} icon={<CheckCircle2 className="h-4 w-4" />} label="Estudar" />
             </div>
           </div>
 
@@ -264,9 +249,8 @@ export default function SourcePreparationPanel({
             actions={
               <div className="flex flex-wrap gap-2">
                 <ToolbarButton small onClick={() => setShowGlobal((value) => !value)} label={showGlobal ? 'Ver fonte' : 'Ver global'} />
-                <ToolbarButton small onClick={resumeStuck} disabled={isBusy || !queueCounts.stuck} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retomar travados" />
-                <ToolbarButton small onClick={retryErrors} disabled={isBusy || !queueCounts.error} icon={<RefreshCw className="h-3.5 w-3.5" />} label="Retentar erros" />
-                <ToolbarButton small onClick={clearPending} disabled={isBusy || !queueCounts.clearable} icon={<Eraser className="h-3.5 w-3.5" />} label={showGlobal ? 'Excluir fila global' : 'Excluir fila da fonte'} />
+                <ToolbarButton small onClick={retryProblems} disabled={isBusy || queueCounts.error + queueCounts.stuck === 0} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retentar problemas" />
+                <ToolbarButton small onClick={clearPending} disabled={isBusy || jobs.length === 0} icon={<Eraser className="h-3.5 w-3.5" />} label={showGlobal ? 'Abortar e zerar fila global' : 'Abortar e zerar fila da fonte'} />
               </div>
             }
           >

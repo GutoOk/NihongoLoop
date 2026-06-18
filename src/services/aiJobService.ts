@@ -210,6 +210,9 @@ export class AiJobService {
         }
         const itemResult = resultMap.get(job.id) || data.result || data;
         try {
+          if (!(await this.jobStillExists(job))) {
+            continue;
+          }
           await this.applyJobResult(job, itemResult);
           if (itemResult && typeof itemResult === 'object' && itemResult.failed_count > 0) {
             await this.rescheduleFailedItems(job, itemResult);
@@ -257,6 +260,12 @@ export class AiJobService {
       }
     }
     return job.input || {};
+  }
+
+  private static async jobStillExists(job: AiJob): Promise<boolean> {
+    if (!job.target_id) return true;
+    const jobs = await AiJobRepository.getByTarget(job.target_id);
+    return jobs.some((current) => current.id === job.id);
   }
 
   private static async tryOptimizeJob(job: AiJob): Promise<boolean> {
@@ -559,6 +568,8 @@ export class AiJobService {
     }
     const targetUniqueKey = DictionaryRepository.makeEntryKey(entry.lemma, finalKana, finalType);
     const existingWithTargetKey = await DictionaryRepository.getByUniqueKey(targetUniqueKey);
+    const safeStatus = 'ai_enriched';
+    let finalEntryId = entry.id;
     const updates: Record<string, unknown> = {
       main_meaning: mainMeaning,
       type: finalType,
@@ -570,24 +581,30 @@ export class AiJobService {
       components: entry.components || result.components || null,
       grammar_info: entry.grammar_info || result.grammar_info || null,
       short_note: entry.short_note || result.short_note || null,
-      status: 'ai_enriched',
+      status: safeStatus,
     };
-    if (!existingWithTargetKey || existingWithTargetKey.id === entry.id) {
+    if (existingWithTargetKey && existingWithTargetKey.id !== entry.id) {
+      await DictionaryRepository.mergeDuplicateIntoPrimary({
+        duplicateId: entry.id,
+        primaryId: existingWithTargetKey.id,
+        preferredUpdates: updates,
+      } as any);
+      finalEntryId = existingWithTargetKey.id;
+    } else {
       updates.unique_key = targetUniqueKey;
+      await DictionaryRepository.update(entry.id, updates);
     }
-
-    await DictionaryRepository.update(entry.id, updates);
 
     const meanings = Array.isArray(result.meanings) && result.meanings.length > 0 ? result.meanings : [mainMeaning];
     await DictionarySenseRepository.upsertBatch(meanings.filter(Boolean).map((meaning: string, index: number) => ({
-      dictionary_entry_id: entry.id,
+      dictionary_entry_id: finalEntryId,
       meaning,
       meaning_type: index === 0 ? 'principal' : 'variação',
       sense_order: index + 1,
     })));
 
     await DictionaryFormRepository.resolveOrCreate({
-      dictionary_entry_id: entry.id,
+      dictionary_entry_id: finalEntryId,
       form: entry.lemma,
       kana: finalKana,
       romaji: finalRomaji,

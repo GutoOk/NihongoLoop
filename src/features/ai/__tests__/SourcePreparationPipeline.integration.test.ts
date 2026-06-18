@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { SourcePreparationEngine } from '../SourcePreparationEngine';
 import { SourcePreparationRunner } from '../SourcePreparationRunner';
 import { AiJobRepository, DictionaryRepository, SentenceRepository, TermRepository } from '../../../repositories';
 import { AiJobService } from '../../../services/aiJobService';
@@ -67,6 +68,10 @@ describe('Source preparation pipeline integration', () => {
     vi.mocked(AiJobRepository.getByTarget).mockImplementation(async () => jobs);
     vi.mocked(AiJobRepository.claimJob).mockResolvedValue(true);
     vi.mocked(AiJobRepository.updateStatuses).mockResolvedValue(true);
+    vi.mocked(AiJobRepository.delete).mockImplementation(async (id: string) => {
+      jobs = jobs.filter((job) => job.id !== id);
+      return true;
+    });
     vi.mocked(AiJobRepository.add).mockImplementation(async (input: any) => {
       const existing = jobs.find((job) => job.input_hash === input.input_hash && job.target_id === input.target_id && job.type === input.type);
       if (existing) return existing;
@@ -135,5 +140,20 @@ describe('Source preparation pipeline integration', () => {
       romaji: 'romaji',
       status: 'ai_enriched',
     }));
+
+    const jobCountAfterFirstRun = jobs.length;
+    await SourcePreparationRunner.drainSource('source-1', undefined, undefined, 0);
+    expect(jobs).toHaveLength(jobCountAfterFirstRun);
+
+    await SourcePreparationEngine.clearQueueJobs('source-1');
+    expect(jobs).toHaveLength(0);
+    expect(sentences[0].portuguese).toBe('pt');
+    expect(entries[0].main_meaning).toBe('ir');
+
+    entries[0].romaji = null;
+    entries[0].status = 'pending';
+    const result = await SourcePreparationEngine.createQueueForSource('source-1');
+    expect(result.jobs.map((job) => job.type)).toEqual(['batch_enrich_dictionary_entries_full']);
+    expect(result.plan.totals.dictionaryItems).toBe(1);
   });
 });
