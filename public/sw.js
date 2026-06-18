@@ -4,8 +4,6 @@ const RUNTIME_CACHE = `nihongo-loop-runtime-${SW_VERSION}`;
 const RUNTIME_CACHE_LIMIT = 80;
 
 const APP_SHELL = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
@@ -36,6 +34,17 @@ function isVersionedAsset(url) {
   return url.pathname.startsWith('/assets/') || url.pathname.startsWith('/icons/');
 }
 
+async function networkFirstNavigation(request) {
+  try {
+    return await fetch(request, { cache: 'reload' });
+  } catch {
+    return new Response('Nihongo Loop esta offline. Verifique sua conexao e tente novamente.', {
+      status: 503,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE)
@@ -59,6 +68,11 @@ self.addEventListener('fetch', (event) => {
   if (!shouldHandle(event.request)) return;
 
   const url = new URL(event.request.url);
+
+  if (isNavigation(event.request)) {
+    event.respondWith(networkFirstNavigation(event.request));
+    return;
+  }
 
   if (isVersionedAsset(url)) {
     event.respondWith(
@@ -91,15 +105,6 @@ self.addEventListener('fetch', (event) => {
       })
       .catch(() => caches.match(event.request).then((cachedResponse) => {
         if (cachedResponse) return cachedResponse;
-
-        if (isNavigation(event.request)) {
-          return caches.match('/index.html').then((indexResponse) => (
-            indexResponse || new Response('Nihongo Loop esta offline. Verifique sua conexao e tente novamente.', {
-              status: 503,
-              headers: { 'Content-Type': 'text/html; charset=utf-8' },
-            })
-          ));
-        }
 
         return new Response('Offline: recurso nao disponivel sem conexao.', {
           status: 503,

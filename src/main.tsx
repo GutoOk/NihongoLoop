@@ -29,6 +29,9 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       navigator.serviceWorker.register(`/sw.js?v=${encodeURIComponent(__BUILD_VERSION__)}`)
         .then((reg) => {
           console.log('Service Worker registered with scope:', reg.scope);
+          reg.update().catch((err) => {
+            console.warn('Service Worker update check failed:', err);
+          });
         })
         .catch((err) => {
           console.error('Service Worker registration failed:', err);
