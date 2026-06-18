@@ -195,7 +195,7 @@ describe('SourcePreparationEngine', () => {
     expect(diagnosis.jobs.possibleDuplicates).toBe(2);
   });
 
-  it('builds an idempotent plan that ignores translated, reusable, queued, running, completed, errored and stuck targets', async () => {
+  it('builds an idempotent plan that ignores resolved, reusable, queued, running, errored and stuck targets but retries unresolved completed targets', async () => {
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
       sentence({ id: 'translated', portuguese: 'Pronto.' }),
       sentence({ id: 'reusable', japanese: 'ある', japanese_key: 'ある' }),
@@ -220,8 +220,8 @@ describe('SourcePreparationEngine', () => {
     const plan = await SourcePreparationEngine.buildPlan('source-1', { translateBatchSize: 20 }, now);
 
     expect(plan.reuse.translations).toHaveLength(1);
-    expect(plan.totals.translationItems).toBe(1);
-    expect(plan.jobs.translation[0].input.items).toEqual([{ id: 'missing', japanese: '待って' }]);
+    expect(plan.totals.translationItems).toBe(2);
+    expect((plan.jobs.translation[0].input.items as any[]).map((item) => item.id)).toEqual(['missing', 'completed-target']);
     expect(plan.blocked.errors).toHaveLength(1);
     expect(plan.blocked.stuck).toHaveLength(1);
   });
@@ -322,6 +322,75 @@ describe('SourcePreparationEngine', () => {
     expect(dictionaryPlan.totals.translationJobs).toBe(0);
     expect(dictionaryPlan.totals.lexicalAnalysisJobs).toBe(0);
     expect(dictionaryPlan.totals.dictionaryJobs).toBe(1);
+  });
+
+  it('does not let a completed translation job block a still untranslated sentence', async () => {
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
+      sentence({ id: 'needs-translation', portuguese: null }),
+    ]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sentence({ id: 'needs-translation', portuguese: null }),
+    ]);
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+      job({ id: 'old-completed', status: 'completed', input: { items: [{ id: 'needs-translation' }] } }),
+    ]);
+
+    const plan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
+
+    expect((plan.jobs.translation[0].input.items as any[]).map((item) => item.id)).toEqual(['needs-translation']);
+  });
+
+  it('does not let a completed analysis job block a sentence without valid lexical analysis', async () => {
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
+      sentence({ id: 'needs-analysis', portuguese: 'Pronto.', kana: null, romaji: null }),
+    ]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sentence({ id: 'needs-analysis', portuguese: 'Pronto.', kana: null, romaji: null }),
+    ]);
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+      job({
+        id: 'old-analysis',
+        type: 'batch_analyze_sentences',
+        status: 'completed',
+        input: { items: [{ id: 'needs-analysis' }] },
+      }),
+    ]);
+
+    const plan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
+
+    expect((plan.jobs.lexicalAnalysis[0].input.items as any[]).map((item) => item.id)).toEqual(['needs-analysis']);
+  });
+
+  it('does not let a completed dictionary job block an entry that is still incomplete', async () => {
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
+      sentence({ id: 'ready-sentence', portuguese: 'Pronto.', kana: 'ã„ã', romaji: 'iku' }),
+    ]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sentence({ id: 'ready-sentence', portuguese: 'Pronto.', kana: 'ã„ã', romaji: 'iku' }),
+    ]);
+    vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([
+      {
+        id: 't1',
+        sentence_id: 'ready-sentence',
+        dictionary_entry_id: 'entry-incomplete',
+        form: { dictionary_entry_id: 'entry-incomplete' },
+      },
+    ] as any);
+    vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
+      entry({ id: 'entry-incomplete', kana: null, status: 'pending' }),
+    ]);
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+      job({
+        id: 'old-dictionary',
+        type: 'batch_enrich_dictionary_entries_full',
+        status: 'completed',
+        input: { items: [{ id: 'entry-incomplete' }] },
+      }),
+    ]);
+
+    const plan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
+
+    expect((plan.jobs.dictionary[0].input.items as any[]).map((item) => item.id)).toEqual(['entry-incomplete']);
   });
 
   it('handles a realistic 300 sentence source without duplicate queue generation or repeated translation', async () => {

@@ -127,7 +127,8 @@ const JOB_TYPES = {
   dictionary: 'batch_enrich_dictionary_entries_full',
 } as const satisfies Record<PreparationStage, AiJobType>;
 
-const ACTIVE_OR_VALID_STATUSES: AiJobStatus[] = ['pending', 'running', 'completed', 'applied'];
+const JOB_STATUSES_FOR_DUPLICATE_AUDIT: AiJobStatus[] = ['pending', 'running', 'completed', 'applied'];
+const ACTIVE_STATUSES: AiJobStatus[] = ['pending', 'running'];
 const BLOCKING_STATUSES: AiJobStatus[] = ['error'];
 
 function hasText(value: unknown): value is string {
@@ -189,7 +190,7 @@ function getJobHumanLabel(job: Pick<AiJob, 'type' | 'input'>): string {
 function countPossibleDuplicateJobs(jobs: AiJob[]): { count: number; jobs: AiJob[] } {
   const seen = new Map<string, AiJob[]>();
   for (const job of jobs) {
-    if (!ACTIVE_OR_VALID_STATUSES.includes(job.status) && !BLOCKING_STATUSES.includes(job.status)) continue;
+    if (!JOB_STATUSES_FOR_DUPLICATE_AUDIT.includes(job.status) && !BLOCKING_STATUSES.includes(job.status)) continue;
     for (const key of getJobItemTargetKeys(job)) {
       const bucket = seen.get(key) || [];
       bucket.push(job);
@@ -210,7 +211,7 @@ function buildJobItemStatusIndex(jobs: AiJob[], now: Date) {
 
   for (const job of jobs) {
     const keys = getJobItemTargetKeys(job);
-    if (ACTIVE_OR_VALID_STATUSES.includes(job.status)) {
+    if (ACTIVE_STATUSES.includes(job.status)) {
       keys.forEach((key) => activeOrDone.add(key));
     }
     if (job.status === 'error') {

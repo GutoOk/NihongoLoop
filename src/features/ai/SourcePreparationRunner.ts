@@ -37,6 +37,22 @@ export class SourcePreparationRunner {
     this.notify();
   }
 
+  static async drainSource(sourceId: string, onProgress?: () => void, signal?: AbortSignal, delayMs = 250): Promise<void> {
+    while (!signal?.aborted) {
+      const processed = await SourcePreparationEngine.processNextSourceJob(sourceId, this.runnerId, signal);
+      onProgress?.();
+      if (processed) {
+        if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+
+      const queued = await SourcePreparationEngine.createQueueForSource(sourceId, this.planOptions);
+      onProgress?.();
+      if (queued.jobs.length === 0 && queued.appliedReusableTranslations === 0) return;
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
   private static notify(): void {
     for (const listener of this.listeners) listener(this.running);
   }
@@ -48,24 +64,9 @@ export class SourcePreparationRunner {
           this.stop();
           return;
         }
-        const processed = await SourcePreparationEngine.processNextSourceJob(
-          sourceId,
-          this.runnerId,
-          this.abortController.signal,
-        );
-        onProgress?.();
-        if (processed) {
-          await new Promise((resolve) => setTimeout(resolve, 250));
-          continue;
-        }
-
-        const queued = await SourcePreparationEngine.createQueueForSource(sourceId, this.planOptions);
-        onProgress?.();
-        if (queued.jobs.length === 0 && queued.appliedReusableTranslations === 0) {
-          this.stop();
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 250));
+        await this.drainSource(sourceId, onProgress, this.abortController.signal);
+        this.stop();
+        return;
       }
     } finally {
       this.running = false;

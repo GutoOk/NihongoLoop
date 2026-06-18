@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AiJobService } from '../aiJobService';
-import { AiJobRepository, DictionaryRepository, SentenceRepository } from '../../repositories';
+import { AiJobRepository, DictionaryRepository, SentenceRepository, TermRepository } from '../../repositories';
 import { AuthService } from '../../core/authService';
 import { stableHash } from '../../core/hash';
 
@@ -30,6 +30,8 @@ vi.mock('../../repositories', () => ({
   },
   TermRepository: {
     getBySentences: vi.fn().mockResolvedValue([]),
+    deleteBySentenceIds: vi.fn(),
+    addBatch: vi.fn(),
   },
   DictionaryFormRepository: {
     resolveOrCreate: vi.fn(),
@@ -57,6 +59,8 @@ describe('AiJobService', () => {
     vi.mocked(DictionaryRepository.getByUniqueKey).mockResolvedValue(null);
     vi.mocked(DictionaryRepository.getByLemma).mockResolvedValue([]);
     vi.mocked(DictionaryRepository.addBatch).mockResolvedValue([]);
+    vi.mocked(TermRepository.deleteBySentenceIds).mockResolvedValue(true);
+    vi.mocked(TermRepository.addBatch).mockResolvedValue([] as any);
   });
 
   describe('requestSentenceTranslation', () => {
@@ -281,11 +285,58 @@ describe('AiJobService', () => {
         }),
       } as any);
 
-      await AiJobService.processJobsBatch([job]);
+      const result = await AiJobService.processJobsBatch([job]);
 
       expect(AiJobRepository.add).toHaveBeenCalledTimes(2);
       expect(vi.mocked(AiJobRepository.add).mock.calls[0][0].input.items).toHaveLength(2);
       expect(vi.mocked(AiJobRepository.add).mock.calls[1][0].input.items).toHaveLength(1);
+      expect(result.errorCount).toBe(1);
+      expect(AiJobRepository.updateStatus).toHaveBeenCalledWith(
+        'batch-3',
+        expect.objectContaining({ status: 'error' }),
+      );
+    });
+
+    it('does not complete an analysis job when the sentence still has no valid reading', async () => {
+      const job = {
+        id: 'analysis-invalid',
+        user_id: 'user-123',
+        type: 'batch_analyze_sentences',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: { items: [{ id: 's-invalid', japanese: 'jp', portuguese: 'pt' }] },
+      } as any;
+
+      vi.mocked(SentenceRepository.getByIds)
+        .mockResolvedValueOnce([{ id: 's-invalid', japanese: 'jp', portuguese: 'pt', status: 'translated' }] as any)
+        .mockResolvedValueOnce([{ id: 's-invalid', japanese: 'jp', portuguese: 'pt', status: 'translated' }] as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'analysis-invalid',
+            type: 'batch_analyze_sentences',
+            items: [{ job_id: 's-invalid', kana: 'kana', romaji: '', terms: [] }],
+          }],
+        }),
+      } as any);
+
+      const result = await AiJobService.processJobsBatch([job]);
+
+      expect(result.errorCount).toBe(1);
+      expect(AiJobRepository.add).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'batch_analyze_sentences',
+        status: 'pending',
+      }));
+      expect(AiJobRepository.updateStatus).toHaveBeenCalledWith(
+        'analysis-invalid',
+        expect.objectContaining({ status: 'error' }),
+      );
+      expect(SentenceRepository.update).not.toHaveBeenCalledWith(
+        's-invalid',
+        expect.objectContaining({ terms_source: 'ai_empty' }),
+      );
     });
 
     it('reuses a dictionary entry by lemma before creating a new one during lexical analysis', async () => {
@@ -404,6 +455,53 @@ describe('AiJobService', () => {
         kana: 'いく',
         romaji: 'iku',
       }));
+    });
+    it('does not mark a dictionary entry as enriched when kana or romaji is still missing', async () => {
+      const job = {
+        id: 'dict-invalid',
+        user_id: 'user-123',
+        type: 'batch_enrich_dictionary_entries_full',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: { items: [{ id: 'entry-missing-reading', lemma: 'jp' }] },
+      } as any;
+
+      vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
+        { id: 'entry-missing-reading', status: 'pending', main_meaning: null, kana: null, romaji: null, type: 'verbo' },
+      ] as any);
+      vi.mocked(DictionaryRepository.getById).mockResolvedValue({
+        id: 'entry-missing-reading',
+        lemma: 'jp',
+        status: 'pending',
+        main_meaning: null,
+        kana: null,
+        romaji: null,
+        type: 'verbo',
+        tags: [],
+      } as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'dict-invalid',
+            type: 'batch_enrich_dictionary_entries_full',
+            items: [{ job_id: 'entry-missing-reading', main_meaning: 'ir', type: 'verbo' }],
+          }],
+        }),
+      } as any);
+
+      const result = await AiJobService.processJobsBatch([job]);
+
+      expect(result.errorCount).toBe(1);
+      expect(DictionaryRepository.update).not.toHaveBeenCalledWith(
+        'entry-missing-reading',
+        expect.objectContaining({ status: 'ai_enriched' }),
+      );
+      expect(AiJobRepository.updateStatus).toHaveBeenCalledWith(
+        'dict-invalid',
+        expect.objectContaining({ status: 'error' }),
+      );
     });
   });
 });

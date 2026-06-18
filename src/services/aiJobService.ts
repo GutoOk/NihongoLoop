@@ -41,6 +41,13 @@ async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 0,
   throw new Error('Falha ao conectar à API de processamento.');
 }
 
+function hasValidTranslation(sentence: any): boolean {
+  return Boolean(
+    sentence?.portuguese &&
+      makeJapaneseKey(sentence.portuguese) !== makeJapaneseKey(sentence.japanese || ''),
+  );
+}
+
 export class AiJobService {
   static async triggerBatchJobs(targetId: string, concurrencyLimit?: number, signal?: AbortSignal) {
     const response = await fetchWithRetry('/api/ai/trigger-batch-jobs', {
@@ -206,6 +213,11 @@ export class AiJobService {
           await this.applyJobResult(job, itemResult);
           if (itemResult && typeof itemResult === 'object' && itemResult.failed_count > 0) {
             await this.rescheduleFailedItems(job, itemResult);
+            const input = this.getJobInput(job);
+            const itemCount = Array.isArray(input.items) ? input.items.length : 1;
+            if (itemResult.failed_count >= itemCount) {
+              throw new Error('Nenhum item do lote foi aplicado com sucesso.');
+            }
           }
           await AiJobRepository.updateStatus(job.id, {
             status: 'completed',
@@ -254,7 +266,7 @@ export class AiJobService {
       const sentenceMap = new Map(sentences.map((sentence) => [sentence.id, sentence]));
       const unresolvedItems = input.items.filter((item: any) => {
         const sentence = sentenceMap.get(item.id);
-        return sentence && !sentence.portuguese && sentence.status !== 'reviewed';
+        return sentence && !hasValidTranslation(sentence) && sentence.status !== 'reviewed';
       });
       if (unresolvedItems.length === 0) {
         await AiJobRepository.updateStatus(job.id, { status: 'completed', result: { optimization: 'skipped_resolved_batch' }, completed_at: new Date().toISOString() });
@@ -269,14 +281,14 @@ export class AiJobService {
       const sentences = await SentenceRepository.getByIds(ids);
       const terms = await TermRepository.getBySentences(ids);
       const withTerms = new Set(terms.map((term) => term.sentence_id));
-      if (sentences.every((sentence) => sentence.kana && sentence.romaji && withTerms.has(sentence.id))) {
+      if (sentences.every((sentence) => sentence.kana && sentence.romaji && (withTerms.has(sentence.id) || sentence.terms_source === 'ai_empty'))) {
         await AiJobRepository.updateStatus(job.id, { status: 'completed', result: { optimization: 'already_analyzed' }, completed_at: new Date().toISOString() });
         return true;
       }
     }
     if (job.type.startsWith('batch_enrich_dictionary') && Array.isArray(input.items)) {
       const entries = await DictionaryRepository.getByIds(input.items.map((item: any) => item.id).filter(Boolean));
-      if (entries.every((entry) => entry.status !== 'pending' && entry.main_meaning && entry.kana && entry.romaji)) {
+      if (entries.every((entry) => entry.status !== 'pending' && entry.main_meaning && entry.kana && entry.romaji && entry.type)) {
         await AiJobRepository.updateStatus(job.id, { status: 'completed', result: { optimization: 'already_enriched' }, completed_at: new Date().toISOString() });
         return true;
       }
@@ -336,7 +348,11 @@ export class AiJobService {
     }
 
     if (job.type === 'batch_analyze_sentences') {
-      await this.applySentenceAnalysisBatch(result.items || result.results || []);
+      const failed = await this.applySentenceAnalysisBatch(result.items || result.results || []);
+      if (Object.keys(failed).length > 0) {
+        result.failed_count = Object.keys(failed).length;
+        result.errors_by_item = failed;
+      }
       return;
     }
 
@@ -361,7 +377,8 @@ export class AiJobService {
     }
 
     if (job.type === 'generate_sentence_reading' || job.type === 'detect_sentence_terms') {
-      await this.applySentenceAnalysisBatch([{ job_id: job.target_id, ...result }]);
+      const failed = await this.applySentenceAnalysisBatch([{ job_id: job.target_id, ...result }]);
+      if (Object.keys(failed).length > 0) throw new Error(Object.values(failed)[0]);
       return;
     }
 
@@ -379,7 +396,8 @@ export class AiJobService {
     return sentence || null;
   }
 
-  private static async applySentenceAnalysisBatch(items: any[]) {
+  private static async applySentenceAnalysisBatch(items: any[]): Promise<Record<string, string>> {
+    const failed: Record<string, string> = {};
     const sentenceIds = items.map((item) => item.job_id || item.id).filter(Boolean);
     const sentences = await SentenceRepository.getByIds(sentenceIds);
     const sentenceMap = new Map(sentences.map((sentence) => [sentence.id, sentence]));
@@ -390,18 +408,21 @@ export class AiJobService {
       const sentence = sentenceMap.get(sentenceId);
       if (!sentence || sentence.status === 'reviewed') continue;
 
-      if (item.kana && item.romaji) {
-        let romaji = String(item.romaji).toLowerCase();
-        if (/[\u3040-\u30FF\u4E00-\u9FAF]/.test(romaji)) {
-          romaji = simpleKanaToRomaji(item.kana) || romaji.replace(/[\u3040-\u30FF\u4E00-\u9FAF]/g, '');
-        }
-        await SentenceRepository.update(sentence.id, {
-          kana: item.kana,
-          romaji,
-          status: sentence.portuguese ? 'reading_ready' : sentence.status,
-          reading_source: 'ai',
-        });
+      if (!item.kana || !item.romaji) {
+        failed[sentenceId] = 'Analise sem kana ou romaji.';
+        continue;
       }
+
+      let romaji = String(item.romaji).toLowerCase();
+      if (/[\u3040-\u30FF\u4E00-\u9FAF]/.test(romaji)) {
+        romaji = simpleKanaToRomaji(item.kana) || romaji.replace(/[\u3040-\u30FF\u4E00-\u9FAF]/g, '');
+      }
+      await SentenceRepository.update(sentence.id, {
+        kana: item.kana,
+        romaji,
+        status: sentence.portuguese ? 'reading_ready' : sentence.status,
+        reading_source: 'ai',
+      });
 
       const terms = Array.isArray(item.terms) ? item.terms : [];
       const normalizedTerms = [];
@@ -479,10 +500,13 @@ export class AiJobService {
       if (normalizedTerms.length > 0) {
         await TermRepository.addBatch(normalizedTerms);
         await SentenceRepository.update(sentence.id, { terms_source: 'ai' });
+      } else if (terms.length > 0) {
+        failed[sentenceId] = 'Analise retornou termos, mas nenhum termo valido foi ligado ao dicionario.';
       } else {
         await SentenceRepository.update(sentence.id, { terms_source: 'ai_empty' });
       }
     }
+    return failed;
   }
 
   private static async resolveDictionaryEntry(entryKey: string, lemma: string, surface: string, type: string) {
@@ -530,6 +554,9 @@ export class AiJobService {
 
     const finalKana = entry.kana || result.kana || null;
     const finalRomaji = entry.romaji || result.romaji || null;
+    if (!finalKana || !finalRomaji) {
+      throw new Error('Resultado invalido: kana ou romaji ausente.');
+    }
     await DictionaryRepository.update(entry.id, {
       main_meaning: mainMeaning,
       type: finalType,
