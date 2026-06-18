@@ -56,6 +56,8 @@ describe('AiJobService', () => {
     vi.stubGlobal('fetch', vi.fn());
     vi.mocked(AiJobRepository.updateStatus).mockResolvedValue({} as any);
     vi.mocked(AiJobRepository.updateStatuses).mockResolvedValue(true);
+    vi.mocked(SentenceRepository.getById).mockReset();
+    vi.mocked(SentenceRepository.getById).mockResolvedValue(null);
     vi.mocked(AiJobRepository.getByTarget).mockImplementation(async (targetId: string) => ([
       'batch-1',
       'batch-2',
@@ -70,6 +72,7 @@ describe('AiJobService', () => {
       'dict-race-23505',
       'batch-attempts',
       'single-job',
+      'batch-identical-translation',
     ].map((id) => ({ id, target_id: targetId })) as any));
     vi.mocked(AiJobRepository.getByTargetAndStatuses).mockResolvedValue([]);
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([]);
@@ -349,6 +352,64 @@ describe('AiJobService', () => {
         'duplicate',
         expect.objectContaining({ portuguese: 'Vamos.', translation_source: 'cache' }),
       );
+    });
+
+    it('treats translation identical to Japanese as an item failure instead of failing the whole batch', async () => {
+      const job = {
+        id: 'batch-identical-translation',
+        user_id: 'user-123',
+        type: 'batch_translate_sentences',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        input: {
+          items: [
+            { id: 'sent-ok', japanese: '待って' },
+            { id: 'sent-identical', japanese: 'まあ' },
+          ],
+        },
+      } as any;
+
+      vi.mocked(SentenceRepository.getByIds)
+        .mockResolvedValueOnce([
+          { id: 'sent-ok', japanese: '待って', portuguese: null, status: 'raw' },
+          { id: 'sent-identical', japanese: 'まあ', portuguese: null, status: 'raw' },
+        ] as any);
+      vi.mocked(SentenceRepository.getById)
+        .mockResolvedValueOnce({ id: 'sent-ok', japanese: '待って', portuguese: null, status: 'raw' } as any)
+        .mockResolvedValueOnce({ id: 'sent-identical', japanese: 'まあ', portuguese: null, status: 'raw' } as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          results: [{
+            job_id: 'batch-identical-translation',
+            type: 'batch_translate_sentences',
+            items: [
+              { job_id: 'sent-ok', translation: 'Espere.' },
+              { job_id: 'sent-identical', translation: 'まあ' },
+            ],
+          }],
+        }),
+      } as any);
+
+      const result = await AiJobService.processJobsBatch([job]);
+
+      expect(result.successCount).toBe(1);
+      expect(result.errorCount).toBe(0);
+      expect(SentenceRepository.update).toHaveBeenCalledWith(
+        'sent-ok',
+        expect.objectContaining({ portuguese: 'Espere.', translation_source: 'ai' }),
+      );
+      expect(SentenceRepository.update).not.toHaveBeenCalledWith(
+        'sent-identical',
+        expect.objectContaining({ portuguese: 'まあ' }),
+      );
+      expect(AiJobRepository.add).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'batch_translate_sentences',
+        input: expect.objectContaining({
+          items: [{ id: 'sent-identical', japanese: 'まあ' }],
+        }),
+      }));
     });
 
     it('splits failed batch items into smaller retry jobs', async () => {

@@ -48,6 +48,16 @@ function hasValidTranslation(sentence: any): boolean {
   );
 }
 
+function isSameAsJapanese(japanese: string | null | undefined, translation: string | null | undefined): boolean {
+  const rawJapanese = String(japanese || '').trim();
+  const rawTranslation = String(translation || '').trim();
+  return Boolean(
+    rawJapanese &&
+      rawTranslation &&
+      (rawJapanese === rawTranslation || makeJapaneseKey(rawJapanese) === makeJapaneseKey(rawTranslation)),
+  );
+}
+
 function isDictionaryUniqueKeyConflict(message: string): boolean {
   return message.includes('23505') ||
     message.includes('duplicate key') ||
@@ -359,7 +369,10 @@ export class AiJobService {
         }
         const sentence = await this.getSentenceForApply(sentenceId);
         if (!sentence || sentence.status === 'reviewed') continue;
-        if (sentence.japanese === item.translation) throw new Error('Tradução idêntica ao japonês.');
+        if (isSameAsJapanese(sentence.japanese, item.translation)) {
+          failed[sentenceId] = 'Tradução idêntica ao japonês. Use uma explicação em português quando não houver tradução direta.';
+          continue;
+        }
         await SentenceRepository.update(sentence.id, {
           portuguese: item.translation,
           status: sentence.kana && sentence.romaji ? 'reading_ready' : 'translated',
@@ -404,6 +417,9 @@ export class AiJobService {
       const sentence = await SentenceRepository.getById(job.target_id);
       if (!sentence || sentence.status === 'reviewed') return;
       if (!result.translation) throw new Error('Resultado inválido: tradução ausente.');
+      if (isSameAsJapanese(sentence.japanese, result.translation)) {
+        throw new Error('Tradução idêntica ao japonês. Use uma explicação em português quando não houver tradução direta.');
+      }
       await SentenceRepository.update(sentence.id, {
         portuguese: result.translation,
         status: sentence.kana && sentence.romaji ? 'reading_ready' : 'translated',

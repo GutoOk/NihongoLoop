@@ -22,7 +22,9 @@ export function buildSingleAiRequest(jobType: string, input: any): AiPromptReque
   if (jobType === "translate_sentence") {
     return withPolicy(jobType, promptVersion, {
       prompt: `Tarefa: traduzir uma frase japonesa para português brasileiro natural.
-Preserve sentido e tom. Retorne apenas o JSON do schema.
+Preserve sentido e tom. Nunca devolva o texto japonês como tradução.
+Se for nome, som, interjeição, partícula solta ou expressão sem equivalente direto, escreva uma equivalência ou explicação curta em português brasileiro.
+Retorne apenas o JSON do schema.
 
 Frase japonesa:
 ${JSON.stringify(input.sentence || "")}`,
@@ -59,7 +61,10 @@ export function buildBatchAiRequest(jobType: string, items: any[]): AiPromptRequ
     }));
     return withPolicy(jobType, promptVersion, {
       prompt: `Tarefa: traduzir cada frase japonesa para português brasileiro natural.
-Associe cada resultado ao mesmo id recebido em job_id. Não omita itens. Retorne apenas JSON.
+Associe cada resultado ao mesmo id recebido em job_id. Não omita itens.
+Nunca devolva o texto japonês como tradução.
+Se for nome, som, interjeição, partícula solta ou expressão sem equivalente direto, escreva uma equivalência ou explicação curta em português brasileiro.
+Retorne apenas JSON.
 
 Entrada:
 ${JSON.stringify(compactItems)}`,
