@@ -1,0 +1,22 @@
+# gcloudignore
+# Ignora arquivos locais desnecessários, mas mantém a pasta dist/
+node_modules/
+.git/
+.gemini/
+.vscode/
+src/
+tests/
+playwright-report/
+test-results/
+supabase/
+schema.sql
+README.md
+playwright.config.ts
+vitest.config.ts
+tsconfig.json
+vite.config.ts
+server.ts
+clean_service.yaml
+service.yaml
+.env
+.env.example

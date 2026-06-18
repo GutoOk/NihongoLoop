@@ -44,4 +44,5 @@ jobs:
 
       - name: Replace Cloud Run service configuration
         run: |
+          sed -i "s/GEMINI_API_KEY_PLACEHOLDER/${{ secrets.GEMINI_API_KEY }}/g" clean_service.yaml
           gcloud run services replace clean_service.yaml --project ${{ secrets.GCP_PROJECT_ID }}
