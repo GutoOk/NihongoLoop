@@ -415,9 +415,9 @@ export class SourcePreparationEngine {
       return !itemStatus.activeOrDone.has(key) && !itemStatus.error.has(key) && !itemStatus.stuck.has(key);
     });
 
-    const shouldPlanTranslation = diagnosis.sentences.withoutTranslation > 0;
-    const shouldPlanLexicalAnalysis = !shouldPlanTranslation && diagnosis.sentences.withoutValidLexicalAnalysis > 0;
-    const shouldPlanDictionary = !shouldPlanTranslation && !shouldPlanLexicalAnalysis;
+    const shouldPlanTranslation = translationTargets.length > 0;
+    const shouldPlanLexicalAnalysis = !shouldPlanTranslation && lexicalTargets.length > 0;
+    const shouldPlanDictionary = !shouldPlanTranslation && !shouldPlanLexicalAnalysis && dictionaryTargets.length > 0;
 
     const translation = this.createPlannedJobs(
       sourceId,

@@ -58,6 +58,16 @@ function isSameAsJapanese(japanese: string | null | undefined, translation: stri
   );
 }
 
+function makeFallbackPortugueseExplanation(japanese: string): string {
+  return `Expressao japonesa sem traducao literal direta: ${japanese}.`;
+}
+
+function normalizePortugueseTranslation(sentence: any, translation: string): string {
+  const cleanTranslation = String(translation || '').trim();
+  if (!isSameAsJapanese(sentence?.japanese, cleanTranslation)) return cleanTranslation;
+  return makeFallbackPortugueseExplanation(String(sentence?.japanese || '').trim());
+}
+
 function isDictionaryUniqueKeyConflict(message: string): boolean {
   return message.includes('23505') ||
     message.includes('duplicate key') ||
@@ -374,16 +384,13 @@ export class AiJobService {
         }
         const sentence = await this.getSentenceForApply(sentenceId);
         if (!sentence || sentence.status === 'reviewed') continue;
-        if (isSameAsJapanese(sentence.japanese, item.translation)) {
-          failed[sentenceId] = 'Tradução idêntica ao japonês. Use uma explicação em português quando não houver tradução direta.';
-          continue;
-        }
+        const translation = normalizePortugueseTranslation(sentence, item.translation);
         await SentenceRepository.update(sentence.id, {
-          portuguese: item.translation,
+          portuguese: translation,
           status: sentence.kana && sentence.romaji ? 'reading_ready' : 'translated',
           translation_source: 'ai',
         });
-        await this.propagateTranslationInsideSource(sentence, item.translation);
+        await this.propagateTranslationInsideSource(sentence, translation);
       }
       if (Object.keys(failed).length > 0) {
         result.failed_count = Object.keys(failed).length;
@@ -423,15 +430,13 @@ export class AiJobService {
       const sentence = await SentenceRepository.getById(sentenceId);
       if (!sentence || sentence.status === 'reviewed') return;
       if (!result.translation) throw new Error('Resultado inválido: tradução ausente.');
-      if (isSameAsJapanese(sentence.japanese, result.translation)) {
-        throw new Error('Tradução idêntica ao japonês. Use uma explicação em português quando não houver tradução direta.');
-      }
+      const translation = normalizePortugueseTranslation(sentence, result.translation);
       await SentenceRepository.update(sentence.id, {
-        portuguese: result.translation,
+        portuguese: translation,
         status: sentence.kana && sentence.romaji ? 'reading_ready' : 'translated',
         translation_source: 'ai',
       });
-      await this.propagateTranslationInsideSource(sentence, result.translation);
+      await this.propagateTranslationInsideSource(sentence, translation);
       return;
     }
 

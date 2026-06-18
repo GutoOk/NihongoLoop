@@ -295,6 +295,47 @@ describe('AiJobService', () => {
       );
     });
 
+    it('applies a Portuguese fallback when an individual translation equals the Japanese text', async () => {
+      const job = {
+        id: 'single-job',
+        user_id: 'user-123',
+        type: 'translate_sentence',
+        target_type: 'batch',
+        target_id: 'source-1',
+        status: 'pending',
+        attempts: 0,
+        input: { id: 'sent-identical', sentence: 'まあ', japanese: 'まあ' },
+      } as any;
+
+      vi.mocked(SentenceRepository.getById).mockResolvedValue({
+        id: 'sent-identical',
+        source_id: 'source-1',
+        japanese: 'まあ',
+        japanese_key: 'まあ',
+        portuguese: null,
+        status: 'raw',
+      } as any);
+      vi.mocked(fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({ result: { translation: 'まあ' } }),
+      } as any);
+
+      const result = await AiJobService.processJob(job);
+
+      expect(result.success).toBe(true);
+      expect(SentenceRepository.update).toHaveBeenCalledWith(
+        'sent-identical',
+        expect.objectContaining({
+          portuguese: 'Expressao japonesa sem traducao literal direta: まあ.',
+          translation_source: 'ai',
+        }),
+      );
+      expect(AiJobRepository.updateStatus).toHaveBeenCalledWith(
+        'single-job',
+        expect.objectContaining({ status: 'completed' }),
+      );
+    });
+
     it('copies an AI translation to repeated untranslated sentences inside the same source', async () => {
       const job = {
         id: 'batch-repeat',
@@ -354,7 +395,7 @@ describe('AiJobService', () => {
       );
     });
 
-    it('treats translation identical to Japanese as an item failure instead of failing the whole batch', async () => {
+    it('turns translation identical to Japanese into a short Portuguese explanation', async () => {
       const job = {
         id: 'batch-identical-translation',
         user_id: 'user-123',
@@ -397,19 +438,13 @@ describe('AiJobService', () => {
       expect(result.successCount).toBe(1);
       expect(result.errorCount).toBe(0);
       expect(SentenceRepository.update).toHaveBeenCalledWith(
-        'sent-ok',
-        expect.objectContaining({ portuguese: 'Espere.', translation_source: 'ai' }),
-      );
-      expect(SentenceRepository.update).not.toHaveBeenCalledWith(
         'sent-identical',
-        expect.objectContaining({ portuguese: 'まあ' }),
-      );
-      expect(AiJobRepository.add).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'batch_translate_sentences',
-        input: expect.objectContaining({
-          items: [{ id: 'sent-identical', japanese: 'まあ' }],
+        expect.objectContaining({
+          portuguese: 'Expressao japonesa sem traducao literal direta: まあ.',
+          translation_source: 'ai',
         }),
-      }));
+      );
+      expect(AiJobRepository.add).not.toHaveBeenCalled();
     });
 
     it('splits failed batch items into smaller retry jobs', async () => {

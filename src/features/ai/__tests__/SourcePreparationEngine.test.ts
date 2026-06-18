@@ -408,6 +408,70 @@ describe('SourcePreparationEngine', () => {
     expect(plan.jobs.translation.map((planned) => planned.input.id)).toEqual(['needs-translation']);
   });
 
+  it('continues planning later real gaps when translation targets are blocked by errors', async () => {
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
+      sentence({ id: 'translation-error-target', japanese: 'また', japanese_key: 'また', portuguese: null }),
+      sentence({ id: 'needs-analysis', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos.', kana: null, romaji: null }),
+    ]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sentence({ id: 'translation-error-target', japanese: 'また', japanese_key: 'また', portuguese: null }),
+      sentence({ id: 'needs-analysis', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos.', kana: null, romaji: null }),
+    ]);
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+      job({
+        id: 'errored-translation',
+        type: 'translate_sentence',
+        status: 'error',
+        input: { id: 'translation-error-target' },
+      }),
+    ]);
+
+    const plan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
+
+    expect(plan.totals.translationItems).toBe(0);
+    expect(plan.totals.lexicalAnalysisItems).toBe(1);
+    expect(plan.jobs.lexicalAnalysis.map((planned) => planned.input.id)).toEqual(['needs-analysis']);
+    expect(plan.blocked.errors).toHaveLength(1);
+  });
+
+  it('continues planning dictionary gaps when only earlier stage targets are blocked by errors', async () => {
+    vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
+      sentence({ id: 'translation-error-target', japanese: 'また', japanese_key: 'また', portuguese: null }),
+      sentence({ id: 'ready-sentence', portuguese: 'Pronto.', kana: 'いく', romaji: 'iku' }),
+    ]);
+    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+      sentence({ id: 'translation-error-target', japanese: 'また', japanese_key: 'また', portuguese: null }),
+      sentence({ id: 'ready-sentence', portuguese: 'Pronto.', kana: 'いく', romaji: 'iku' }),
+    ]);
+    vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([
+      {
+        id: 't1',
+        sentence_id: 'ready-sentence',
+        dictionary_entry_id: 'entry-incomplete',
+        form: { dictionary_entry_id: 'entry-incomplete' },
+      },
+    ] as any);
+    vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
+      entry({ id: 'entry-incomplete', kana: null, status: 'pending' }),
+    ]);
+    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+      job({
+        id: 'errored-translation',
+        type: 'translate_sentence',
+        status: 'error',
+        input: { id: 'translation-error-target' },
+      }),
+    ]);
+
+    const plan = await SourcePreparationEngine.buildPlan('source-1', {}, now);
+
+    expect(plan.totals.translationItems).toBe(0);
+    expect(plan.totals.lexicalAnalysisItems).toBe(0);
+    expect(plan.totals.dictionaryItems).toBe(1);
+    expect(plan.jobs.dictionary.map((planned) => planned.input.id)).toEqual(['entry-incomplete']);
+    expect(plan.blocked.errors).toHaveLength(1);
+  });
+
   it('does not let a completed analysis job block a sentence without valid lexical analysis', async () => {
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
       sentence({ id: 'needs-analysis', portuguese: 'Pronto.', kana: null, romaji: null }),
