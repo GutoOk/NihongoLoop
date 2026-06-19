@@ -137,7 +137,7 @@ export default function StandardWordsQuizScreen({
       let distPool = entries.map(getOptionText).filter(Boolean);
 
       try {
-        const allDict = await withTimeout(DictionaryRepository.getAll(), 3500);
+        const { entries: allDict } = await withTimeout(DictionaryRepository.getPage({ limit: 1000 }), 3500);
         const globalPool = allDict
           .map((d) => {
             const val = reverseMode ? d.lemma : d.main_meaning;

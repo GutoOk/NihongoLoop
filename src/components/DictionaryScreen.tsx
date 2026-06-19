@@ -15,14 +15,16 @@ import {
   TermRepository,
 } from "../repositories";
 import { DictionaryEntry, Source } from "../types";
-import { stableHash } from "../core/hash";
 import { useModal } from "./ModalProvider";
 import { GlobalAiQueueControl } from "./GlobalAiQueueControl";
+
+const PAGE_SIZE = 120;
 
 export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
   const [entries, setEntries] = useState<DictionaryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
   const [isQueuing, setIsQueuing] = useState(false);
   const [sourceFilter, setSourceFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -47,10 +49,11 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
 
   const loadEntries = async (silent = false) => {
     if (!silent) setLoading(true);
-    let data = await getEntriesForCurrentScope();
+    const scoped = await getEntriesForCurrentScope();
+    const data = scoped.entries;
 
-    const totalPending = data.filter(needsDictionaryEnrichment).length;
-    setPendingCount(totalPending);
+    setPendingCount(scoped.pendingCount);
+    setTotalCount(scoped.total);
 
     const availableTypes = Array.from(
       new Set(data.map((e) => e.type).filter(Boolean)),
@@ -62,17 +65,18 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
     setTypes(availableTypes.sort());
     setLevels(availableLevels.sort());
 
-    if (typeFilter !== "all") data = data.filter((e) => e.type === typeFilter);
-    if (levelFilter !== "all")
-      data = data.filter((e) => e.jlpt_level === levelFilter);
-
     setEntries(data);
     if (!silent) setLoading(false);
   };
 
   const getEntriesForCurrentScope = async () => {
-    let data = await DictionaryRepository.getAll();
-    if (sourceFilter === "all") return data;
+    if (sourceFilter === "all") {
+      const [{ entries: data, total }, pending] = await Promise.all([
+        DictionaryRepository.getPage({ offset: 0, limit: PAGE_SIZE, type: typeFilter, jlptLevel: levelFilter }),
+        DictionaryRepository.countPendingForEnrichment({ type: typeFilter, jlptLevel: levelFilter }),
+      ]);
+      return { entries: data, total, pendingCount: pending };
+    }
 
     const sentences = await SentenceRepository.getBySourceId(sourceFilter);
     const sentenceIds = sentences.map((s) => s.id);
@@ -80,7 +84,14 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
     const validEntryIds = new Set(
       terms.map((t) => t.dictionary_entry_id || t.form?.dictionary_entry_id).filter(Boolean),
     );
-    return data.filter((entry) => validEntryIds.has(entry.id));
+    let data = await DictionaryRepository.getByIds(Array.from(validEntryIds) as string[]);
+    if (typeFilter !== "all") data = data.filter((e) => e.type === typeFilter);
+    if (levelFilter !== "all") data = data.filter((e) => e.jlpt_level === levelFilter);
+    return {
+      entries: data.slice(0, PAGE_SIZE),
+      total: data.length,
+      pendingCount: data.filter(needsDictionaryEnrichment).length,
+    };
   };
 
   const needsDictionaryEnrichment = (entry: DictionaryEntry) => {
@@ -136,56 +147,18 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
       async () => {
         setIsQueuing(true);
         try {
-          const data = await getEntriesForCurrentScope();
-          const pendings = data.filter(needsDictionaryEnrichment);
-
-          const allJobs = await AiJobRepository.getAll();
-          const pendingDictItemIds = new Set<string>();
-          allJobs
-            .filter((job) =>
-              job.type === 'enrich_dictionary_entry' &&
-              ['pending', 'running', 'error'].includes(job.status)
-            )
-            .forEach(job => {
-            if (job?.input?.items) {
-               job.input.items.forEach((it: any) => pendingDictItemIds.add(it.id));
-            } else if (job?.input?.id) {
-               pendingDictItemIds.add(job.input.id);
-            }
-          });
-
-          const entriesToBatch = pendings.filter(e => !pendingDictItemIds.has(e.id));
+          const entriesToBatch = sourceFilter === "all"
+            ? await DictionaryRepository.getPendingForEnrichment({ limit: 1000, type: typeFilter, jlptLevel: levelFilter })
+            : (await getEntriesForCurrentScope()).entries.filter(needsDictionaryEnrichment);
 
           if (entriesToBatch.length === 0) {
             showAlert("Fila", "Todas as palavras desta fonte já estão agendadas.");
             return;
           }
 
-          const dictType = 'enrich_dictionary_entry';
+          const created = await AiJobRepository.enqueueDictionaryEnrichmentJobs(entriesToBatch.map((entry) => entry.id));
 
-          for (const entry of entriesToBatch) {
-             const input = {
-                id: entry.id,
-                entryId: entry.id,
-                lemma: entry.lemma,
-                mode: 'full',
-             };
-             const inputHash = await stableHash({ type: dictType, targetId: entry.id, input });
-             await AiJobRepository.add({
-                type: dictType,
-                user_id: "",
-                target_type: 'dictionary_entry',
-                target_id: entry.id,
-                input_hash: inputHash,
-                input,
-                status: 'pending',
-                priority: 2,
-                result: null,
-                error: null,
-             });
-          }
-
-          showAlert("Fila atualizada", `${entriesToBatch.length} tarefas individuais adicionadas.`);
+          showAlert("Fila atualizada", `${created} tarefa(s) individuais adicionadas ou reaproveitadas.`);
         } catch (e: any) {
           showAlert("Erro", `Falha ao adicionar na fila: ${e.message}`);
         } finally {
@@ -292,7 +265,7 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
             ))}
           </select>
           <span className="text-gray-400 font-bold whitespace-nowrap sm:text-right">
-            {entries.length} {entries.length === 1 ? "palavra" : "palavras"}
+            {entries.length} de {totalCount} {totalCount === 1 ? "palavra" : "palavras"}
           </span>
         </div>
       </header>

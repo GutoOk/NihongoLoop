@@ -188,24 +188,15 @@ async function ensureRunStage(
   client: SupabaseClient,
   params: { userId: string; runId: string; stage: string },
 ): Promise<string> {
-  const { data: existing, error: existingError } = await client
-    .from("processing_run_stages")
-    .select("id")
-    .eq("run_id", params.runId)
-    .eq("stage", params.stage)
-    .maybeSingle();
-  if (existingError) throw existingError;
-  if (existing?.id) return existing.id;
-
   const { data, error } = await client
     .from("processing_run_stages")
-    .insert({
+    .upsert({
       user_id: params.userId,
       run_id: params.runId,
       stage: params.stage,
       status: "running",
       started_at: new Date().toISOString(),
-    })
+    }, { onConflict: "run_id,stage" })
     .select("id")
     .single();
   if (error) throw error;
@@ -272,6 +263,11 @@ async function enqueueWorkerJobsBulk(
   return Number(data || 0);
 }
 
+async function refreshRunSnapshot(client: SupabaseClient, runId: string) {
+  const { error } = await client.rpc("refresh_processing_run_snapshot", { p_run_id: runId });
+  if (error) throw error;
+}
+
 async function maybeAdvanceRun(client: SupabaseClient, runId: string | null | undefined) {
   if (!runId) return;
 
@@ -323,11 +319,10 @@ async function maybeAdvanceRun(client: SupabaseClient, runId: string | null | un
     );
     const created = await enqueueWorkerJobsBulk(client, jobRows);
     await client.from("processing_run_stages").update({ status: "running", planned_jobs: created, started_at: new Date().toISOString() }).eq("id", stageId);
+    await refreshRunSnapshot(client, runId);
     await client.from("processing_runs").update({
       status: "running",
       current_step: `Traducao: ${created} job(s) individuais planejados pelo worker.`,
-      pending_jobs: created,
-      planned_jobs: created,
     }).eq("id", runId);
     return;
   }
@@ -360,11 +355,10 @@ async function maybeAdvanceRun(client: SupabaseClient, runId: string | null | un
     );
     const created = await enqueueWorkerJobsBulk(client, jobRows);
     await client.from("processing_run_stages").update({ status: "running", planned_jobs: created, started_at: new Date().toISOString() }).eq("id", stageId);
+    await refreshRunSnapshot(client, runId);
     await client.from("processing_runs").update({
       status: "running",
       current_step: `Leitura: ${created} job(s) individuais planejados pelo worker.`,
-      pending_jobs: created,
-      planned_jobs: created,
     }).eq("id", runId);
     return;
   }
@@ -401,11 +395,10 @@ async function maybeAdvanceRun(client: SupabaseClient, runId: string | null | un
     );
     const created = await enqueueWorkerJobsBulk(client, jobRows);
     await client.from("processing_run_stages").update({ status: "running", planned_jobs: created, started_at: new Date().toISOString() }).eq("id", stageId);
+    await refreshRunSnapshot(client, runId);
     await client.from("processing_runs").update({
       status: "running",
       current_step: `Analise lexical: ${created} job(s) individuais planejados pelo worker.`,
-      pending_jobs: created,
-      planned_jobs: created,
     }).eq("id", runId);
     return;
   }
@@ -453,11 +446,10 @@ async function maybeAdvanceRun(client: SupabaseClient, runId: string | null | un
       );
       const created = await enqueueWorkerJobsBulk(client, jobRows);
       await client.from("processing_run_stages").update({ status: "running", planned_jobs: created, started_at: new Date().toISOString() }).eq("id", stageId);
+      await refreshRunSnapshot(client, runId);
       await client.from("processing_runs").update({
         status: "running",
         current_step: `Dicionario: ${created} job(s) individuais planejados pelo worker.`,
-        pending_jobs: created,
-        planned_jobs: created,
       }).eq("id", runId);
       return;
     }
@@ -636,6 +628,56 @@ async function applyReadingResultRpc(
     p_worker_id: workerId,
     p_kana: kana,
     p_romaji: romaji,
+    p_result: result,
+    p_raw_result: rawResult,
+    p_input_tokens: meta.inputTokens ?? null,
+    p_output_tokens: meta.outputTokens ?? null,
+    p_cost_actual: meta.costActual ?? null,
+    p_latency_ai_ms: meta.latencyAiMs ?? null,
+  });
+  if (error) throw error;
+  return data;
+}
+
+async function applyLexicalResultRpc(
+  client: SupabaseClient,
+  jobId: string,
+  workerId: string,
+  analysis: { kana?: string; romaji?: string; terms?: unknown[] },
+  result: any,
+  rawResult: any,
+  meta: { inputTokens?: number | null; outputTokens?: number | null; latencyAiMs?: number | null; costActual?: number | null },
+) {
+  const { data, error } = await client.rpc("apply_sentence_lexical_analysis_result", {
+    p_job_id: jobId,
+    p_worker_id: workerId,
+    p_kana: analysis.kana ?? null,
+    p_romaji: analysis.romaji ?? null,
+    p_terms: Array.isArray(analysis.terms) ? analysis.terms : [],
+    p_result: result,
+    p_raw_result: rawResult,
+    p_input_tokens: meta.inputTokens ?? null,
+    p_output_tokens: meta.outputTokens ?? null,
+    p_cost_actual: meta.costActual ?? null,
+    p_latency_ai_ms: meta.latencyAiMs ?? null,
+  });
+  if (error) throw error;
+  return data;
+}
+
+async function applyDictionaryResultRpc(
+  client: SupabaseClient,
+  jobId: string,
+  workerId: string,
+  enrichment: any,
+  result: any,
+  rawResult: any,
+  meta: { inputTokens?: number | null; outputTokens?: number | null; latencyAiMs?: number | null; costActual?: number | null },
+) {
+  const { data, error } = await client.rpc("apply_dictionary_enrichment_result", {
+    p_job_id: jobId,
+    p_worker_id: workerId,
+    p_enrichment: enrichment,
     p_result: result,
     p_raw_result: rawResult,
     p_input_tokens: meta.inputTokens ?? null,
@@ -1395,15 +1437,14 @@ export async function processDetectSentenceTermsJob(
     throw new Error("Resultado invalido: lista de termos ausente.");
   }
 
-  await assertJobStillRunning(client, runningJob.id, workerId);
-  const persisted = await applySentenceTerms(client, sentence, data);
-  await completeJob(
+  await applyLexicalResultRpc(
     client,
     runningJob.id,
     workerId,
+    data,
     {
-      ...persisted,
       sentence_id: sentence.id,
+      termCount: Array.isArray(data.terms) ? data.terms.length : 0,
       ai_meta: {
         job_type: runningJob.type,
         prompt_version: request.promptVersion,
@@ -1444,12 +1485,9 @@ export async function processEnrichDictionaryEntryJob(
     await markObsolete(client, runningJob, "O lemma mudou depois da criacao do job.");
     return;
   }
-  if (await markObsoleteIfHashChanged(client, runningJob, {
-    id: entry.id,
-    entryId: entry.id,
-    lemma: entry.lemma,
-    sourceId: input.sourceId || null,
-  })) return;
+  const dictionaryHashPayload: Record<string, unknown> = { id: entry.id, entryId: entry.id, lemma: entry.lemma };
+  if (input.sourceId) dictionaryHashPayload.sourceId = input.sourceId;
+  if (await markObsoleteIfHashChanged(client, runningJob, dictionaryHashPayload)) return;
 
   if (entry.status === "reviewed" || (entry.status === "ai_enriched" && entry.main_meaning && entry.kana && entry.romaji && entry.type)) {
     await completeJob(
@@ -1475,14 +1513,13 @@ export async function processEnrichDictionaryEntryJob(
     temperature: request.temperature,
   });
 
-  await assertJobStillRunning(client, runningJob.id, workerId);
-  const persisted = await applyDictionaryEnrichment(client, entry, data);
-  await completeJob(
+  await applyDictionaryResultRpc(
     client,
     runningJob.id,
     workerId,
+    data,
     {
-      ...persisted,
+      entry_id: entry.id,
       ai_meta: {
         job_type: runningJob.type,
         prompt_version: request.promptVersion,

@@ -57,10 +57,11 @@ export default function SourcePreparationPanel({
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const [nextPlan, latestRun] = await Promise.all([
-        SourcePreparationEngine.buildPlan(sourceId, PLAN_OPTIONS),
-        showGlobal ? Promise.resolve(null) : ProcessingRunRepository.getLatestRunBySource(sourceId),
-      ]);
+      const latestRun = showGlobal ? null : await ProcessingRunRepository.getLatestRunBySource(sourceId);
+      const shouldRefreshPlan = !silent || !latestRun || !diagnosis || !plan;
+      const nextPlan = shouldRefreshPlan
+        ? await SourcePreparationEngine.buildPlan(sourceId, PLAN_OPTIONS)
+        : plan;
       const nextDiagnosis = nextPlan.diagnosis;
       const sourceJobs = showGlobal
         ? await AiJobRepository.getAll()

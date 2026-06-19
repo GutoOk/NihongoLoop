@@ -532,6 +532,21 @@ export class AiJobRepository {
     return data as unknown as AiJob | null;
   }
 
+  static async enqueueDictionaryEnrichmentJobs(entryIds: string[]): Promise<number> {
+    if (!isSupabaseConfigured || entryIds.length === 0) return 0;
+    const { data, error } = await supabase!.rpc('enqueue_dictionary_enrichment_jobs', {
+      p_entry_ids: entryIds,
+      p_user_id: getUserId(),
+      p_model: 'gemini-2.5-flash-lite',
+      p_prompt_version: 'dictionary-worker:2026-06-v1',
+    });
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao enfileirar enriquecimento de dicionario: ${error.message}`);
+    }
+    return Number(data || 0);
+  }
+
   static async resetFailedJobs(): Promise<boolean> {
     if (!isSupabaseConfigured) return false;
     const { error } = await supabase!.from('ai_jobs')

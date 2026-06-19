@@ -8,7 +8,8 @@ import { ProgressRepository, DictionaryRepository } from '../../repositories';
 vi.mock('../../repositories', () => ({
   DictionaryRepository: {
     getByIds: vi.fn(),
-    getAll: vi.fn()
+    getAll: vi.fn(),
+    getPage: vi.fn()
   },
   ProgressRepository: {
     updateDictionaryProgressLog: vi.fn().mockResolvedValue(true)
@@ -24,7 +25,7 @@ describe('StandardWordsQuizScreen', () => {
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
       { id: '1', main_meaning: 'Carro', lemma: '車' } as any
     ]);
-    vi.mocked(DictionaryRepository.getAll).mockResolvedValue([]);
+    vi.mocked(DictionaryRepository.getPage).mockResolvedValue({ entries: [], total: 0 } as any);
 
     render(<StandardWordsQuizScreen entryIds={['1']} onBack={() => {}} />);
     
@@ -44,9 +45,9 @@ describe('StandardWordsQuizScreen', () => {
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
       { id: '1', main_meaning: 'Carro', lemma: '車' } as any
     ]);
-    // Simulate a slow getAll
-    vi.mocked(DictionaryRepository.getAll).mockImplementation(() => 
-      new Promise(resolve => setTimeout(() => resolve([]), 5000))
+    // Simulate a slow global distractor page
+    vi.mocked(DictionaryRepository.getPage).mockImplementation(() =>
+      new Promise(resolve => setTimeout(() => resolve({ entries: [], total: 0 } as any), 5000))
     );
 
     render(<StandardWordsQuizScreen entryIds={['1']} onBack={() => {}} />);
@@ -60,7 +61,7 @@ describe('StandardWordsQuizScreen', () => {
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
       { id: '1', main_meaning: 'Carro', lemma: '車' } as any
     ]);
-    vi.mocked(DictionaryRepository.getAll).mockResolvedValue([]);
+    vi.mocked(DictionaryRepository.getPage).mockResolvedValue({ entries: [], total: 0 } as any);
 
     render(<StandardWordsQuizScreen entryIds={['1']} onBack={() => {}} />);
     
@@ -81,4 +82,3 @@ describe('StandardWordsQuizScreen', () => {
     });
   });
 });
-

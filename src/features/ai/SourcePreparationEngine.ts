@@ -123,7 +123,7 @@ type PreparationStage = PlannedPreparationJob['stage'];
 
 const JOB_TYPES = {
   translation: 'translate_sentence',
-  lexical_analysis: 'generate_sentence_reading',
+  lexical_analysis: 'detect_sentence_terms',
   dictionary: 'enrich_dictionary_entry',
 } as const satisfies Record<PreparationStage, AiJobType>;
 
@@ -176,7 +176,7 @@ function getInput(job: AiJob): any {
 }
 
 function canonicalJobType(type: string): string {
-  if (type === 'detect_sentence_terms') return JOB_TYPES.lexical_analysis;
+  if (type === 'generate_sentence_reading') return 'generate_sentence_reading';
   return type;
 }
 
@@ -198,8 +198,8 @@ function getJobHumanLabel(job: Pick<AiJob, 'type' | 'input'>): string {
   const input = getInput(job as AiJob);
   const count = Array.isArray(input.items) ? input.items.length : 1;
   if (job.type === JOB_TYPES.translation) return `Traduzir frases (${count})`;
-  if (job.type === JOB_TYPES.lexical_analysis) return `Gerar leitura (${count})`;
-  if (job.type === 'detect_sentence_terms') return `Detectar termos (${count})`;
+  if (job.type === 'generate_sentence_reading') return `Gerar leitura (${count})`;
+  if (job.type === JOB_TYPES.lexical_analysis) return `Detectar termos (${count})`;
   if (job.type === JOB_TYPES.dictionary) return `Completar dicionario (${count})`;
   return String(job.type);
 }

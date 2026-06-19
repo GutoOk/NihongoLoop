@@ -261,7 +261,7 @@ export default function StudyPlayerScreen({
     let loadedItems: StudyItem[] = [];
 
     if (config.entityType === "word") {
-      let entries = await DictionaryRepository.getAll();
+      let entries = (await DictionaryRepository.getPage({ limit: Math.min(Math.max(config.limit || 1000, 100), 1000) })).entries;
       let limitForWords = config.limit;
       if (config.targetType === "specific" && config.wordId) {
         entries = entries.filter((e) => e.id === config.wordId);
@@ -311,12 +311,12 @@ export default function StudyPlayerScreen({
                 await import("../services/termDetectionService");
               await TermDetectionService.detectWordsInSource(config.sourceId);
               terms = await TermRepository.getBySentences(sourceSentIds);
-              entries = await DictionaryRepository.getAll();
             }
 
             const validEntryIds = new Set(
               terms.map((t) => t.dictionary_entry_id).filter(Boolean),
             );
+            entries = await DictionaryRepository.getByIds(Array.from(validEntryIds) as string[]);
             entries = entries.filter((e) => validEntryIds.has(e.id));
           }
 
@@ -355,14 +355,12 @@ export default function StudyPlayerScreen({
               await import("../services/termDetectionService");
             await TermDetectionService.detectWordsInSentences(sourceSentIds);
             terms = await TermRepository.getBySentences(sourceSentIds);
-
-            // Because detection creates new pending entries, we need to refresh 'entries' from DB
-            entries = await DictionaryRepository.getAll();
           }
 
           const validEntryIds = new Set(
             terms.map((t) => t.dictionary_entry_id).filter(Boolean),
           );
+          entries = await DictionaryRepository.getByIds(Array.from(validEntryIds) as string[]);
           entries = entries.filter((e) => validEntryIds.has(e.id) && e.main_meaning);
           // Do not slice the resulting words by the sentence limit
           limitForWords = 9999;
@@ -425,7 +423,7 @@ export default function StudyPlayerScreen({
       ) {
         sents = await SentenceRepository.getBySourceId(config.sourceId);
       } else {
-        sents = await SentenceRepository.getAll();
+        sents = await SentenceRepository.getPage(0, Math.min(Math.max(config.limit || 100, 50), 500));
       }
 
       if (config.targetType === "favorites") {

@@ -5,18 +5,22 @@ import { chunkArray, getUserId, isE2EMockMode } from './utils';
 
 export class TermRepository {
   private static richSelect = `
-    *,
+    id,user_id,sentence_id,dictionary_form_id,dictionary_sense_id,surface,start_index,end_index,confidence,status,created_at,updated_at,
     form:dictionary_forms(
-      *,
-      entry:dictionary_entries(*)
+      id,user_id,dictionary_entry_id,form,kana,romaji,form_type,grammar_note,is_common,status,unique_key,created_at,updated_at,
+      entry:dictionary_entries(id,user_id,lemma,kana,romaji,type,jlpt_level,status,tags,unique_key,main_meaning,created_at,updated_at,subtype,components,grammar_info,short_note)
     ),
-    sense:dictionary_senses(*)
+    sense:dictionary_senses(id,user_id,dictionary_entry_id,meaning,meaning_type,explanation,example_japanese,example_portuguese,sense_order,status,created_at,updated_at)
   `;
 
   static async getAll(): Promise<SentenceTerm[]> {
     if (isE2EMockMode()) return defaultMockTerms;
     if (!isSupabaseConfigured) return [];
-    const { data } = await supabase!.from('sentence_terms').select('*').eq('user_id', getUserId());
+    const { data } = await supabase!
+      .from('sentence_terms')
+      .select('id,user_id,sentence_id,dictionary_form_id,dictionary_sense_id,surface,start_index,end_index,confidence,status,created_at,updated_at')
+      .eq('user_id', getUserId())
+      .limit(1000);
     return data || [];
   }
 

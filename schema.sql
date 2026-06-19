@@ -684,7 +684,14 @@ BEGIN
           'promptVersion', p_prompt_version,
           'model', p_model
         )::text, 'sha256'), 'hex') AS input_hash,
-        'translate_sentence:sentence:' || s.id AS job_key,
+        'translate_sentence:sentence:' || s.id || ':' || encode(digest(jsonb_build_object(
+          'type', 'translate_sentence',
+          'targetType', 'sentence',
+          'targetId', s.id,
+          'japanese', s.japanese,
+          'promptVersion', p_prompt_version,
+          'model', p_model
+        )::text, 'sha256'), 'hex') AS job_key,
         p_prompt_version AS prompt_version,
         p_model AS model_version,
         p_model AS model,
@@ -709,7 +716,7 @@ BEGIN
         200 AS priority,
         encode(digest(jsonb_build_object('targetType','sentence','targetId',s.id,'payload',jsonb_build_object('id',s.id,'sentence',s.japanese,'japanese',s.japanese,'portuguese',s.portuguese,'sourceId',p_source_id),'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS target_hash,
         encode(digest(jsonb_build_object('type','generate_sentence_reading','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS input_hash,
-        'generate_sentence_reading:sentence:' || s.id AS job_key,
+        'generate_sentence_reading:sentence:' || s.id || ':' || encode(digest(jsonb_build_object('type','generate_sentence_reading','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS job_key,
         p_prompt_version AS prompt_version,
         p_model AS model_version,
         p_model AS model,
@@ -734,7 +741,7 @@ BEGIN
         150 AS priority,
         encode(digest(jsonb_build_object('targetType','sentence','targetId',s.id,'payload',jsonb_build_object('id',s.id,'sentence',s.japanese,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'sourceId',p_source_id),'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS target_hash,
         encode(digest(jsonb_build_object('type','detect_sentence_terms','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS input_hash,
-        'detect_sentence_terms:sentence:' || s.id AS job_key,
+        'detect_sentence_terms:sentence:' || s.id || ':' || encode(digest(jsonb_build_object('type','detect_sentence_terms','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS job_key,
         p_prompt_version AS prompt_version,
         p_model AS model_version,
         p_model AS model,
@@ -764,6 +771,107 @@ BEGIN
   WHERE id = selected_run.id;
 
   RETURN jsonb_build_object('run_id', selected_run.id, 'stage_id', selected_stage_id, 'stage', selected_stage, 'created_jobs', created_count, 'status', CASE WHEN created_count = 0 THEN 'completed' ELSE 'running' END);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.enqueue_dictionary_enrichment_jobs(
+  p_entry_ids UUID[],
+  p_user_id TEXT,
+  p_model TEXT DEFAULT 'gemini-2.5-flash-lite',
+  p_prompt_version TEXT DEFAULT 'dictionary-worker:2026-06-v1'
+)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  job_rows JSONB;
+  created_count INTEGER := 0;
+BEGIN
+  IF p_entry_ids IS NULL OR array_length(p_entry_ids, 1) IS NULL THEN
+    RETURN 0;
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(row_to_json(job_payload)::jsonb), '[]'::jsonb) INTO job_rows
+  FROM (
+    WITH eligible AS (
+      SELECT
+        e.id,
+        e.user_id,
+        e.lemma,
+        e.kana,
+        e.romaji,
+        e.type,
+        e.main_meaning,
+        jsonb_build_object('id', e.id, 'entryId', e.id, 'lemma', e.lemma, 'kana', e.kana, 'romaji', e.romaji, 'type', e.type) AS payload
+      FROM dictionary_entries e
+      WHERE e.user_id = p_user_id
+        AND e.id = ANY(p_entry_ids)
+        AND e.status <> 'reviewed'
+        AND (e.main_meaning IS NULL OR e.kana IS NULL OR e.romaji IS NULL OR e.type IS NULL OR e.status = 'pending')
+    ),
+    hashed AS (
+      SELECT
+        *,
+        encode(digest(jsonb_build_object(
+          'targetType', 'dictionary_entry',
+          'targetId', id,
+          'payload', payload,
+          'promptVersion', p_prompt_version,
+          'model', p_model
+        )::text, 'sha256'), 'hex') AS target_hash
+      FROM eligible
+    ),
+    final_rows AS (
+      SELECT
+        user_id,
+        NULL::UUID AS run_id,
+        NULL::UUID AS stage_id,
+        'dictionary'::TEXT AS stage,
+        'enrich_dictionary_entry'::TEXT AS type,
+        'dictionary_entry'::TEXT AS target_type,
+        id AS target_id,
+        100 AS priority,
+        target_hash,
+        encode(digest(jsonb_build_object(
+          'type', 'enrich_dictionary_entry',
+          'targetType', 'dictionary_entry',
+          'targetId', id,
+          'lemma', lemma,
+          'kana', kana,
+          'romaji', romaji,
+          'entryType', type,
+          'mainMeaning', main_meaning,
+          'promptVersion', p_prompt_version,
+          'model', p_model
+        )::text, 'sha256'), 'hex') AS input_hash,
+        payload
+      FROM hashed
+    )
+    SELECT
+      user_id,
+      run_id,
+      stage_id,
+      stage,
+      type,
+      target_type,
+      target_id,
+      priority,
+      target_hash,
+      input_hash,
+      type || ':' || target_type || ':' || target_id || ':' || input_hash AS job_key,
+      p_prompt_version AS prompt_version,
+      p_model AS model_version,
+      p_model AS model,
+      payload,
+      payload AS input,
+      3 AS max_attempts
+    FROM final_rows
+  ) job_payload;
+
+  created_count := public.enqueue_ai_jobs_bulk(job_rows);
+  RETURN created_count;
 END;
 $$;
 
@@ -813,6 +921,33 @@ BEGIN
 
   GET DIAGNOSTICS updated_count = ROW_COUNT;
   RETURN updated_count > 0;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.refresh_processing_run_snapshot(p_run_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  IF p_run_id IS NULL THEN
+    RETURN;
+  END IF;
+
+  UPDATE processing_runs pr
+  SET
+    planned_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id), 0),
+    pending_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'pending'), 0),
+    processed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status IN ('completed','failed','needs_review','cancelled','obsolete')), 0),
+    completed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'completed'), 0),
+    retry_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'retry_wait'), 0),
+    review_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'needs_review'), 0),
+    cancelled_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'cancelled'), 0),
+    obsolete_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'obsolete'), 0),
+    failed_items = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'failed'), 0),
+    updated_at = NOW()
+  WHERE pr.id = p_run_id;
 END;
 $$;
 
@@ -872,8 +1007,9 @@ AS $$
 DECLARE
   current_attempt INTEGER;
   current_stage_id UUID;
+  current_run_id UUID;
 BEGIN
-  SELECT attempts, stage_id INTO current_attempt, current_stage_id
+  SELECT attempts, stage_id, run_id INTO current_attempt, current_stage_id, current_run_id
   FROM ai_jobs
   WHERE id = p_job_id
     AND worker_id = p_worker_id
@@ -933,6 +1069,8 @@ BEGIN
       END
     WHERE id = current_stage_id;
   END IF;
+
+  PERFORM refresh_processing_run_snapshot(current_run_id);
 END;
 $$;
 
@@ -1158,6 +1296,486 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.apply_sentence_lexical_analysis_result(
+  p_job_id UUID,
+  p_worker_id TEXT,
+  p_kana TEXT,
+  p_romaji TEXT,
+  p_terms JSONB,
+  p_result JSONB,
+  p_raw_result JSONB,
+  p_input_tokens INTEGER DEFAULT NULL,
+  p_output_tokens INTEGER DEFAULT NULL,
+  p_cost_actual NUMERIC DEFAULT NULL,
+  p_latency_ai_ms INTEGER DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_job ai_jobs;
+  current_sentence sentences;
+  normalized_kana TEXT;
+  normalized_romaji TEXT;
+  inserted_terms INTEGER := 0;
+  inserted_entries INTEGER := 0;
+  inserted_forms INTEGER := 0;
+  inserted_senses INTEGER := 0;
+BEGIN
+  SELECT * INTO current_job
+  FROM ai_jobs
+  WHERE id = p_job_id AND worker_id = p_worker_id AND status = 'running'
+  FOR UPDATE;
+
+  IF current_job.id IS NULL THEN
+    RAISE EXCEPTION 'Job % is not running for worker %', p_job_id, p_worker_id;
+  END IF;
+  IF current_job.cancel_requested THEN
+    RAISE EXCEPTION 'Job cancelado durante o processamento.';
+  END IF;
+
+  SELECT * INTO current_sentence
+  FROM sentences
+  WHERE id = current_job.target_id AND user_id = current_job.user_id
+  FOR UPDATE;
+
+  IF current_sentence.id IS NULL THEN
+    RAISE EXCEPTION 'Frase nao encontrada para analise lexical.';
+  END IF;
+  IF current_sentence.status = 'reviewed' THEN
+    PERFORM complete_ai_job(
+      p_job_id,
+      p_worker_id,
+      jsonb_build_object('optimization', 'already_reviewed', 'sentence_id', current_sentence.id),
+      p_raw_result,
+      p_input_tokens,
+      p_output_tokens,
+      p_cost_actual,
+      p_latency_ai_ms,
+      NULL
+    );
+    RETURN jsonb_build_object('skipped', 'reviewed', 'sentence_id', current_sentence.id);
+  END IF;
+  IF current_job.payload ? 'sentence' AND current_job.payload->>'sentence' <> current_sentence.japanese THEN
+    UPDATE ai_jobs
+    SET status = 'obsolete',
+        error = 'A frase mudou depois da criacao do job.',
+        error_code = 'OBSOLETE_INPUT',
+        error_kind = 'permanent',
+        locked_by = NULL,
+        locked_until = NULL,
+        lease_expires_at = NULL,
+        worker_id = NULL,
+        completed_at = NOW()
+    WHERE id = p_job_id;
+    RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
+  END IF;
+
+  normalized_kana := NULLIF(BTRIM(COALESCE(p_kana, current_sentence.kana, '')), '');
+  normalized_romaji := LOWER(REGEXP_REPLACE(BTRIM(COALESCE(p_romaji, current_sentence.romaji, '')), '[[:space:]]+', ' ', 'g'));
+
+  IF normalized_kana IS NOT NULL AND normalized_romaji IS NOT NULL AND normalized_romaji <> '' THEN
+    UPDATE sentences
+    SET kana = COALESCE(kana, normalized_kana),
+        romaji = COALESCE(romaji, normalized_romaji),
+        status = CASE WHEN portuguese IS NOT NULL THEN 'reading_ready' ELSE status END,
+        reading_source = COALESCE(reading_source, 'ai_worker'),
+        updated_at = NOW()
+    WHERE id = current_sentence.id AND user_id = current_sentence.user_id;
+  END IF;
+
+  DROP TABLE IF EXISTS tmp_lexical_terms;
+  CREATE TEMP TABLE tmp_lexical_terms ON COMMIT DROP AS
+  SELECT DISTINCT ON (surface, lemma, start_index, end_index)
+    BTRIM(surface) AS surface,
+    BTRIM(COALESCE(NULLIF(lemma, ''), surface)) AS lemma,
+    BTRIM(COALESCE(NULLIF(term_type, ''), NULLIF(type, ''), 'outro')) AS term_type,
+    NULLIF(BTRIM(COALESCE(entry_kana, kana, '')), '') AS entry_kana,
+    NULLIF(BTRIM(COALESCE(entry_romaji, romaji, '')), '') AS entry_romaji,
+    NULLIF(BTRIM(COALESCE(form_kana, kana, '')), '') AS form_kana,
+    NULLIF(BTRIM(COALESCE(form_romaji, romaji, '')), '') AS form_romaji,
+    BTRIM(COALESCE(NULLIF(form_type, ''), 'forma encontrada')) AS form_type,
+    NULLIF(BTRIM(COALESCE(grammar_note, '')), '') AS grammar_note,
+    NULLIF(BTRIM(COALESCE(meaning, context_meaning, '')), '') AS meaning,
+    start_index,
+    end_index,
+    COALESCE(confidence, 1) AS confidence,
+    LOWER(REGEXP_REPLACE(BTRIM(COALESCE(NULLIF(lemma, ''), surface)), '[[:space:]]+', '', 'g')) || '|' ||
+      LOWER(REGEXP_REPLACE(BTRIM(COALESCE(entry_kana, kana, '')), '[[:space:]]+', '', 'g')) || '|' ||
+      LOWER(REGEXP_REPLACE(BTRIM(COALESCE(NULLIF(term_type, ''), 'outro')), '[[:space:]]+', '', 'g')) AS entry_key
+  FROM jsonb_to_recordset(COALESCE(p_terms, '[]'::jsonb)) AS t(
+    surface TEXT,
+    lemma TEXT,
+    term_type TEXT,
+    type TEXT,
+    kana TEXT,
+    romaji TEXT,
+    entry_kana TEXT,
+    entry_romaji TEXT,
+    form_kana TEXT,
+    form_romaji TEXT,
+    form_type TEXT,
+    grammar_note TEXT,
+    meaning TEXT,
+    context_meaning TEXT,
+    start_index INTEGER,
+    end_index INTEGER,
+    confidence FLOAT
+  )
+  WHERE BTRIM(COALESCE(surface, '')) <> ''
+    AND start_index IS NOT NULL
+    AND end_index IS NOT NULL
+    AND end_index > start_index;
+
+  WITH entry_rows AS (
+    SELECT DISTINCT
+      current_sentence.user_id AS user_id,
+      lemma,
+      entry_kana AS kana,
+      entry_romaji AS romaji,
+      term_type AS type,
+      NULL::TEXT AS jlpt_level,
+      'pending'::TEXT AS status,
+      ARRAY[]::TEXT[] AS tags,
+      entry_key AS unique_key,
+      MIN(meaning) AS main_meaning,
+      NOW() AS updated_at
+    FROM tmp_lexical_terms
+    GROUP BY lemma, entry_kana, entry_romaji, term_type, entry_key
+  ),
+  inserted AS (
+    INSERT INTO dictionary_entries(user_id, lemma, kana, romaji, type, jlpt_level, status, tags, unique_key, main_meaning, updated_at)
+    SELECT user_id, lemma, kana, romaji, type, jlpt_level, status, tags, unique_key, main_meaning, updated_at
+    FROM entry_rows
+    ON CONFLICT (user_id, unique_key) DO UPDATE
+      SET main_meaning = COALESCE(dictionary_entries.main_meaning, EXCLUDED.main_meaning),
+          updated_at = NOW()
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO inserted_entries FROM inserted;
+
+  DROP TABLE IF EXISTS tmp_entries;
+  CREATE TEMP TABLE tmp_entries ON COMMIT DROP AS
+  SELECT d.id, d.unique_key
+  FROM dictionary_entries d
+  WHERE d.user_id = current_sentence.user_id
+    AND d.unique_key IN (SELECT entry_key FROM tmp_lexical_terms);
+
+  WITH form_rows AS (
+    SELECT DISTINCT
+      current_sentence.user_id AS user_id,
+      e.id AS dictionary_entry_id,
+      t.surface AS form,
+      t.form_kana AS kana,
+      t.form_romaji AS romaji,
+      t.form_type,
+      t.grammar_note,
+      (t.surface = t.lemma) AS is_common,
+      'detected'::TEXT AS status,
+      e.id::TEXT || '|' || LOWER(REGEXP_REPLACE(t.surface, '[[:space:]]+', '', 'g')) || '|' || LOWER(REGEXP_REPLACE(t.form_type, '[[:space:]]+', '', 'g')) AS unique_key,
+      NOW() AS updated_at
+    FROM tmp_lexical_terms t
+    JOIN tmp_entries e ON e.unique_key = t.entry_key
+  ),
+  inserted AS (
+    INSERT INTO dictionary_forms(user_id, dictionary_entry_id, form, kana, romaji, form_type, grammar_note, is_common, status, unique_key, updated_at)
+    SELECT user_id, dictionary_entry_id, form, kana, romaji, form_type, grammar_note, is_common, status, unique_key, updated_at
+    FROM form_rows
+    ON CONFLICT (user_id, unique_key) DO UPDATE
+      SET kana = COALESCE(dictionary_forms.kana, EXCLUDED.kana),
+          romaji = COALESCE(dictionary_forms.romaji, EXCLUDED.romaji),
+          grammar_note = COALESCE(dictionary_forms.grammar_note, EXCLUDED.grammar_note),
+          updated_at = NOW()
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO inserted_forms FROM inserted;
+
+  DROP TABLE IF EXISTS tmp_forms;
+  CREATE TEMP TABLE tmp_forms ON COMMIT DROP AS
+  SELECT f.id, f.dictionary_entry_id, f.form, f.unique_key
+  FROM dictionary_forms f
+  WHERE f.user_id = current_sentence.user_id
+    AND f.unique_key IN (
+      SELECT e.id::TEXT || '|' || LOWER(REGEXP_REPLACE(t.surface, '[[:space:]]+', '', 'g')) || '|' || LOWER(REGEXP_REPLACE(t.form_type, '[[:space:]]+', '', 'g'))
+      FROM tmp_lexical_terms t
+      JOIN tmp_entries e ON e.unique_key = t.entry_key
+    );
+
+  WITH sense_rows AS (
+    SELECT DISTINCT
+      current_sentence.user_id AS user_id,
+      e.id AS dictionary_entry_id,
+      t.meaning,
+      'contextual'::TEXT AS meaning_type,
+      NULL::TEXT AS explanation,
+      1 AS sense_order,
+      'ai_generated'::TEXT AS status,
+      NOW() AS updated_at
+    FROM tmp_lexical_terms t
+    JOIN tmp_entries e ON e.unique_key = t.entry_key
+    WHERE t.meaning IS NOT NULL
+  ),
+  inserted AS (
+    INSERT INTO dictionary_senses(user_id, dictionary_entry_id, meaning, meaning_type, explanation, sense_order, status, updated_at)
+    SELECT user_id, dictionary_entry_id, meaning, meaning_type, explanation, sense_order, status, updated_at
+    FROM sense_rows
+    ON CONFLICT (user_id, dictionary_entry_id, meaning) DO UPDATE
+      SET updated_at = NOW()
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO inserted_senses FROM inserted;
+
+  DELETE FROM sentence_terms
+  WHERE sentence_id = current_sentence.id AND user_id = current_sentence.user_id;
+
+  WITH term_rows AS (
+    SELECT
+      current_sentence.user_id AS user_id,
+      current_sentence.id AS sentence_id,
+      f.id AS dictionary_form_id,
+      ds.id AS dictionary_sense_id,
+      t.surface,
+      t.start_index,
+      t.end_index,
+      t.confidence,
+      'detected'::TEXT AS status,
+      NOW() AS updated_at
+    FROM tmp_lexical_terms t
+    JOIN tmp_entries e ON e.unique_key = t.entry_key
+    JOIN tmp_forms f ON f.dictionary_entry_id = e.id AND f.form = t.surface
+    LEFT JOIN dictionary_senses ds
+      ON ds.user_id = current_sentence.user_id
+      AND ds.dictionary_entry_id = e.id
+      AND ds.meaning = t.meaning
+  ),
+  inserted AS (
+    INSERT INTO sentence_terms(user_id, sentence_id, dictionary_form_id, dictionary_sense_id, surface, start_index, end_index, confidence, status, updated_at)
+    SELECT user_id, sentence_id, dictionary_form_id, dictionary_sense_id, surface, start_index, end_index, confidence, status, updated_at
+    FROM term_rows
+    ON CONFLICT (sentence_id, start_index, end_index, dictionary_form_id) DO UPDATE
+      SET dictionary_sense_id = EXCLUDED.dictionary_sense_id,
+          confidence = EXCLUDED.confidence,
+          status = EXCLUDED.status,
+          updated_at = NOW()
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO inserted_terms FROM inserted;
+
+  UPDATE sentences
+  SET terms_source = CASE WHEN inserted_terms > 0 THEN 'ai' ELSE 'ai_empty' END,
+      updated_at = NOW()
+  WHERE id = current_sentence.id AND user_id = current_sentence.user_id AND status <> 'reviewed';
+
+  PERFORM complete_ai_job(
+    p_job_id,
+    p_worker_id,
+    COALESCE(p_result, '{}'::jsonb) || jsonb_build_object(
+      'sentence_id', current_sentence.id,
+      'termCount', inserted_terms,
+      'entryCount', inserted_entries,
+      'formCount', inserted_forms,
+      'senseCount', inserted_senses
+    ),
+    p_raw_result,
+    p_input_tokens,
+    p_output_tokens,
+    p_cost_actual,
+    p_latency_ai_ms,
+    NULL
+  );
+
+  RETURN jsonb_build_object(
+    'sentence_id', current_sentence.id,
+    'termCount', inserted_terms,
+    'entryCount', inserted_entries,
+    'formCount', inserted_forms,
+    'senseCount', inserted_senses
+  );
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.apply_dictionary_enrichment_result(
+  p_job_id UUID,
+  p_worker_id TEXT,
+  p_enrichment JSONB,
+  p_result JSONB,
+  p_raw_result JSONB,
+  p_input_tokens INTEGER DEFAULT NULL,
+  p_output_tokens INTEGER DEFAULT NULL,
+  p_cost_actual NUMERIC DEFAULT NULL,
+  p_latency_ai_ms INTEGER DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_job ai_jobs;
+  current_entry dictionary_entries;
+  v_main_meaning TEXT;
+  v_final_type TEXT;
+  v_final_kana TEXT;
+  v_final_romaji TEXT;
+  v_final_unique_key TEXT;
+  meaning_count INTEGER := 0;
+BEGIN
+  SELECT * INTO current_job
+  FROM ai_jobs
+  WHERE id = p_job_id AND worker_id = p_worker_id AND status = 'running'
+  FOR UPDATE;
+
+  IF current_job.id IS NULL THEN
+    RAISE EXCEPTION 'Job % is not running for worker %', p_job_id, p_worker_id;
+  END IF;
+  IF current_job.cancel_requested THEN
+    RAISE EXCEPTION 'Job cancelado durante o processamento.';
+  END IF;
+
+  SELECT * INTO current_entry
+  FROM dictionary_entries
+  WHERE id = current_job.target_id AND user_id = current_job.user_id
+  FOR UPDATE;
+
+  IF current_entry.id IS NULL THEN
+    RAISE EXCEPTION 'Verbete nao encontrado para enriquecimento.';
+  END IF;
+  IF current_entry.status = 'reviewed' THEN
+    PERFORM complete_ai_job(
+      p_job_id,
+      p_worker_id,
+      jsonb_build_object('optimization', 'already_reviewed', 'entry_id', current_entry.id),
+      p_raw_result,
+      p_input_tokens,
+      p_output_tokens,
+      p_cost_actual,
+      p_latency_ai_ms,
+      NULL
+    );
+    RETURN jsonb_build_object('skipped', 'reviewed', 'entry_id', current_entry.id);
+  END IF;
+  IF current_job.payload ? 'lemma' AND current_job.payload->>'lemma' <> current_entry.lemma THEN
+    UPDATE ai_jobs
+    SET status = 'obsolete',
+        error = 'O lemma mudou depois da criacao do job.',
+        error_code = 'OBSOLETE_INPUT',
+        error_kind = 'permanent',
+        locked_by = NULL,
+        locked_until = NULL,
+        lease_expires_at = NULL,
+        worker_id = NULL,
+        completed_at = NOW()
+    WHERE id = p_job_id;
+    RETURN jsonb_build_object('obsolete', true, 'entry_id', current_entry.id);
+  END IF;
+
+  v_main_meaning := COALESCE(
+    NULLIF(current_entry.main_meaning, ''),
+    NULLIF(p_enrichment->>'main_meaning', ''),
+    NULLIF(p_enrichment->>'meaning', ''),
+    NULLIF(p_enrichment #>> '{meanings,0}', '')
+  );
+  v_final_type := COALESCE(NULLIF(current_entry.type, ''), NULLIF(p_enrichment->>'type', ''), 'outro');
+  v_final_kana := COALESCE(NULLIF(current_entry.kana, ''), NULLIF(p_enrichment->>'kana', ''));
+  v_final_romaji := COALESCE(NULLIF(current_entry.romaji, ''), NULLIF(p_enrichment->>'romaji', ''));
+
+  IF v_main_meaning IS NULL OR v_final_type IS NULL OR v_final_kana IS NULL OR v_final_romaji IS NULL THEN
+    RAISE EXCEPTION 'Resultado invalido: significado, tipo, kana ou romaji ausente.';
+  END IF;
+
+  v_final_unique_key :=
+    LOWER(REGEXP_REPLACE(current_entry.lemma, '[[:space:]]+', '', 'g')) || '|' ||
+    LOWER(REGEXP_REPLACE(v_final_kana, '[[:space:]]+', '', 'g')) || '|' ||
+    LOWER(REGEXP_REPLACE(v_final_type, '[[:space:]]+', '', 'g'));
+
+  UPDATE dictionary_entries
+  SET main_meaning = v_main_meaning,
+      type = v_final_type,
+      kana = v_final_kana,
+      romaji = v_final_romaji,
+      jlpt_level = COALESCE(dictionary_entries.jlpt_level, NULLIF(p_enrichment->>'jlpt_level', '')),
+      tags = CASE
+        WHEN array_length(dictionary_entries.tags, 1) IS NULL AND jsonb_typeof(p_enrichment->'tags') = 'array'
+        THEN ARRAY(SELECT jsonb_array_elements_text(p_enrichment->'tags'))
+        ELSE dictionary_entries.tags
+      END,
+      subtype = COALESCE(dictionary_entries.subtype, NULLIF(p_enrichment->>'subtype', '')),
+      components = COALESCE(dictionary_entries.components, p_enrichment->'components'),
+      grammar_info = COALESCE(dictionary_entries.grammar_info, NULLIF(p_enrichment->>'grammar_info', '')),
+      short_note = COALESCE(dictionary_entries.short_note, NULLIF(p_enrichment->>'short_note', '')),
+      status = 'ai_enriched',
+      unique_key = CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM dictionary_entries existing
+          WHERE existing.user_id = current_entry.user_id
+            AND existing.unique_key = v_final_unique_key
+            AND existing.id <> current_entry.id
+        )
+        THEN dictionary_entries.unique_key
+        ELSE v_final_unique_key
+      END,
+      updated_at = NOW()
+  WHERE id = current_entry.id AND user_id = current_entry.user_id;
+
+  WITH meanings AS (
+    SELECT DISTINCT NULLIF(BTRIM(value), '') AS meaning, row_number() OVER () AS sense_order
+    FROM jsonb_array_elements_text(
+      CASE WHEN jsonb_typeof(p_enrichment->'meanings') = 'array'
+        THEN p_enrichment->'meanings'
+        ELSE jsonb_build_array(v_main_meaning)
+      END
+    ) AS value
+  ),
+  inserted AS (
+    INSERT INTO dictionary_senses(user_id, dictionary_entry_id, meaning, meaning_type, sense_order, status, updated_at)
+    SELECT current_entry.user_id, current_entry.id, meaning, CASE WHEN sense_order = 1 THEN 'principal' ELSE 'variacao' END, sense_order, 'ai_generated', NOW()
+    FROM meanings
+    WHERE meaning IS NOT NULL
+    ON CONFLICT (user_id, dictionary_entry_id, meaning) DO UPDATE
+      SET sense_order = EXCLUDED.sense_order,
+          updated_at = NOW()
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO meaning_count FROM inserted;
+
+  INSERT INTO dictionary_forms(user_id, dictionary_entry_id, form, kana, romaji, form_type, is_common, status, unique_key, updated_at)
+  VALUES (
+    current_entry.user_id,
+    current_entry.id,
+    current_entry.lemma,
+    v_final_kana,
+    v_final_romaji,
+    'forma de dicionario',
+    TRUE,
+    'ai_resolved',
+    current_entry.id::TEXT || '|' || LOWER(REGEXP_REPLACE(current_entry.lemma, '[[:space:]]+', '', 'g')) || '|formadedicionario',
+    NOW()
+  )
+  ON CONFLICT (user_id, unique_key) DO UPDATE
+    SET kana = EXCLUDED.kana,
+        romaji = EXCLUDED.romaji,
+        status = EXCLUDED.status,
+        updated_at = NOW();
+
+  PERFORM complete_ai_job(
+    p_job_id,
+    p_worker_id,
+    COALESCE(p_result, '{}'::jsonb) || jsonb_build_object('entry_id', current_entry.id, 'senseCount', meaning_count),
+    p_raw_result,
+    p_input_tokens,
+    p_output_tokens,
+    p_cost_actual,
+    p_latency_ai_ms,
+    NULL
+  );
+
+  RETURN jsonb_build_object('entry_id', current_entry.id, 'senseCount', meaning_count);
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.fail_ai_job_for_retry(
   p_job_id UUID,
   p_worker_id TEXT,
@@ -1177,8 +1795,9 @@ DECLARE
   next_retry TIMESTAMPTZ;
   terminal_status TEXT;
   current_stage_id UUID;
+  current_run_id UUID;
 BEGIN
-  SELECT attempts, max_attempts, stage_id INTO current_attempt, max_attempt_count, current_stage_id
+  SELECT attempts, max_attempts, stage_id, run_id INTO current_attempt, max_attempt_count, current_stage_id, current_run_id
   FROM ai_jobs
   WHERE id = p_job_id AND worker_id = p_worker_id AND status = 'running'
   FOR UPDATE;
@@ -1239,6 +1858,8 @@ BEGIN
       END
     WHERE id = current_stage_id;
   END IF;
+
+  PERFORM refresh_processing_run_snapshot(current_run_id);
 END;
 $$;
 
@@ -1287,24 +1908,32 @@ REVOKE ALL ON FUNCTION public.get_ai_queue_health() FROM public;
 REVOKE ALL ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID) FROM public;
 REVOKE ALL ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) FROM public;
 REVOKE ALL ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.refresh_processing_run_snapshot(UUID) FROM public;
 REVOKE ALL ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.complete_ai_job(UUID, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.apply_sentence_translation_result(UUID, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.apply_sentence_reading_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.apply_dictionary_enrichment_result(UUID, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM public;
 REVOKE ALL ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) FROM public;
 GRANT EXECUTE ON FUNCTION public.get_ai_queue_health() TO service_role;
 GRANT EXECUTE ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID) TO service_role;
 GRANT EXECUTE ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.refresh_processing_run_snapshot(UUID) TO service_role;
 GRANT EXECUTE ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.complete_ai_job(UUID, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.apply_sentence_translation_result(UUID, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.apply_sentence_reading_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.apply_dictionary_enrichment_result(UUID, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) TO service_role;
 GRANT EXECUTE ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) TO service_role;
 
@@ -1368,5 +1997,8 @@ CREATE INDEX idx_ai_jobs_stage_status ON ai_jobs(stage_id, status, type, created
 CREATE INDEX idx_ai_jobs_expired_lease ON ai_jobs(status, lease_expires_at)
   WHERE status IN ('claimed','running') AND lease_expires_at IS NOT NULL;
 CREATE INDEX idx_ai_jobs_target ON ai_jobs(user_id, target_type, target_id, type, status);
+CREATE UNIQUE INDEX idx_ai_jobs_active_input_unique
+  ON ai_jobs(user_id, type, target_type, target_id, input_hash)
+  WHERE status IN ('pending','claimed','running','retry_wait','needs_review');
 CREATE INDEX idx_ai_job_attempts_job ON ai_job_attempts(job_id, attempt_number);
 CREATE INDEX idx_study_session_items_session ON study_session_items(study_session_id, order_index);

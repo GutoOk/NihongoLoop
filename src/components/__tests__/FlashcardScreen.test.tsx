@@ -7,7 +7,8 @@ import { ModalProvider } from '../ModalProvider';
 
 vi.mock('../../repositories', () => ({
   DictionaryRepository: {
-    getAll: vi.fn()
+    getAll: vi.fn(),
+    getPage: vi.fn()
   },
   ProgressRepository: {
     getAllDictionaryProgress: vi.fn().mockResolvedValue([]),
@@ -39,7 +40,7 @@ describe('FlashcardScreen', () => {
   ];
 
   it('filters by jlpt level', async () => {
-    vi.mocked(DictionaryRepository.getAll).mockResolvedValue(mockDictionary as any);
+    vi.mocked(DictionaryRepository.getPage).mockResolvedValue({ entries: mockDictionary, total: mockDictionary.length } as any);
 
     // Render with initially JLPT N5 selected
     render(
@@ -55,11 +56,10 @@ describe('FlashcardScreen', () => {
   });
 
   it('filters globally by sourceId correctly', async () => {
-    vi.mocked(DictionaryRepository.getAll).mockResolvedValue(mockDictionary as any);
+    vi.mocked(DictionaryRepository.getPage).mockResolvedValue({ entries: mockDictionary, total: mockDictionary.length } as any);
     
     // Simulating terms returned for a specific source
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([{ id: 'sent-1' }] as any[]);
     vi.mocked(TermRepository.getBySentences).mockResolvedValue([{ dictionary_entry_id: '1' }] as any[]);
   });
 });
-

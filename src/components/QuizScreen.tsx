@@ -53,7 +53,7 @@ export default function QuizScreen({ onBack }: QuizScreenProps) {
   }, []);
 
   const loadData = async () => {
-    const d = await DictionaryRepository.getAll();
+    const { entries: d } = await DictionaryRepository.getPage({ limit: 1000 });
     setDictionary(d);
     setTypes(
       Array.from(new Set(d.map((e) => e.type).filter(Boolean))) as string[],

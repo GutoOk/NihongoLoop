@@ -4,6 +4,15 @@ import { defaultMockDict } from './mockData';
 import { TermRepository } from './termRepository';
 import { chunkArray, getUserId, isE2EMockMode, normalizeTagsForUpdate } from './utils';
 
+const DICTIONARY_ENTRY_SELECT = 'id,user_id,lemma,kana,romaji,type,jlpt_level,status,tags,unique_key,main_meaning,created_at,updated_at,subtype,components,grammar_info,short_note';
+
+export interface DictionaryPageOptions {
+  offset?: number;
+  limit?: number;
+  type?: string;
+  jlptLevel?: string;
+}
+
 export function normalizeDictionaryKey(value: string | null | undefined): string {
   return String(value || '').trim().replace(/\s+/g, '').toLowerCase();
 }
@@ -21,6 +30,76 @@ function minIsoDate(...values: Array<string | null | undefined>): string | null 
 }
 
 export class DictionaryRepository {
+  static async getPage(options: DictionaryPageOptions = {}): Promise<{ entries: DictionaryEntry[]; total: number }> {
+    const offset = Math.max(0, options.offset || 0);
+    const limit = Math.max(1, Math.min(options.limit || 120, 200));
+    if (isE2EMockMode()) {
+      let entries = defaultMockDict;
+      if (options.type && options.type !== 'all') entries = entries.filter((entry) => entry.type === options.type);
+      if (options.jlptLevel && options.jlptLevel !== 'all') entries = entries.filter((entry) => entry.jlpt_level === options.jlptLevel);
+      return { entries: entries.slice(offset, offset + limit), total: entries.length };
+    }
+    if (!isSupabaseConfigured) return { entries: [], total: 0 };
+
+    let query = supabase!
+      .from('dictionary_entries')
+      .select(DICTIONARY_ENTRY_SELECT, { count: 'exact' })
+      .eq('user_id', getUserId())
+      .order('updated_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (options.type && options.type !== 'all') query = query.eq('type', options.type);
+    if (options.jlptLevel && options.jlptLevel !== 'all') query = query.eq('jlpt_level', options.jlptLevel);
+
+    const { data, count, error } = await query;
+    if (error) throw new Error(`Erro do Supabase ao carregar pagina do dicionario: ${error.message}`);
+    return { entries: (data || []) as DictionaryEntry[], total: count || 0 };
+  }
+
+  static async getPendingForEnrichment(options: DictionaryPageOptions = {}): Promise<DictionaryEntry[]> {
+    if (isE2EMockMode()) return defaultMockDict.filter((entry) => this.needsEnrichment(entry)).slice(0, options.limit || 1000);
+    if (!isSupabaseConfigured) return [];
+    const limit = Math.max(1, Math.min(options.limit || 1000, 1000));
+    let query = supabase!
+      .from('dictionary_entries')
+      .select(DICTIONARY_ENTRY_SELECT)
+      .eq('user_id', getUserId())
+      .neq('status', 'reviewed')
+      .or('status.eq.pending,main_meaning.is.null,kana.is.null,romaji.is.null,type.is.null')
+      .order('updated_at', { ascending: false })
+      .limit(limit);
+    if (options.type && options.type !== 'all') query = query.eq('type', options.type);
+    if (options.jlptLevel && options.jlptLevel !== 'all') query = query.eq('jlpt_level', options.jlptLevel);
+    const { data, error } = await query;
+    if (error) throw new Error(`Erro do Supabase ao carregar pendencias do dicionario: ${error.message}`);
+    return (data || []) as DictionaryEntry[];
+  }
+
+  static async countPendingForEnrichment(options: Pick<DictionaryPageOptions, 'type' | 'jlptLevel'> = {}): Promise<number> {
+    if (isE2EMockMode()) return defaultMockDict.filter((entry) => this.needsEnrichment(entry)).length;
+    if (!isSupabaseConfigured) return 0;
+    let query = supabase!
+      .from('dictionary_entries')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', getUserId())
+      .neq('status', 'reviewed')
+      .or('status.eq.pending,main_meaning.is.null,kana.is.null,romaji.is.null,type.is.null');
+    if (options.type && options.type !== 'all') query = query.eq('type', options.type);
+    if (options.jlptLevel && options.jlptLevel !== 'all') query = query.eq('jlpt_level', options.jlptLevel);
+    const { count, error } = await query;
+    if (error) throw new Error(`Erro do Supabase ao contar pendencias do dicionario: ${error.message}`);
+    return count || 0;
+  }
+
+  static needsEnrichment(entry: DictionaryEntry): boolean {
+    return (
+      entry.status === 'pending' ||
+      !entry.main_meaning ||
+      !entry.kana ||
+      !entry.romaji ||
+      !entry.type
+    );
+  }
+
   static async getAll(): Promise<DictionaryEntry[]> {
     if (isE2EMockMode()) return defaultMockDict;
     if (!isSupabaseConfigured) return [];
@@ -33,7 +112,7 @@ export class DictionaryRepository {
     while (hasMore) {
       const { data, error } = await supabase!
         .from('dictionary_entries')
-        .select('*')
+        .select(DICTIONARY_ENTRY_SELECT)
         .eq('user_id', getUserId())
         .order('id')
         .range(offset, offset + limit - 1);
@@ -68,7 +147,7 @@ export class DictionaryRepository {
   static async getById(id: string): Promise<DictionaryEntry | null> {
     if (isE2EMockMode()) return defaultMockDict.find((entry) => entry.id === id) || null;
     if (!isSupabaseConfigured) return null;
-    const { data } = await supabase!.from('dictionary_entries').select('*').eq('id', id).eq('user_id', getUserId()).maybeSingle();
+    const { data } = await supabase!.from('dictionary_entries').select(DICTIONARY_ENTRY_SELECT).eq('id', id).eq('user_id', getUserId()).maybeSingle();
     return data || null;
   }
 
@@ -77,7 +156,7 @@ export class DictionaryRepository {
     if (!isSupabaseConfigured || ids.length === 0) return [];
     let allData: DictionaryEntry[] = [];
     for (const chunk of chunkArray(ids, 100)) {
-      const { data, error } = await supabase!.from('dictionary_entries').select('*').in('id', chunk).eq('user_id', getUserId());
+      const { data, error } = await supabase!.from('dictionary_entries').select(DICTIONARY_ENTRY_SELECT).in('id', chunk).eq('user_id', getUserId());
       if (error) {
         console.error(error);
         throw new Error(`Erro do Supabase ao carregar verbetes de dicionario: ${error.message}`);
@@ -89,13 +168,13 @@ export class DictionaryRepository {
 
   static async getByUniqueKey(uniqueKey: string): Promise<DictionaryEntry | null> {
     if (!isSupabaseConfigured) return null;
-    const { data } = await supabase!.from('dictionary_entries').select('*').eq('unique_key', uniqueKey).eq('user_id', getUserId()).maybeSingle();
+    const { data } = await supabase!.from('dictionary_entries').select(DICTIONARY_ENTRY_SELECT).eq('unique_key', uniqueKey).eq('user_id', getUserId()).maybeSingle();
     return data || null;
   }
 
   static async getByLemma(lemma: string): Promise<DictionaryEntry[]> {
     if (!isSupabaseConfigured) return [];
-    const { data } = await supabase!.from('dictionary_entries').select('*').eq('lemma', lemma).eq('user_id', getUserId());
+    const { data } = await supabase!.from('dictionary_entries').select(DICTIONARY_ENTRY_SELECT).eq('lemma', lemma).eq('user_id', getUserId());
     return data || [];
   }
 
@@ -129,7 +208,7 @@ export class DictionaryRepository {
     const keys = enriched.map(e => e.unique_key as string).filter(Boolean);
     const { data, error: fetchError } = await supabase!
       .from('dictionary_entries')
-      .select('*')
+      .select(DICTIONARY_ENTRY_SELECT)
       .eq('user_id', getUserId())
       .in('unique_key', keys);
 
@@ -211,7 +290,7 @@ export class DictionaryRepository {
     const userId = getUserId();
     const { data, error } = await supabase!
       .from('dictionary_progress')
-      .select('*')
+      .select('id,user_id,dictionary_entry_id,seen_count,correct_count,wrong_count,last_seen_at,mastery,favorite,difficulty,suspended,notes,srs_interval_minutes,srs_ease_factor,due_at,created_at,updated_at')
       .in('dictionary_entry_id', [duplicateId, primaryId])
       .eq('user_id', userId);
     if (error) throw new Error(`Erro do Supabase ao carregar progresso de dicionario: ${error.message}`);

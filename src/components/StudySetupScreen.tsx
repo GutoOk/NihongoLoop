@@ -33,7 +33,7 @@ export default function StudySetupScreen({
 
   useEffect(() => {
     SourceRepository.getAll().then(setSources);
-    DictionaryRepository.getAll().then(setWords);
+    DictionaryRepository.getPage({ limit: 200 }).then(({ entries }) => setWords(entries));
   }, []);
 
   // Reset target targetType when entity changes to avoid invalid combinations

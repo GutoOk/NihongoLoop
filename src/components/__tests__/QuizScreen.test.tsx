@@ -9,6 +9,7 @@ import { ModalProvider } from '../ModalProvider';
 vi.mock('../../repositories', () => ({
   DictionaryRepository: {
     getAll: vi.fn(),
+    getPage: vi.fn(),
     getAllLearnedIds: vi.fn().mockResolvedValue(new Set()),
   },
   ProgressRepository: {
@@ -40,7 +41,7 @@ describe('QuizScreen', () => {
 
   it('filters by sourceId correctly directly via repository relations', async () => {
     // Config: Fonte A so tem '1' e '2'
-    vi.mocked(DictionaryRepository.getAll).mockResolvedValue(mockDictionary as any);
+    vi.mocked(DictionaryRepository.getPage).mockResolvedValue({ entries: mockDictionary, total: mockDictionary.length } as any);
     
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
       { id: 's1' }, { id: 's2' }
@@ -62,4 +63,3 @@ describe('QuizScreen', () => {
     });
   });
 });
-

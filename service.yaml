@@ -10,6 +10,7 @@ spec:
       annotations:
         autoscaling.knative.dev/maxScale: '3'
         autoscaling.knative.dev/minScale: '0'
+        run.googleapis.com/invoker-iam-disabled: 'true'
         run.googleapis.com/cpu-throttling: 'true'
     spec:
       containerConcurrency: 80

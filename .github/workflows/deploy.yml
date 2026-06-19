@@ -117,4 +117,8 @@ jobs:
           INTERNAL_HEALTH_TOKEN: ${{ secrets.INTERNAL_HEALTH_TOKEN }}
         run: |
           WORKER_URL="$(gcloud run services describe nihongo-loop-worker --region us-east1 --project ${{ secrets.GCP_PROJECT_ID }} --format='value(status.url)')"
-          curl -fsS -H "x-internal-health-token: $INTERNAL_HEALTH_TOKEN" "$WORKER_URL/api/queue-health"
+          IDENTITY_TOKEN="$(gcloud auth print-identity-token --audiences="$WORKER_URL")"
+          curl -fsS \
+            -H "Authorization: Bearer $IDENTITY_TOKEN" \
+            -H "x-internal-health-token: $INTERNAL_HEALTH_TOKEN" \
+            "$WORKER_URL/api/queue-health"

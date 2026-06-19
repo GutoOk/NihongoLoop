@@ -2,6 +2,42 @@ import { supabase, isSupabaseConfigured } from '../core/supabaseClient';
 import { ProcessingRun } from '../types';
 import { getUserId } from './utils';
 
+const PROCESSING_RUN_SELECT = [
+  'id',
+  'user_id',
+  'source_id',
+  'status',
+  'current_step',
+  'total_steps',
+  'completed_steps',
+  'total_items',
+  'processed_items',
+  'created_jobs',
+  'planned_jobs',
+  'pending_jobs',
+  'processed_jobs',
+  'completed_jobs',
+  'retry_jobs',
+  'review_jobs',
+  'cancelled_jobs',
+  'obsolete_jobs',
+  'applied_items',
+  'failed_items',
+  'cancel_requested',
+  'run_mode',
+  'log',
+  'error',
+  'total_cost_estimate',
+  'total_cost_actual',
+  'total_input_tokens',
+  'total_output_tokens',
+  'ai_call_count',
+  'started_at',
+  'finished_at',
+  'created_at',
+  'updated_at',
+].join(',');
+
 export class ProcessingRunRepository {
   static async startSourceProcessingRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<{ run_id: string; stage?: string | null; created_jobs: number; status: string } | null> {
     if (!isSupabaseConfigured) return null;
@@ -24,12 +60,12 @@ export class ProcessingRunRepository {
       source_id: sourceId,
       status: 'pending',
       run_mode: runMode
-    }).select().maybeSingle();
+    }).select(PROCESSING_RUN_SELECT).maybeSingle();
     if (error) {
       console.error(error);
       throw new Error(`Erro do Supabase ao criar processamento: ${error.message}`);
     }
-    return data;
+    return data as unknown as ProcessingRun | null;
   }
 
   static async createOrResumeRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<ProcessingRun | null> {
@@ -44,20 +80,20 @@ export class ProcessingRunRepository {
   static async getActiveRun(sourceId: string): Promise<ProcessingRun | null> {
     if (!isSupabaseConfigured) return null;
     const { data } = await supabase!.from('processing_runs')
-      .select('*')
+      .select(PROCESSING_RUN_SELECT)
       .eq('source_id', sourceId)
       .eq('user_id', getUserId())
       .in('status', ['pending', 'planning', 'running', 'paused', 'needs_review'])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    return data;
+    return data as unknown as ProcessingRun | null;
   }
 
   static async getResumableRun(sourceId: string): Promise<ProcessingRun | null> {
     if (!isSupabaseConfigured) return null;
     const { data, error } = await supabase!.from('processing_runs')
-      .select('*')
+      .select(PROCESSING_RUN_SELECT)
       .eq('source_id', sourceId)
       .eq('user_id', getUserId())
       .in('status', ['pending', 'planning', 'running', 'paused', 'needs_review', 'error', 'failed'])
@@ -68,13 +104,13 @@ export class ProcessingRunRepository {
       console.error(error);
       throw new Error(`Erro do Supabase ao carregar processamento retomavel: ${error.message}`);
     }
-    return data;
+    return data as unknown as ProcessingRun | null;
   }
 
   static async getLatestRunBySource(sourceId: string): Promise<ProcessingRun | null> {
     if (!isSupabaseConfigured) return null;
     const { data, error } = await supabase!.from('processing_runs')
-      .select('*')
+      .select(PROCESSING_RUN_SELECT)
       .eq('source_id', sourceId)
       .eq('user_id', getUserId())
       .order('created_at', { ascending: false })
@@ -84,17 +120,17 @@ export class ProcessingRunRepository {
       console.error(error);
       throw new Error(`Erro do Supabase ao carregar processamento mais recente: ${error.message}`);
     }
-    return data;
+    return data as unknown as ProcessingRun | null;
   }
 
   static async getRun(runId: string): Promise<ProcessingRun | null> {
     if (!isSupabaseConfigured) return null;
     const { data } = await supabase!.from('processing_runs')
-      .select('*')
+      .select(PROCESSING_RUN_SELECT)
       .eq('id', runId)
       .eq('user_id', getUserId())
       .maybeSingle();
-    return data;
+    return data as unknown as ProcessingRun | null;
   }
 
   static async updateRun(id: string, patch: Partial<ProcessingRun>): Promise<ProcessingRun | null> {
@@ -103,13 +139,13 @@ export class ProcessingRunRepository {
       .update({ ...patch, updated_at: new Date().toISOString() })
       .eq('id', id)
       .eq('user_id', getUserId())
-      .select()
+      .select(PROCESSING_RUN_SELECT)
       .maybeSingle();
     if (error) {
       console.error(error);
       throw new Error(`Erro do Supabase ao atualizar processamento: ${error.message}`);
     }
-    return data;
+    return data as unknown as ProcessingRun | null;
   }
 
   static async appendLog(id: string, message: string, meta?: unknown): Promise<void> {

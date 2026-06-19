@@ -50,6 +50,20 @@ export class SentenceRepository {
     return data || [];
   }
 
+  static async getPage(offset = 0, limit = 100): Promise<Sentence[]> {
+    if (isE2EMockMode()) return defaultMockSentences.slice(offset, offset + limit);
+    if (!isSupabaseConfigured) return [];
+    const safeLimit = Math.max(1, Math.min(limit, 500));
+    const { data, error } = await supabase!
+      .from('sentences')
+      .select(SENTENCE_SELECT)
+      .eq('user_id', getUserId())
+      .order('updated_at', { ascending: false })
+      .range(offset, offset + safeLimit - 1);
+    if (error) throw new Error(`Erro do Supabase ao carregar pagina de frases: ${error.message}`);
+    return data || [];
+  }
+
   static async countBySourceId(sourceId: string): Promise<number> {
     if (isE2EMockMode()) return defaultMockSentences.filter((s) => s.source_id === sourceId).length;
     if (!isSupabaseConfigured) return 0;
