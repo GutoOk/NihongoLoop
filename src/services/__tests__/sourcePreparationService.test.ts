@@ -16,7 +16,7 @@ vi.mock('../../repositories', () => ({
     updateRun: vi.fn(),
   },
   SentenceRepository: {
-    getAll: vi.fn(),
+    findProcessedByJapaneseKeys: vi.fn(),
     getById: vi.fn(),
     getBySourceId: vi.fn(),
     update: vi.fn(),
@@ -65,7 +65,7 @@ describe('SourcePreparationService', () => {
     vi.mocked(AiJobRepository.getBySource).mockResolvedValue([]);
     vi.mocked(AiJobRepository.add).mockImplementation(async (job: any) => ({ id: 'job-created', ...job }));
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([]);
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([]);
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([]);
     vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([]);
   });
@@ -76,7 +76,7 @@ describe('SourcePreparationService', () => {
       sentence({ id: 'ready', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos.' }),
     ];
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue(sentences);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue(sentences);
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue(sentences);
 
     await SourcePreparationService.prepareSource('source-1', options, 'run-1');
 
@@ -101,7 +101,7 @@ describe('SourcePreparationService', () => {
   it('does not duplicate a pending translation target', async () => {
     const sentences = [sentence({ id: 'sent-2', japanese: 'テスト', japanese_key: 'テスト' })];
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue(sentences);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue(sentences);
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue(sentences);
     vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       {
         id: 'job-1',
@@ -123,7 +123,7 @@ describe('SourcePreparationService', () => {
   it('reuses identical translated sentences instead of creating AI jobs', async () => {
     const sourceSentence = sentence({ id: 'new-sentence', japanese: 'ある', japanese_key: 'ある' });
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([sourceSentence]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sourceSentence,
       sentence({ id: 'old-sentence', source_id: 'source-2', japanese: 'ある', japanese_key: 'ある', portuguese: 'Existe.' }),
     ]);

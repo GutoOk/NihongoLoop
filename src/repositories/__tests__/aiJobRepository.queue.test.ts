@@ -61,7 +61,7 @@ describe('AiJobRepository queue RPCs', () => {
       p_worker_id: 'worker-1',
       p_lease_seconds: 180,
     });
-    expect(supabase!.rpc).toHaveBeenNthCalledWith(2, 'refresh_ai_job_lease', {
+    expect(supabase!.rpc).toHaveBeenNthCalledWith(2, 'heartbeat_ai_job', {
       p_job_id: 'job-1',
       p_worker_id: 'worker-1',
       p_lease_seconds: 180,

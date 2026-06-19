@@ -1,11 +1,15 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
+import { createHash } from "node:crypto";
 import { buildSingleAiRequest } from "./prompts";
 import { generateStructuredJsonWithMeta } from "../geminiJson";
+
+export const AI_QUEUE_SCHEMA_VERSION = "2026-06-ai-queue-v25";
 
 type QueueJob = {
   id: string;
   user_id: string;
+  run_id?: string | null;
   type: string;
   target_type: string;
   target_id: string;
@@ -77,6 +81,61 @@ export interface AiQueueWorkerHandle {
   stop: () => void;
 }
 
+export type WorkerStartupValidation = {
+  ok: boolean;
+  errors: string[];
+  schemaVersion?: string | null;
+};
+
+function isMissingOrPlaceholder(value: string | undefined | null): boolean {
+  return !value || value.includes("PLACEHOLDER") || value.includes("changeme") || value.includes("example");
+}
+
+export async function validateAiWorkerStartup(options: {
+  supabaseUrl: string;
+  serviceRoleKey: string;
+  requireGemini?: boolean;
+}): Promise<WorkerStartupValidation> {
+  const errors: string[] = [];
+  if (isMissingOrPlaceholder(options.supabaseUrl)) errors.push("SUPABASE_URL/VITE_SUPABASE_URL ausente.");
+  if (isMissingOrPlaceholder(options.serviceRoleKey)) errors.push("SUPABASE_SERVICE_ROLE_KEY ausente ou placeholder.");
+  if (options.requireGemini && isMissingOrPlaceholder(process.env.GEMINI_API_KEY)) {
+    errors.push("GEMINI_API_KEY ausente ou placeholder.");
+  }
+  if (errors.length > 0) return { ok: false, errors };
+
+  const client = createClient(options.supabaseUrl, options.serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  try {
+    const health = await getAiQueueHealth(client);
+    const schemaVersion = health.schemaVersion || null;
+    if (schemaVersion !== AI_QUEUE_SCHEMA_VERSION) {
+      errors.push(`Schema AI queue incompativel: esperado ${AI_QUEUE_SCHEMA_VERSION}, recebido ${schemaVersion || "desconhecido"}.`);
+    }
+    return { ok: errors.length === 0, errors, schemaVersion };
+  } catch (error: any) {
+    return { ok: false, errors: [`Falha ao consultar Supabase/RPC de healthcheck: ${error.message || String(error)}`] };
+  }
+}
+
+export async function getAiQueueHealth(client: SupabaseClient) {
+  const { data, error } = await client.rpc("get_ai_queue_health");
+  if (error) throw error;
+  const health = (data || {}) as any;
+  return {
+    schemaVersion: health.schema_version || health.schemaVersion || null,
+    supabase: "ok",
+    pendingJobs: Number(health.pending_jobs || 0),
+    claimedJobs: Number(health.claimed_jobs || 0),
+    runningJobs: Number(health.running_jobs || 0),
+    retryWaitJobs: Number(health.retry_wait_jobs || 0),
+    expiredLeases: Number(health.expired_leases || 0),
+    lastClaimAt: health.last_claim_at || null,
+    lastError: health.last_error || null,
+  };
+}
+
 function parseMaybeJson(value: any) {
   if (typeof value !== "string") return value;
   try {
@@ -88,6 +147,249 @@ function parseMaybeJson(value: any) {
 
 function getJobInput(job: QueueJob) {
   return parseMaybeJson(job.payload) || parseMaybeJson(job.input) || {};
+}
+
+function getTypeLimit(jobType: string): number {
+  if (jobType === "translate_sentence") return Math.max(1, Math.min(Number(process.env.AI_WORKER_TRANSLATE_CONCURRENCY || 4), 32));
+  if (jobType === "generate_sentence_reading") return Math.max(1, Math.min(Number(process.env.AI_WORKER_READING_CONCURRENCY || 2), 32));
+  if (jobType === "detect_sentence_terms") return Math.max(1, Math.min(Number(process.env.AI_WORKER_TERMS_CONCURRENCY || 1), 16));
+  if (jobType === "enrich_dictionary_entry") return Math.max(1, Math.min(Number(process.env.AI_WORKER_DICTIONARY_CONCURRENCY || 1), 16));
+  return 0;
+}
+
+function getGlobalLimit(): number {
+  return Math.max(1, Math.min(Number(process.env.AI_WORKER_GLOBAL_CONCURRENCY || 8), 64));
+}
+
+function getUserLimit(): number {
+  return Math.max(1, Math.min(Number(process.env.AI_WORKER_USER_CONCURRENCY || 4), 32));
+}
+
+function stableServerHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+async function enqueueWorkerJob(
+  client: SupabaseClient,
+  params: {
+    userId: string;
+    runId: string;
+    stage: string;
+    type: string;
+    targetType: string;
+    targetId: string;
+    priority: number;
+    payload: Record<string, unknown>;
+  },
+) {
+  const inputHash = stableServerHash({
+    type: params.type,
+    targetType: params.targetType,
+    targetId: params.targetId,
+    payload: params.payload,
+  });
+  const targetHash = stableServerHash(params.payload);
+  const { error } = await client.from("ai_jobs").insert({
+    user_id: params.userId,
+    run_id: params.runId,
+    stage: params.stage,
+    type: params.type,
+    target_type: params.targetType,
+    target_id: params.targetId,
+    status: "pending",
+    priority: params.priority,
+    target_hash: targetHash,
+    input_hash: inputHash,
+    job_key: `${params.type}:${params.targetType}:${params.targetId}:${inputHash}`,
+    payload: params.payload,
+    input: params.payload,
+    max_attempts: 3,
+  });
+  if (error && error.code !== "23505") throw error;
+  return !error;
+}
+
+async function maybeAdvanceRun(client: SupabaseClient, runId: string | null | undefined) {
+  if (!runId) return;
+
+  const { data: run, error: runError } = await client
+    .from("processing_runs")
+    .select("id,user_id,source_id,status,cancel_requested")
+    .eq("id", runId)
+    .maybeSingle();
+  if (runError) throw runError;
+  if (!run || run.cancel_requested || run.status === "cancelled" || run.status === "completed") return;
+
+  const { count: activeCount, error: activeError } = await client
+    .from("ai_jobs")
+    .select("id", { count: "exact", head: true })
+    .eq("run_id", runId)
+    .in("status", ["pending", "claimed", "running", "retry_wait"]);
+  if (activeError) throw activeError;
+  if ((activeCount || 0) > 0) return;
+
+  const { data: sentences, error: sentencesError } = await client
+    .from("sentences")
+    .select("id,user_id,source_id,japanese,japanese_key,portuguese,kana,romaji,status,terms_source")
+    .eq("source_id", run.source_id)
+    .eq("user_id", run.user_id)
+    .order("order_index", { ascending: true })
+    .limit(1000);
+  if (sentencesError) throw sentencesError;
+
+  const rows = (sentences || []) as any[];
+  const untranslated = rows.filter((sentence) => sentence.status !== "reviewed" && !sentence.portuguese);
+  if (untranslated.length > 0) {
+    let created = 0;
+    for (const sentence of untranslated) {
+      created += Number(await enqueueWorkerJob(client, {
+        userId: run.user_id,
+        runId,
+        stage: "translation",
+        type: "translate_sentence",
+        targetType: "sentence",
+        targetId: sentence.id,
+        priority: 300,
+        payload: { id: sentence.id, sentence: sentence.japanese, japanese: sentence.japanese, sourceId: run.source_id },
+      }));
+    }
+    await client.from("processing_runs").update({
+      status: "running",
+      current_step: `Traducao: ${created} job(s) individuais planejados pelo worker.`,
+      pending_jobs: created,
+      planned_jobs: created,
+    }).eq("id", runId);
+    return;
+  }
+
+  const missingReading = rows.filter((sentence) =>
+    sentence.status !== "reviewed" &&
+    sentence.portuguese &&
+    (!sentence.kana || !sentence.romaji)
+  );
+  if (missingReading.length > 0) {
+    let created = 0;
+    for (const sentence of missingReading) {
+      created += Number(await enqueueWorkerJob(client, {
+        userId: run.user_id,
+        runId,
+        stage: "reading",
+        type: "generate_sentence_reading",
+        targetType: "sentence",
+        targetId: sentence.id,
+        priority: 200,
+        payload: {
+          id: sentence.id,
+          sentence: sentence.japanese,
+          japanese: sentence.japanese,
+          portuguese: sentence.portuguese,
+          sourceId: run.source_id,
+        },
+      }));
+    }
+    await client.from("processing_runs").update({
+      status: "running",
+      current_step: `Leitura: ${created} job(s) individuais planejados pelo worker.`,
+      pending_jobs: created,
+      planned_jobs: created,
+    }).eq("id", runId);
+    return;
+  }
+
+  const missingTerms = rows.filter((sentence) =>
+    sentence.status !== "reviewed" &&
+    sentence.portuguese &&
+    sentence.kana &&
+    sentence.romaji &&
+    !sentence.terms_source
+  );
+  if (missingTerms.length > 0) {
+    let created = 0;
+    for (const sentence of missingTerms) {
+      created += Number(await enqueueWorkerJob(client, {
+        userId: run.user_id,
+        runId,
+        stage: "lexical_analysis",
+        type: "detect_sentence_terms",
+        targetType: "sentence",
+        targetId: sentence.id,
+        priority: 150,
+        payload: {
+          id: sentence.id,
+          sentence: sentence.japanese,
+          japanese: sentence.japanese,
+          portuguese: sentence.portuguese,
+          kana: sentence.kana,
+          romaji: sentence.romaji,
+          sourceId: run.source_id,
+        },
+      }));
+    }
+    await client.from("processing_runs").update({
+      status: "running",
+      current_step: `Analise lexical: ${created} job(s) individuais planejados pelo worker.`,
+      pending_jobs: created,
+      planned_jobs: created,
+    }).eq("id", runId);
+    return;
+  }
+
+  const sentenceIds = rows.map((sentence) => sentence.id);
+  const { data: terms, error: termsError } = sentenceIds.length > 0
+    ? await client
+      .from("sentence_terms")
+      .select("dictionary_forms(dictionary_entry_id)")
+      .eq("user_id", run.user_id)
+      .in("sentence_id", sentenceIds)
+    : { data: [], error: null };
+  if (termsError) throw termsError;
+
+  const entryIds = Array.from(new Set((terms || [])
+    .map((term: any) => term.dictionary_forms?.dictionary_entry_id)
+    .filter(Boolean)));
+
+  if (entryIds.length > 0) {
+    const { data: entries, error: entriesError } = await client
+      .from("dictionary_entries")
+      .select("id,lemma,kana,romaji,type,main_meaning,status")
+      .eq("user_id", run.user_id)
+      .in("id", entryIds);
+    if (entriesError) throw entriesError;
+
+    const incomplete = (entries || []).filter((entry: any) =>
+      entry.status !== "reviewed" &&
+      (!entry.main_meaning || !entry.kana || !entry.romaji || !entry.type)
+    );
+    if (incomplete.length > 0) {
+      let created = 0;
+      for (const entry of incomplete) {
+        created += Number(await enqueueWorkerJob(client, {
+          userId: run.user_id,
+          runId,
+          stage: "dictionary",
+          type: "enrich_dictionary_entry",
+          targetType: "dictionary_entry",
+          targetId: entry.id,
+          priority: 100,
+          payload: { id: entry.id, entryId: entry.id, lemma: entry.lemma, sourceId: run.source_id },
+        }));
+      }
+      await client.from("processing_runs").update({
+        status: "running",
+        current_step: `Dicionario: ${created} job(s) individuais planejados pelo worker.`,
+        pending_jobs: created,
+        planned_jobs: created,
+      }).eq("id", runId);
+      return;
+    }
+  }
+
+  await client.from("processing_runs").update({
+    status: "completed",
+    current_step: "Preparacao concluida pelo worker.",
+    finished_at: new Date().toISOString(),
+    pending_jobs: 0,
+  }).eq("id", runId);
 }
 
 function isSameAsJapanese(japanese: string | null | undefined, translation: string | null | undefined): boolean {
@@ -152,6 +454,38 @@ async function claimJobs(
   return (data || []) as QueueJob[];
 }
 
+async function claimCoordinatedJobs(
+  client: SupabaseClient,
+  workerId: string,
+  leaseSeconds: number,
+): Promise<QueueJob[]> {
+  const order = ["translate_sentence", "generate_sentence_reading", "detect_sentence_terms", "enrich_dictionary_entry"];
+  const globalLimit = getGlobalLimit();
+  const userLimit = getUserLimit();
+  const jobs: QueueJob[] = [];
+  const byUser = new Map<string, number>();
+
+  for (const jobType of order) {
+    const remainingGlobal = globalLimit - jobs.length;
+    if (remainingGlobal <= 0) break;
+    const limit = Math.min(getTypeLimit(jobType), remainingGlobal);
+    if (limit <= 0) continue;
+
+    const claimed = await claimJobs(client, workerId, [jobType], limit, leaseSeconds);
+    for (const job of claimed) {
+      const userCount = byUser.get(job.user_id) || 0;
+      if (userCount >= userLimit || jobs.length >= globalLimit) {
+        await client.rpc("release_claimed_ai_job", { p_job_id: job.id, p_worker_id: workerId });
+        continue;
+      }
+      byUser.set(job.user_id, userCount + 1);
+      jobs.push(job);
+    }
+  }
+
+  return jobs;
+}
+
 async function startJob(client: SupabaseClient, job: QueueJob, workerId: string, leaseSeconds: number): Promise<QueueJob> {
   const { data, error } = await client.rpc("start_claimed_ai_job", {
     p_job_id: job.id,
@@ -195,6 +529,29 @@ async function failJob(client: SupabaseClient, jobId: string, workerId: string, 
     p_retry_at: null,
   });
   if (rpcError) throw rpcError;
+}
+
+function withLeaseHeartbeat<T>(
+  client: SupabaseClient,
+  jobId: string,
+  workerId: string,
+  leaseSeconds: number,
+  work: () => Promise<T>,
+): Promise<T> {
+  const intervalMs = Math.max(5000, Math.floor(leaseSeconds * 1000 / 3));
+  const timer = setInterval(() => {
+    client.rpc("heartbeat_ai_job", {
+      p_job_id: jobId,
+      p_worker_id: workerId,
+      p_lease_seconds: leaseSeconds,
+    }).then(({ error }) => {
+      if (error) {
+        console.error("[ai-worker] heartbeat failed", { jobId, error });
+      }
+    });
+  }, intervalMs);
+
+  return work().finally(() => clearInterval(timer));
 }
 
 async function markObsolete(client: SupabaseClient, job: QueueJob, reason: string) {
@@ -925,10 +1282,6 @@ export function startAiQueueWorker(options: AiQueueWorkerOptions): AiQueueWorker
   });
   const workerId = options.workerId || `cloud-run-ai-worker-${Math.random().toString(36).slice(2)}`;
   const pollMs = Math.max(500, options.pollMs || Number(process.env.AI_WORKER_POLL_MS || 2000));
-  const translateLimit = Math.max(1, Math.min(options.claimLimit || Number(process.env.AI_WORKER_TRANSLATE_CONCURRENCY || 8), 32));
-  const readingLimit = Math.max(1, Math.min(Number(process.env.AI_WORKER_READING_CONCURRENCY || 8), 32));
-  const termsLimit = Math.max(1, Math.min(Number(process.env.AI_WORKER_TERMS_CONCURRENCY || 4), 16));
-  const dictionaryLimit = Math.max(1, Math.min(Number(process.env.AI_WORKER_DICTIONARY_CONCURRENCY || 5), 16));
   const leaseSeconds = Math.max(30, Math.min(options.leaseSeconds || Number(process.env.AI_WORKER_LEASE_SECONDS || 300), 3600));
   let stopped = false;
   let active = false;
@@ -942,31 +1295,30 @@ export function startAiQueueWorker(options: AiQueueWorkerOptions): AiQueueWorker
         p_limit: 250,
         p_retry_delay_seconds: 60,
       });
-      const jobs = [
-        ...(await claimJobs(client, workerId, ["translate_sentence"], translateLimit, leaseSeconds)),
-        ...(await claimJobs(client, workerId, ["generate_sentence_reading"], readingLimit, leaseSeconds)),
-        ...(await claimJobs(client, workerId, ["detect_sentence_terms"], termsLimit, leaseSeconds)),
-        ...(await claimJobs(client, workerId, ["enrich_dictionary_entry"], dictionaryLimit, leaseSeconds)),
-      ];
+      const jobs = await claimCoordinatedJobs(client, workerId, leaseSeconds);
       if (jobs.length > 0) {
         await Promise.all(
           jobs.map(async (job) => {
             try {
-              if (job.type === "translate_sentence") {
-                await processTranslateSentenceJob(client, job, workerId, leaseSeconds, options.getAi);
-              } else if (job.type === "generate_sentence_reading") {
-                await processGenerateSentenceReadingJob(client, job, workerId, leaseSeconds, options.getAi);
-              } else if (job.type === "detect_sentence_terms") {
-                await processDetectSentenceTermsJob(client, job, workerId, leaseSeconds, options.getAi);
-              } else if (job.type === "enrich_dictionary_entry") {
-                await processEnrichDictionaryEntryJob(client, job, workerId, leaseSeconds, options.getAi);
-              } else {
-                throw new Error(`Tipo de job nao suportado pelo worker: ${job.type}`);
-              }
+              await withLeaseHeartbeat(client, job.id, workerId, leaseSeconds, async () => {
+                if (job.type === "translate_sentence") {
+                  await processTranslateSentenceJob(client, job, workerId, leaseSeconds, options.getAi);
+                } else if (job.type === "generate_sentence_reading") {
+                  await processGenerateSentenceReadingJob(client, job, workerId, leaseSeconds, options.getAi);
+                } else if (job.type === "detect_sentence_terms") {
+                  await processDetectSentenceTermsJob(client, job, workerId, leaseSeconds, options.getAi);
+                } else if (job.type === "enrich_dictionary_entry") {
+                  await processEnrichDictionaryEntryJob(client, job, workerId, leaseSeconds, options.getAi);
+                } else {
+                  throw new Error(`Tipo de job nao suportado pelo worker: ${job.type}`);
+                }
+              });
+              await maybeAdvanceRun(client, job.run_id);
             } catch (error) {
               console.error("[ai-worker] job failed", { jobId: job.id, type: job.type, error });
               try {
                 await failJob(client, job.id, workerId, error);
+                await maybeAdvanceRun(client, job.run_id);
               } catch (failError) {
                 console.error("[ai-worker] failed to persist job failure", { jobId: job.id, failError });
               }
@@ -987,10 +1339,12 @@ export function startAiQueueWorker(options: AiQueueWorkerOptions): AiQueueWorker
     pollMs,
     leaseSeconds,
     concurrency: {
-      translate_sentence: translateLimit,
-      generate_sentence_reading: readingLimit,
-      detect_sentence_terms: termsLimit,
-      enrich_dictionary_entry: dictionaryLimit,
+      global: getGlobalLimit(),
+      per_user: getUserLimit(),
+      translate_sentence: getTypeLimit("translate_sentence"),
+      generate_sentence_reading: getTypeLimit("generate_sentence_reading"),
+      detect_sentence_terms: getTypeLimit("detect_sentence_terms"),
+      enrich_dictionary_entry: getTypeLimit("enrich_dictionary_entry"),
     },
     jobTypes: ["translate_sentence", "generate_sentence_reading", "detect_sentence_terms", "enrich_dictionary_entry"],
   });

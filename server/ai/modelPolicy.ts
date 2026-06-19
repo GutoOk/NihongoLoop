@@ -1,19 +1,15 @@
 export type AiPromptKind = "translate_sentence" | "analyze_sentence" | "enrich_dictionary";
 
 export function getPromptKind(jobType: string): AiPromptKind | null {
-  if (jobType === "translate_sentence" || jobType === "batch_translate_sentences") {
+  if (jobType === "translate_sentence") {
     return "translate_sentence";
   }
 
-  if (jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms" || jobType === "batch_analyze_sentences") {
+  if (jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms") {
     return "analyze_sentence";
   }
 
-  if (
-    jobType === "enrich_dictionary_entry" ||
-    jobType === "batch_enrich_dictionary_entries_fast" ||
-    jobType === "batch_enrich_dictionary_entries_full"
-  ) {
+  if (jobType === "enrich_dictionary_entry") {
     return "enrich_dictionary";
   }
 
@@ -30,11 +26,7 @@ export function getModelForJobType(jobType: string): string {
   if (envSpecific) return envSpecific;
   const cheapestModel = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
 
-  if (jobType === "batch_enrich_dictionary_entries_full") {
-    return process.env.GEMINI_MODEL_FULL || cheapestModel;
-  }
-
-  if (jobType === "batch_analyze_sentences" || jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms") {
+  if (jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms") {
     return process.env.GEMINI_MODEL_ANALYZE || cheapestModel;
   }
 
@@ -42,7 +34,7 @@ export function getModelForJobType(jobType: string): string {
 }
 
 export function getTemperatureForJobType(jobType: string): number {
-  if (jobType === "translate_sentence" || jobType === "batch_translate_sentences") return 0.15;
-  if (jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms" || jobType === "batch_analyze_sentences") return 0.1;
+  if (jobType === "translate_sentence") return 0.15;
+  if (jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms") return 0.1;
   return 0.2;
 }

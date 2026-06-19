@@ -22,20 +22,13 @@ vi.mock('../../../repositories', () => ({
     updateRun: vi.fn(),
   },
   SentenceRepository: {
-    getAll: vi.fn(),
+    findProcessedByJapaneseKeys: vi.fn(),
     getById: vi.fn(),
     getBySourceId: vi.fn(),
     update: vi.fn(),
   },
   TermRepository: {
     getBySentencesWithDictionary: vi.fn(),
-  },
-}));
-
-vi.mock('../../../services/aiJobService', () => ({
-  AiJobService: {
-    processJobsBatch: vi.fn().mockResolvedValue({ success: true, successCount: 1, errorCount: 0 }),
-    processJob: vi.fn().mockResolvedValue({ success: true }),
   },
 }));
 
@@ -64,12 +57,12 @@ function job(overrides: Record<string, unknown>) {
   return {
     id: 'job',
     user_id: 'user-1',
-    type: 'batch_translate_sentences',
-    target_type: 'batch',
-    target_id: 'source-1',
+    type: 'translate_sentence',
+    target_type: 'sentence',
+    target_id: 's1',
     status: 'pending',
     input_hash: 'hash',
-    input: { items: [{ id: 's1' }] },
+    input: { id: 's1' },
     result: null,
     error: null,
     created_at: now.toISOString(),
@@ -101,7 +94,7 @@ describe('SourcePreparationEngine', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([]);
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([]);
     vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([]);
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([]);
     vi.mocked(AiJobRepository.getAll).mockResolvedValue([]);
@@ -133,7 +126,7 @@ describe('SourcePreparationEngine', () => {
       sentence({ id: 's3', japanese: '行くぞ', japanese_key: '行くぞ' }),
     ];
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue(sourceSentences);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       ...sourceSentences,
       sentence({ id: 'other-1', source_id: 'source-2', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos.' }),
     ]);
@@ -152,7 +145,7 @@ describe('SourcePreparationEngine', () => {
       sentence({ id: 's1', kana: 'いく', romaji: 'iku', portuguese: 'Vou.' }),
       sentence({ id: 's2', portuguese: 'Sem termos.' }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 's1', kana: 'いく', romaji: 'iku', portuguese: 'Vou.' }),
       sentence({ id: 's2', portuguese: 'Sem termos.' }),
     ]);
@@ -288,7 +281,7 @@ describe('SourcePreparationEngine', () => {
       sentence({ id: 'error-target', japanese: '四', japanese_key: '四' }),
       sentence({ id: 'stuck-target', japanese: '五', japanese_key: '五' }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 'source-reusable', source_id: 'source-2', japanese: 'ある', japanese_key: 'ある', portuguese: 'Existe.' }),
     ]);
     vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
@@ -340,7 +333,7 @@ describe('SourcePreparationEngine', () => {
   it('applies reusable translations even when no AI job is planned', async () => {
     const sourceSentence = sentence({ id: 'needs-cache', japanese: 'ã‚ã‚‹', japanese_key: 'ã‚ã‚‹' });
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([sourceSentence]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sourceSentence,
       sentence({ id: 'translated-match', source_id: 'source-2', japanese: 'ã‚ã‚‹', japanese_key: 'ã‚ã‚‹', portuguese: 'Existe.' }),
     ]);
@@ -362,7 +355,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
       sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: null }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: null }),
     ]);
 
@@ -374,7 +367,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
       sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: 'Vou.' }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: 'Vou.' }),
     ]);
 
@@ -386,7 +379,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
       sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: 'Vou.', kana: 'ã„ã', romaji: 'iku' }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 's1', japanese: 'è¡Œã', japanese_key: 'è¡Œã', portuguese: 'Vou.', kana: 'ã„ã', romaji: 'iku' }),
     ]);
     vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([
@@ -411,7 +404,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
       sentence({ id: 'needs-translation', portuguese: null }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 'needs-translation', portuguese: null }),
     ]);
     vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
@@ -428,7 +421,7 @@ describe('SourcePreparationEngine', () => {
       sentence({ id: 'translation-error-target', japanese: 'また', japanese_key: 'また', portuguese: null }),
       sentence({ id: 'needs-analysis', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos.', kana: null, romaji: null }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 'translation-error-target', japanese: 'また', japanese_key: 'また', portuguese: null }),
       sentence({ id: 'needs-analysis', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos.', kana: null, romaji: null }),
     ]);
@@ -454,7 +447,7 @@ describe('SourcePreparationEngine', () => {
       sentence({ id: 'translation-error-target', japanese: 'また', japanese_key: 'また', portuguese: null }),
       sentence({ id: 'ready-sentence', portuguese: 'Pronto.', kana: 'いく', romaji: 'iku' }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 'translation-error-target', japanese: 'また', japanese_key: 'また', portuguese: null }),
       sentence({ id: 'ready-sentence', portuguese: 'Pronto.', kana: 'いく', romaji: 'iku' }),
     ]);
@@ -491,15 +484,15 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
       sentence({ id: 'needs-analysis', portuguese: 'Pronto.', kana: null, romaji: null }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 'needs-analysis', portuguese: 'Pronto.', kana: null, romaji: null }),
     ]);
     vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({
         id: 'old-analysis',
-        type: 'batch_analyze_sentences',
+        type: 'generate_sentence_reading',
         status: 'completed',
-        input: { items: [{ id: 'needs-analysis' }] },
+        input: { id: 'needs-analysis' },
       }),
     ]);
 
@@ -512,7 +505,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([
       sentence({ id: 'ready-sentence', portuguese: 'Pronto.', kana: 'ã„ã', romaji: 'iku' }),
     ]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       sentence({ id: 'ready-sentence', portuguese: 'Pronto.', kana: 'ã„ã', romaji: 'iku' }),
     ]);
     vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([
@@ -529,9 +522,11 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({
         id: 'old-dictionary',
-        type: 'batch_enrich_dictionary_entries_full',
+        type: 'enrich_dictionary_entry',
         status: 'completed',
-        input: { items: [{ id: 'entry-incomplete' }] },
+        target_type: 'dictionary_entry',
+        target_id: 'entry-incomplete',
+        input: { id: 'entry-incomplete' },
       }),
     ]);
 
@@ -550,7 +545,7 @@ describe('SourcePreparationEngine', () => {
     );
     const createdJobs: any[] = [];
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue(firstSource);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue(firstSource);
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue(firstSource);
     vi.mocked(AiJobRepository.getBySource).mockImplementation(async () => createdJobs);
     vi.mocked(AiJobRepository.add).mockImplementation(async (input: any) => {
       const existing = createdJobs.find(
@@ -588,7 +583,7 @@ describe('SourcePreparationEngine', () => {
 
     const reused = sentence({ id: 'other-source-same', source_id: 'source-2', japanese: '文42', japanese_key: '文42' });
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([reused]);
-    vi.mocked(SentenceRepository.getAll).mockResolvedValue([
+    vi.mocked(SentenceRepository.findProcessedByJapaneseKeys).mockResolvedValue([
       reused,
       sentence({
         id: 'translated-from-first',

@@ -23,13 +23,14 @@ export function GlobalAiQueueControl() {
 
   useEffect(() => {
     void loadJobs();
-    const interval = setInterval(() => void loadJobs(), 3000);
+    const interval = setInterval(() => void loadJobs(), 5000);
     return () => clearInterval(interval);
   }, []);
 
   const pending = jobs.filter((job) => job.status === 'pending').length;
-  const running = jobs.filter((job) => job.status === 'running').length;
-  const error = jobs.filter((job) => job.status === 'error').length;
+  const running = jobs.filter((job) => job.status === 'running' || job.status === 'claimed').length;
+  const error = jobs.filter((job) => job.status === 'error' || job.status === 'failed' || job.status === 'needs_review').length;
+  const retry = jobs.filter((job) => job.status === 'retry_wait').length;
   const clearable = jobs.filter(isClearableQueueJob).length;
   const visibleJobs = jobs.filter(isVisibleQueueJob);
 
@@ -79,9 +80,10 @@ export function GlobalAiQueueControl() {
         </div>
       )}
 
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <QueueMetric label="Pendentes" value={pending} />
         <QueueMetric label="Rodando" value={running} />
+        <QueueMetric label="Retry" value={retry} />
         <QueueMetric label="Erros" value={error} />
       </div>
 
@@ -120,7 +122,7 @@ function isClearableQueueJob(job: AiJob): boolean {
 }
 
 function isVisibleQueueJob(job: AiJob): boolean {
-  return job.status === 'pending' || job.status === 'running' || job.status === 'error';
+  return ['pending', 'claimed', 'running', 'retry_wait', 'needs_review', 'failed', 'error'].includes(job.status);
 }
 
 function QueueMetric({ label, value }: { label: string; value: number }) {
@@ -133,9 +135,10 @@ function QueueMetric({ label, value }: { label: string; value: number }) {
 }
 
 function statusClass(status: AiJob['status']): string {
-  if (status === 'running') return 'bg-sky-100 text-sky-700';
-  if (status === 'error') return 'bg-rose-100 text-rose-700';
+  if (status === 'running' || status === 'claimed') return 'bg-sky-100 text-sky-700';
+  if (status === 'error' || status === 'failed' || status === 'needs_review') return 'bg-rose-100 text-rose-700';
   if (status === 'pending') return 'bg-amber-100 text-amber-700';
+  if (status === 'retry_wait') return 'bg-amber-100 text-amber-700';
   if (status === 'completed' || status === 'applied') return 'bg-emerald-100 text-emerald-700';
   return 'bg-slate-100 text-slate-700';
 }

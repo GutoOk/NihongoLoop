@@ -11,22 +11,18 @@ export interface AiQueueLimits {
 }
 
 export const DEFAULT_AI_QUEUE_LIMITS: AiQueueLimits = {
-  global: 16,
-  perUser: 8,
-  claimBatchSize: 25,
+  global: 8,
+  perUser: 4,
+  claimBatchSize: 8,
   leaseSeconds: 300,
   byType: {
-    translate_sentence: 8,
-    generate_sentence_reading: 8,
-    detect_sentence_terms: 4,
-    enrich_dictionary_entry: 5,
-    generate_dictionary_senses: 3,
+    translate_sentence: 4,
+    generate_sentence_reading: 2,
+    detect_sentence_terms: 1,
+    enrich_dictionary_entry: 1,
+    generate_dictionary_senses: 1,
     explain_sentence: 2,
     repair_sentence: 2,
-    batch_translate_sentences: 1,
-    batch_analyze_sentences: 1,
-    batch_enrich_dictionary_entries_fast: 1,
-    batch_enrich_dictionary_entries_full: 1,
   },
 };
 

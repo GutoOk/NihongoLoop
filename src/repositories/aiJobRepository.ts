@@ -448,7 +448,7 @@ export class AiJobRepository {
 
   static async refreshLease(jobId: string, workerId: string, leaseSeconds = 300): Promise<boolean> {
     if (!isSupabaseConfigured) return false;
-    const { data, error } = await supabase!.rpc('refresh_ai_job_lease', {
+    const { data, error } = await supabase!.rpc('heartbeat_ai_job', {
       p_job_id: jobId,
       p_worker_id: workerId,
       p_lease_seconds: leaseSeconds,

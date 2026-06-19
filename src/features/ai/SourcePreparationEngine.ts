@@ -176,10 +176,7 @@ function getInput(job: AiJob): any {
 }
 
 function canonicalJobType(type: string): string {
-  if (type === 'batch_translate_sentences') return JOB_TYPES.translation;
-  if (type === 'batch_analyze_sentences') return JOB_TYPES.lexical_analysis;
   if (type === 'detect_sentence_terms') return JOB_TYPES.lexical_analysis;
-  if (type === 'batch_enrich_dictionary_entries_fast' || type === 'batch_enrich_dictionary_entries_full') return JOB_TYPES.dictionary;
   return type;
 }
 
@@ -267,12 +264,11 @@ export class SourcePreparationEngine {
 
   static async diagnoseSource(sourceId: string, now = new Date()): Promise<SourcePreparationDiagnosis> {
     const sourceSentences = await SentenceRepository.getBySourceId(sourceId);
-    const allSentences = await SentenceRepository.getAll();
     const sentenceIds = sourceSentences.map((sentence) => sentence.id);
+    const sourceKeys = sourceSentences.map((sentence) => sentence.japanese_key || makeJapaneseKey(sentence.japanese));
+    const allSentences = await SentenceRepository.findProcessedByJapaneseKeys(Array.from(new Set(sourceKeys)));
     const terms = await TermRepository.getBySentencesWithDictionary(sentenceIds);
     const jobs = await AiJobRepository.getBySource(sourceId);
-
-    const sourceKeys = sourceSentences.map((sentence) => sentence.japanese_key || makeJapaneseKey(sentence.japanese));
     const keyCounts = new Map<string, number>();
     for (const key of sourceKeys) keyCounts.set(key, (keyCounts.get(key) || 0) + 1);
     const uniqueKeys = new Set(sourceKeys);
@@ -633,21 +629,6 @@ export class SourcePreparationEngine {
       await AiJobRepository.delete(job.id);
     }
     return true;
-  }
-
-  static async processNextSourceJob(sourceId: string, runnerId: string, signal?: AbortSignal): Promise<AiJob | null> {
-    void sourceId;
-    void runnerId;
-    void signal;
-    return null;
-  }
-
-  static async processNextSourceJobs(sourceId: string, runnerId: string, concurrencyLimit: number, signal?: AbortSignal): Promise<AiJob[]> {
-    void sourceId;
-    void runnerId;
-    void concurrencyLimit;
-    void signal;
-    return [];
   }
 
   private static createPlannedJobs<T extends { id: string }>(

@@ -1,12 +1,9 @@
 import {
-  batchDictionarySchema,
-  batchSentenceAnalysisSchema,
-  batchTranslationSchema,
   dictionarySchema,
   sentenceAnalysisSchema,
   translationSchema,
 } from "./schemas";
-import { getModelForJobType, getPromptKind, getPromptVersion, getTemperatureForJobType } from "./modelPolicy";
+import { getModelForJobType, getPromptVersion, getTemperatureForJobType } from "./modelPolicy";
 
 export interface AiPromptRequest {
   prompt: string;
@@ -21,9 +18,9 @@ export function buildSingleAiRequest(jobType: string, input: any): AiPromptReque
 
   if (jobType === "translate_sentence") {
     return withPolicy(jobType, promptVersion, {
-      prompt: `Tarefa: traduzir uma frase japonesa para português brasileiro natural.
-Preserve sentido e tom. Nunca devolva o texto japonês como tradução.
-Se for nome, som, interjeição, partícula solta ou expressão sem equivalente direto, escreva uma equivalência ou explicação curta em português brasileiro.
+      prompt: `Tarefa: traduzir uma frase japonesa para portugues brasileiro natural.
+Preserve sentido e tom. Nunca devolva o texto japones como traducao.
+Se for nome, som, interjeicao, particula solta ou expressao sem equivalente direto, escreva uma equivalencia ou explicacao curta em portugues brasileiro.
 Retorne apenas o JSON do schema.
 
 Frase japonesa:
@@ -34,7 +31,7 @@ ${JSON.stringify(input.sentence || "")}`,
 
   if (jobType === "generate_sentence_reading") {
     return withPolicy(jobType, promptVersion, {
-      prompt: buildAnalysisPrompt([{ id: "item", japanese: input.sentence, portuguese: input.portuguese, known_words: input.known_words }], false),
+      prompt: buildAnalysisPrompt([{ id: "item", japanese: input.sentence, portuguese: input.portuguese, known_words: input.known_words }]),
       responseSchema: sentenceAnalysisSchema(),
     });
   }
@@ -54,66 +51,12 @@ ${JSON.stringify(input.sentence || "")}`,
 
   if (jobType === "enrich_dictionary_entry") {
     return withPolicy(jobType, promptVersion, {
-      prompt: buildDictionaryPrompt([{ id: "item", lemma: input.lemma, examples: input.examples || [] }], true, false),
+      prompt: buildDictionaryPrompt([{ id: "item", lemma: input.lemma, examples: input.examples || [] }], true),
       responseSchema: dictionarySchema(true),
     });
   }
 
-  throw new Error("Job type não suportado");
-}
-
-export function buildBatchAiRequest(jobType: string, items: any[]): AiPromptRequest {
-  const promptVersion = getPromptVersion(jobType);
-  const kind = getPromptKind(jobType);
-
-  if (kind === "translate_sentence") {
-    const compactItems = items.map((item) => ({
-      job_id: item.id,
-      id: item.id,
-      japanese: item.sentence || item.japanese,
-    }));
-    return withPolicy(jobType, promptVersion, {
-      prompt: `Tarefa: traduzir cada frase japonesa para português brasileiro natural.
-Associe cada resultado ao mesmo id recebido em job_id. Não omita itens.
-Nunca devolva o texto japonês como tradução.
-Se for nome, som, interjeição, partícula solta ou expressão sem equivalente direto, escreva uma equivalência ou explicação curta em português brasileiro.
-Retorne apenas JSON.
-
-Entrada:
-${JSON.stringify(compactItems)}`,
-      responseSchema: batchTranslationSchema(),
-    });
-  }
-
-  if (kind === "analyze_sentence") {
-    const compactItems = items.map((item) => ({
-      job_id: item.id,
-      id: item.id,
-      japanese: item.sentence || item.japanese,
-      portuguese: item.portuguese || null,
-      known_words: Array.isArray(item.known_words) ? item.known_words.slice(0, 12) : [],
-    }));
-    return withPolicy(jobType, promptVersion, {
-      prompt: buildAnalysisPrompt(compactItems, true),
-      responseSchema: batchSentenceAnalysisSchema(),
-    });
-  }
-
-  if (kind === "enrich_dictionary") {
-    const includeFull = jobType === "batch_enrich_dictionary_entries_full";
-    const compactItems = items.map((item) => ({
-      job_id: item.id,
-      id: item.id,
-      lemma: item.lemma,
-      examples: Array.isArray(item.examples) ? item.examples.slice(0, 2) : [],
-    }));
-    return withPolicy(jobType, promptVersion, {
-      prompt: buildDictionaryPrompt(compactItems, includeFull, true),
-      responseSchema: batchDictionarySchema(includeFull),
-    });
-  }
-
-  throw new Error("Job type não suportado para lote");
+  throw new Error("Job type nao suportado");
 }
 
 function withPolicy(
@@ -129,24 +72,20 @@ function withPolicy(
   };
 }
 
-function buildAnalysisPrompt(items: any[], isBatch: boolean): string {
-  const idInstruction = isBatch
-    ? "Associe cada resultado ao mesmo id recebido em job_id. Não omita itens."
-    : "Retorne o objeto da única frase.";
+function buildAnalysisPrompt(items: any[]): string {
+  return `Tarefa: gerar leitura e segmentacao objetiva de uma frase japonesa.
+Retorne o objeto da unica frase.
 
-  return `Tarefa: gerar leitura e segmentação objetiva de frases japonesas.
-${idInstruction}
-
-Regras obrigatórias:
+Regras obrigatorias:
 - kana: leitura completa da frase em hiragana/katakana.
-- romaji: leitura completa em letras minúsculas.
-- terms: lista de ocorrências na frase, não verbetes longos de dicionário.
+- romaji: leitura completa em letras minusculas.
+- terms: lista de ocorrencias na frase, nao verbetes longos de dicionario.
 - surface deve ser substring EXATA da frase japonesa original.
 - start_index e end_index devem apontar exatamente para surface.
-- lemma deve ser forma canônica de dicionário.
-- Cubra palavras e partículas relevantes; ignore só pontuação.
+- lemma deve ser forma canonica de dicionario.
+- Cubra palavras e particulas relevantes; ignore so pontuacao.
 - context_meaning deve ser curto, 1 a 3 palavras.
-- grammar_note só quando necessário para conjugações ou uso contextual.
+- grammar_note so quando necessario para conjugacoes ou uso contextual.
 - Prefira known_words quando o lemma aparecer de fato na frase.
 
 Entrada:
@@ -172,24 +111,21 @@ Entrada:
 ${JSON.stringify([{ id: "item", ...item }])}`;
 }
 
-function buildDictionaryPrompt(items: any[], includeFull: boolean, isBatch: boolean): string {
-  const idInstruction = isBatch
-    ? "Associe cada resultado ao mesmo id recebido em job_id. Não omita itens."
-    : "Retorne o objeto do único termo.";
+function buildDictionaryPrompt(items: any[], includeFull: boolean): string {
   const fullInstruction = includeFull
-    ? "- Inclua subtype, components, grammar_info e short_note quando úteis, de forma curta."
-    : "- Não inclua explicações longas; priorize campos essenciais.";
+    ? "- Inclua subtype, components, grammar_info e short_note quando uteis, de forma curta."
+    : "- Nao inclua explicacoes longas; priorize campos essenciais.";
 
-  return `Tarefa: enriquecer verbetes japoneses para estudo em português brasileiro.
-${idInstruction}
+  return `Tarefa: enriquecer um verbete japones para estudo em portugues brasileiro.
+Retorne o objeto do unico termo.
 
-Para cada lemma, retorne:
+Para o lemma, retorne:
 - main_meaning claro e curto.
-- meanings com até 5 significados.
+- meanings com ate 5 significados.
 - type usando apenas a lista permitida pelo schema.
-- kana e romaji da forma canônica.
+- kana e romaji da forma canonica.
 - jlpt_level se souber; vazio se incerto.
-- tags curtas de uso quando úteis.
+- tags curtas de uso quando uteis.
 ${fullInstruction}
 
 Entrada:

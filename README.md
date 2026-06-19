@@ -1,67 +1,62 @@
 # Nihongo Loop
 
-**Nihongo Loop** é um web app pessoal mobile-first projetado para transformar fontes originais em japonês (textos, letras de música, diálogos) em materiais de estudo estruturados, com o auxílio de inteligência artificial de ponta e persistência de dados em nuvem.
+Nihongo Loop transforma fontes em japones em material de estudo: frases, traducao, leitura, termos, dicionario pessoal e revisao.
 
-O objetivo do produto é fechar o ciclo de aprendizado:
-`Fonte Japonesa` ➔ `Sentenças` ➔ `Tradução/Leitura` ➔ `Segmentação Gramatical/Termos` ➔ `Dicionário Pessoal` ➔ `Estudo de Sentenças/Vocabulário` ➔ `Quiz & Flashcards`
+## Arquitetura
 
----
+O processamento de IA usa uma fila persistente no Supabase:
 
-## ✨ Recursos Principais
-- 🎧 **Estudos e Looping Auditivo**: Repetição automatizada no ritmo ideal para *shadowing*, com opções de ordens personalizadas de loop (como JP ➔ PT, shadowing, JP-Meaning, etc.) e controles de velocidade/pausa.
-- 🤖 **Pipeline Inteligente com Gemini API**: Utiliza o modelo estável `gemini-2.5-flash` no backend seguro do Node/Express para realizar traduções de alta fidelidade e segmentar gramaticalmente a sentença em termos válidos mapeados por caracteres.
-- 🗂️ **Persistência Centralizada no Supabase**: Banco de dados relacional real para guardar suas fontes de estudos, progresso de sentenças (`sentence_progress`), vocabulário (`dictionary_progress`) e sessões de estudo.
-- 🛡️ **Segurança RLS Rigorosa (Admin-Only)**: Qualquer pessoa pode criar uma conta usando Supabase Auth, mas apenas administradores explicitamente inseridos na tabela `public.app_admins` podem visualizar, consultar ou modificar dados (evitando vazamentos ou abusos).
-- 🧠 **Dicionário Pessoal Auto-Enriquecido**: Salve palavras, filtre por fonte e gere notas de gramática, nível JLPT e subclassificações automaticamente usando IA ou edite-as livremente de forma manual.
-- 📱 **Mobile-First & PWA de Alta Performance**: Projetado para experiências fluídas no celular, permitindo instalação direta na tela inicial de forma nativa e controle total de cache do Service Worker (excluindo rotas `/api/` e `/auth/`).
+1. A interface cria ou retoma uma `processing_run`.
+2. Jobs individuais sao gravados em `ai_jobs`.
+3. O servico `nihongo-loop-worker` reivindica jobs de forma atomica e executa uma chamada de IA por job.
+4. Resultados, tentativas, custos, tokens, erros e timestamps sao persistidos no banco.
+5. A interface apenas acompanha o estado persistido.
 
----
+Servicos Cloud Run:
 
-## 📂 Pré-requisitos & Ambiente de Execução
+- `nihongo-loop-web`: React, API leve, health/version.
+- `nihongo-loop-worker`: consumidor oficial de `ai_jobs`.
 
-### Variáveis de Ambiente (`.env`)
-Certifique-se de configurar as seguintes variáveis no seu arquivo `.env`:
+## Ambiente Local
 
-```env
-VITE_SUPABASE_URL=seu_supabase_url
-VITE_SUPABASE_ANON_KEY=seu_supabase_anon_key
-GEMINI_API_KEY=sua_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash
-```
+Instale dependencias:
 
----
-
-## 🚀 Como Executar e Buildar
-
-### 🛠️ Instalação das Dependências
-Para instalar os pacotes, execute:
 ```bash
 npm install
 ```
 
-### 💻 Modo de Desenvolvimento (Full-Stack Express + Vite)
-O projeto unifica o servidor Express (backend) e o bundling do Vite (frontend) no mesmo runtime:
+Crie um `.env.local` nao versionado a partir de `.env.example`. Valores privados como `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY` e `INTERNAL_HEALTH_TOKEN` devem ficar apenas no ambiente local ou em Secret Manager.
+
+Rodar web em desenvolvimento:
+
 ```bash
 npm run dev
 ```
-*O app estará disponível via `http://localhost:3000`.*
 
-### 📦 Build de Produção
-Para compilar tanto o client estático quanto o servidor Express em código otimizado:
+Build de producao:
+
 ```bash
 npm run build
-```
-O build compila o frontend para o diretório `/dist` e empacota o backend como um arquivo CommonJS independente `/dist/server.cjs` usando `esbuild`. Para iniciar o servidor de produção:
-```bash
 npm start
 ```
 
+Para rodar o worker localmente, configure `AI_WORKER_ONLY=true` e as credenciais privadas em `.env.local`.
 
----
+## Banco
 
-## 🛡️ Configuração do Banco de Dados (Supabase/PostgreSQL)
+`schema.sql` e o baseline limpo e reproduzivel do Supabase/Postgres. Ele cria tabelas, constraints, RLS, indices e RPCs da fila. Como a arquitetura atual nao preserva modelo legado, rebuilds devem partir desse arquivo.
 
-O schema está configurado sob a premissa de banco de dados centralizado e seguro.
-1. Execute as tabelas fundamentais através do arquivo `schema.sql`.
-2. Aplique as políticas de segurança contidas nas migrations na pasta `supabase/`.
-3. Garanta que o seu e-mail administrativo principal (como `gutookada@gmail.com`) esteja inserido na tabela `public.app_admins` para autorizar a navegação completa.
+Depois do rebuild, cadastre administradores em `public.app_admins`.
+
+## Validacao
+
+Comandos principais:
+
+```bash
+npm run lint
+npm test
+npm run test:e2e:mobile
+npm run build
+```
+
+O CI executa scan simples de secrets, lint, testes, e2e mobile, build, deploy de `nihongo-loop-web` e `nihongo-loop-worker`, e healthcheck basico.

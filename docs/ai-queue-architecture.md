@@ -2,16 +2,30 @@
 
 ## Official Pipeline
 
-The only supported AI processing path is now:
+The supported AI processing path is:
 
-1. UI creates or resumes a `processing_runs` record.
-2. UI plans individual `ai_jobs` with real targets (`sentence` or `dictionary_entry`) and a `run_id`.
-3. Cloud Run starts `startAiQueueWorker` with `SUPABASE_SERVICE_ROLE_KEY`.
+1. `nihongo-loop-web` creates or resumes a `processing_runs` record.
+2. The web app plans individual `ai_jobs` with real targets, content hashes and a `run_id`.
+3. `nihongo-loop-worker` starts in worker-only mode and validates Supabase, private credentials and schema version.
 4. The worker atomically claims jobs through `claim_ai_jobs` using `FOR UPDATE SKIP LOCKED`.
 5. Each job performs exactly one AI call and persists its own result, metrics, timestamps and errors.
-6. `processing_runs` counters are refreshed by the `ai_jobs` trigger in migration v24.
+6. The worker keeps job leases alive with heartbeat and expired leases are recovered through `recover_expired_ai_job_leases`.
+7. The UI observes persisted run/job state. The browser never consumes `ai_jobs`.
 
-Browser-side processing and HTTP batch endpoints are retired by default. `ENABLE_LEGACY_AI_HTTP=true` exists only as an explicit emergency switch for old HTTP endpoints and must stay disabled in normal operation.
+Batch means one worker claim cycle with multiple individual jobs. It never means one AI request with multiple items.
+
+## Services
+
+- `nihongo-loop-web`: serves the React app, lightweight API health/version endpoints and run/job views.
+- `nihongo-loop-worker`: consumes `ai_jobs`, calls Gemini, applies results, records attempts and recovers leases.
+
+Private values are injected through Cloud Run Secret Manager references:
+
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `GEMINI_API_KEY`
+- `INTERNAL_HEALTH_TOKEN`
+
+No private value belongs in YAML, frontend env, GitHub workflow text or documentation.
 
 ## Individual Job Types
 
@@ -20,34 +34,41 @@ Browser-side processing and HTTP batch endpoints are retired by default. `ENABLE
 - `detect_sentence_terms`: detects and persists terms for one sentence with grouped upserts.
 - `enrich_dictionary_entry`: enriches one dictionary entry and upserts senses/forms.
 
-Batch means a worker claim cycle containing multiple individual jobs. It does not mean one AI request with multiple items.
-
 ## Worker Concurrency
 
-Environment defaults:
+Initial production defaults:
 
-- `AI_WORKER_TRANSLATE_CONCURRENCY=8`
-- `AI_WORKER_READING_CONCURRENCY=8`
-- `AI_WORKER_TERMS_CONCURRENCY=4`
-- `AI_WORKER_DICTIONARY_CONCURRENCY=5`
-- `AI_WORKER_POLL_MS=2000`
-- `AI_WORKER_LEASE_SECONDS=300`
+- global: `8`
+- per user: `4`
+- `translate_sentence`: `4`
+- `generate_sentence_reading`: `2`
+- `detect_sentence_terms`: `1`
+- `enrich_dictionary_entry`: `1`
 
-Cloud Run is configured with `minScale: 1`, `maxScale: 1`, CPU always allocated, and service-role Supabase access. Increase scale only after validating provider rate limits and job claim metrics.
+The global budget is authoritative; type limits do not add up beyond it.
+
+## Database
+
+`schema.sql` is the reproducible clean baseline. It defines:
+
+- `processing_runs`
+- `processing_run_stages`
+- `ai_jobs`
+- `ai_job_attempts`
+- `ai_model_prices`
+- `schema_versions`
+- queue RPCs for claim, start, heartbeat, complete, fail, release and lease recovery
+
+The worker requires `schema_versions('ai_queue') = 2026-06-ai-queue-v25`.
 
 ## Retired Paths
 
-- `SourcePreparationRunner` no longer processes jobs.
-- `ProcessingRunner` and `GlobalAiQueueRunner` are no-op orchestration wrappers.
-- `/api/ai/process-job`, `/api/ai/process-jobs-batch`, and `/api/ai/trigger-batch-jobs` return 410 unless explicitly re-enabled.
-- `supabase/functions/process-jobs` returns 410.
+The following paths are not part of the architecture:
 
-## Validation
+- browser queue runners
+- HTTP AI processing endpoints
+- batch AI requests
+- Edge Function queue consumers
+- legacy batch job types
 
-Run before deploy:
-
-```bash
-npm run test:all
-```
-
-Apply migrations v23 and v24 before enabling the worker in production.
+Only `nihongo-loop-worker` consumes `ai_jobs`.

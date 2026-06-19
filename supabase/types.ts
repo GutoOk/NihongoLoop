@@ -180,11 +180,7 @@ export type AiJobType =
   | 'generate_dictionary_senses'
   | 'choose_sentence_term_sense'
   | 'explain_sentence'
-  | 'repair_sentence'
-  | 'batch_translate_sentences'
-  | 'batch_analyze_sentences'
-  | 'batch_enrich_dictionary_entries_fast'
-  | 'batch_enrich_dictionary_entries_full';
+  | 'repair_sentence';
 export type AiJobStatus =
   | 'pending'
   | 'claimed'

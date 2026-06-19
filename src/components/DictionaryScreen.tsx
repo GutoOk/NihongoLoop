@@ -143,7 +143,7 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
           const pendingDictItemIds = new Set<string>();
           allJobs
             .filter((job) =>
-              (job.type === 'enrich_dictionary_entry' || job.type === 'batch_enrich_dictionary_entries_full') &&
+              job.type === 'enrich_dictionary_entry' &&
               ['pending', 'running', 'error'].includes(job.status)
             )
             .forEach(job => {

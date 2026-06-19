@@ -77,9 +77,8 @@ describe('AI job queue contract', () => {
   });
 
   it('centralizes per-type concurrency limits', () => {
-    expect(getConcurrencyLimitForJobType('translate_sentence')).toBe(8);
-    expect(getConcurrencyLimitForJobType('enrich_dictionary_entry')).toBe(5);
-    expect(getConcurrencyLimitForJobType('batch_translate_sentences')).toBe(1);
+    expect(getConcurrencyLimitForJobType('translate_sentence')).toBe(4);
+    expect(getConcurrencyLimitForJobType('enrich_dictionary_entry')).toBe(1);
     expect(getConcurrencyLimitForJobType('translate_sentence', { global: 4 })).toBe(4);
   });
 });

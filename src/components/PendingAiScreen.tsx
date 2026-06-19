@@ -23,30 +23,26 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
     loadJobs();
     const inv = setInterval(() => {
        loadJobs(true);
-    }, 2000);
+    }, 5000);
     return () => clearInterval(inv);
   }, []);
 
   const loadJobs = async (silent = false) => {
     if(!silent) setLoading(true);
     const data = await AiJobRepository.getAll();
-    const completedIds = data.filter((j) => j.status === "completed").map((j) => j.id);
-    if (completedIds.length > 0) {
-      for (const id of completedIds) {
-        await AiJobRepository.delete(id);
-      }
-    }
-    const freshData = await AiJobRepository.getAll();
-    // sort by creation date descending
-    setJobs(freshData.sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+    setJobs(data.sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
     if(!silent) setLoading(false);
   };
 
   const statusColors: any = {
     pending: "bg-amber-50 text-amber-600 border border-amber-100",
     running: "bg-sky-50 text-sky-600 border border-sky-100",
+    claimed: "bg-sky-50 text-sky-600 border border-sky-100",
+    retry_wait: "bg-amber-50 text-amber-700 border border-amber-100",
+    needs_review: "bg-purple-50 text-purple-700 border border-purple-100",
     completed: "bg-emerald-50 text-emerald-600 border border-emerald-100",
     error: "bg-rose-50 text-rose-600 border border-rose-100",
+    failed: "bg-rose-50 text-rose-600 border border-rose-100",
     rejected: "bg-slate-50 text-slate-500 border border-slate-100",
     cancelled: "bg-rose-50 text-rose-600 border border-rose-100",
   };
@@ -54,8 +50,12 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
   const statusIcons: any = {
     pending: <AlertTriangle className="w-3.5 h-3.5" />,
     running: <RefreshCw className="w-3.5 h-3.5 animate-spin" />,
+    claimed: <RefreshCw className="w-3.5 h-3.5 animate-spin" />,
+    retry_wait: <AlertTriangle className="w-3.5 h-3.5" />,
+    needs_review: <AlertTriangle className="w-3.5 h-3.5" />,
     completed: <CheckCircle2 className="w-3.5 h-3.5" />,
     error: <XCircle className="w-3.5 h-3.5" />,
+    failed: <XCircle className="w-3.5 h-3.5" />,
     rejected: <XCircle className="w-3.5 h-3.5" />,
     cancelled: <XCircle className="w-3.5 h-3.5" />,
   };
