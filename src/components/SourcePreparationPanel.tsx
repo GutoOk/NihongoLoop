@@ -96,9 +96,11 @@ export default function SourcePreparationPanel({
   const queueRealGaps = async () => {
     setIsBusy(true);
     try {
-      const result = await SourcePreparationEngine.createQueueForSource(sourceId, PLAN_OPTIONS);
-      setPlan(result.plan);
-      if (result.run) setRun(result.run);
+      const result = await ProcessingRunRepository.startSourceProcessingRun(sourceId, 'all');
+      if (result?.run_id) {
+        const latestRun = await ProcessingRunRepository.getRun(result.run_id);
+        if (latestRun) setRun(latestRun);
+      }
       await refresh();
     } catch (error: any) {
       setLoadError(error?.message || 'Nao foi possivel gerar a fila das pendencias.');

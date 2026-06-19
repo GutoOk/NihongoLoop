@@ -577,6 +577,196 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.create_or_resume_source_processing_run(
+  p_source_id UUID,
+  p_user_id TEXT,
+  p_run_mode TEXT DEFAULT 'all',
+  p_model TEXT DEFAULT 'gemini-2.5-flash-lite',
+  p_prompt_version TEXT DEFAULT 'worker-orchestrated:2026-06-v1'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  selected_run processing_runs;
+  selected_stage_id UUID;
+  selected_stage TEXT;
+  job_rows JSONB;
+  created_count INTEGER := 0;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM sources WHERE id = p_source_id AND user_id = p_user_id) THEN
+    RAISE EXCEPTION 'Fonte nao encontrada para usuario.';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtext('source_run:' || p_source_id::TEXT || ':' || p_user_id));
+
+  SELECT * INTO selected_run
+  FROM processing_runs
+  WHERE source_id = p_source_id
+    AND user_id = p_user_id
+    AND status IN ('pending','planning','running','paused','needs_review')
+  ORDER BY created_at DESC
+  LIMIT 1
+  FOR UPDATE;
+
+  IF selected_run.id IS NULL THEN
+    INSERT INTO processing_runs(user_id, source_id, status, run_mode, started_at, current_step)
+    VALUES (p_user_id, p_source_id, 'running', p_run_mode, NOW(), 'Run criada pelo banco; worker persistente fara a orquestracao.')
+    RETURNING * INTO selected_run;
+  ELSE
+    UPDATE processing_runs
+    SET status = 'running',
+        cancel_requested = FALSE,
+        finished_at = NULL,
+        current_step = 'Run retomada pelo banco; worker persistente fara a orquestracao.',
+        updated_at = NOW()
+    WHERE id = selected_run.id
+    RETURNING * INTO selected_run;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM sentences
+    WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NULL
+  ) THEN
+    selected_stage := 'translation';
+  ELSIF EXISTS (
+    SELECT 1 FROM sentences
+    WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NOT NULL AND (kana IS NULL OR romaji IS NULL)
+  ) THEN
+    selected_stage := 'reading';
+  ELSIF EXISTS (
+    SELECT 1 FROM sentences
+    WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NOT NULL AND kana IS NOT NULL AND romaji IS NOT NULL AND terms_source IS NULL
+  ) THEN
+    selected_stage := 'lexical_analysis';
+  ELSE
+    UPDATE processing_runs
+    SET status = 'completed',
+        current_step = 'Nada a enfileirar: fonte ja esta preparada.',
+        finished_at = NOW(),
+        updated_at = NOW()
+    WHERE id = selected_run.id;
+    RETURN jsonb_build_object('run_id', selected_run.id, 'stage', NULL, 'created_jobs', 0, 'status', 'completed');
+  END IF;
+
+  INSERT INTO processing_run_stages(user_id, run_id, stage, status, started_at)
+  VALUES (p_user_id, selected_run.id, selected_stage, 'running', NOW())
+  ON CONFLICT (run_id, stage)
+  DO UPDATE SET status = 'running', blocked_reason = NULL, updated_at = NOW()
+  RETURNING id INTO selected_stage_id;
+
+  IF selected_stage = 'translation' THEN
+    SELECT COALESCE(jsonb_agg(row_to_json(job_payload)::jsonb), '[]'::jsonb) INTO job_rows
+    FROM (
+      SELECT
+        p_user_id AS user_id,
+        selected_run.id AS run_id,
+        selected_stage_id AS stage_id,
+        selected_stage AS stage,
+        'translate_sentence' AS type,
+        'sentence' AS target_type,
+        s.id AS target_id,
+        300 AS priority,
+        encode(digest(jsonb_build_object(
+          'targetType', 'sentence',
+          'targetId', s.id,
+          'payload', jsonb_build_object('id', s.id, 'sentence', s.japanese, 'japanese', s.japanese, 'sourceId', p_source_id),
+          'promptVersion', p_prompt_version,
+          'model', p_model
+        )::text, 'sha256'), 'hex') AS target_hash,
+        encode(digest(jsonb_build_object(
+          'type', 'translate_sentence',
+          'targetType', 'sentence',
+          'targetId', s.id,
+          'japanese', s.japanese,
+          'promptVersion', p_prompt_version,
+          'model', p_model
+        )::text, 'sha256'), 'hex') AS input_hash,
+        'translate_sentence:sentence:' || s.id AS job_key,
+        p_prompt_version AS prompt_version,
+        p_model AS model_version,
+        p_model AS model,
+        jsonb_build_object('id', s.id, 'sentence', s.japanese, 'japanese', s.japanese, 'sourceId', p_source_id) AS payload,
+        jsonb_build_object('id', s.id, 'sentence', s.japanese, 'japanese', s.japanese, 'sourceId', p_source_id) AS input,
+        3 AS max_attempts
+      FROM sentences s
+      WHERE s.source_id = p_source_id AND s.user_id = p_user_id AND s.status <> 'reviewed' AND s.portuguese IS NULL
+      ORDER BY s.order_index
+    ) job_payload;
+  ELSIF selected_stage = 'reading' THEN
+    SELECT COALESCE(jsonb_agg(row_to_json(job_payload)::jsonb), '[]'::jsonb) INTO job_rows
+    FROM (
+      SELECT
+        p_user_id AS user_id,
+        selected_run.id AS run_id,
+        selected_stage_id AS stage_id,
+        selected_stage AS stage,
+        'generate_sentence_reading' AS type,
+        'sentence' AS target_type,
+        s.id AS target_id,
+        200 AS priority,
+        encode(digest(jsonb_build_object('targetType','sentence','targetId',s.id,'payload',jsonb_build_object('id',s.id,'sentence',s.japanese,'japanese',s.japanese,'portuguese',s.portuguese,'sourceId',p_source_id),'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS target_hash,
+        encode(digest(jsonb_build_object('type','generate_sentence_reading','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS input_hash,
+        'generate_sentence_reading:sentence:' || s.id AS job_key,
+        p_prompt_version AS prompt_version,
+        p_model AS model_version,
+        p_model AS model,
+        jsonb_build_object('id', s.id, 'sentence', s.japanese, 'japanese', s.japanese, 'portuguese', s.portuguese, 'sourceId', p_source_id) AS payload,
+        jsonb_build_object('id', s.id, 'sentence', s.japanese, 'japanese', s.japanese, 'portuguese', s.portuguese, 'sourceId', p_source_id) AS input,
+        3 AS max_attempts
+      FROM sentences s
+      WHERE s.source_id = p_source_id AND s.user_id = p_user_id AND s.status <> 'reviewed' AND s.portuguese IS NOT NULL AND (s.kana IS NULL OR s.romaji IS NULL)
+      ORDER BY s.order_index
+    ) job_payload;
+  ELSE
+    SELECT COALESCE(jsonb_agg(row_to_json(job_payload)::jsonb), '[]'::jsonb) INTO job_rows
+    FROM (
+      SELECT
+        p_user_id AS user_id,
+        selected_run.id AS run_id,
+        selected_stage_id AS stage_id,
+        selected_stage AS stage,
+        'detect_sentence_terms' AS type,
+        'sentence' AS target_type,
+        s.id AS target_id,
+        150 AS priority,
+        encode(digest(jsonb_build_object('targetType','sentence','targetId',s.id,'payload',jsonb_build_object('id',s.id,'sentence',s.japanese,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'sourceId',p_source_id),'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS target_hash,
+        encode(digest(jsonb_build_object('type','detect_sentence_terms','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS input_hash,
+        'detect_sentence_terms:sentence:' || s.id AS job_key,
+        p_prompt_version AS prompt_version,
+        p_model AS model_version,
+        p_model AS model,
+        jsonb_build_object('id', s.id, 'sentence', s.japanese, 'japanese', s.japanese, 'portuguese', s.portuguese, 'kana', s.kana, 'romaji', s.romaji, 'sourceId', p_source_id) AS payload,
+        jsonb_build_object('id', s.id, 'sentence', s.japanese, 'japanese', s.japanese, 'portuguese', s.portuguese, 'kana', s.kana, 'romaji', s.romaji, 'sourceId', p_source_id) AS input,
+        3 AS max_attempts
+      FROM sentences s
+      WHERE s.source_id = p_source_id AND s.user_id = p_user_id AND s.status <> 'reviewed' AND s.portuguese IS NOT NULL AND s.kana IS NOT NULL AND s.romaji IS NOT NULL AND s.terms_source IS NULL
+      ORDER BY s.order_index
+    ) job_payload;
+  END IF;
+
+  created_count := public.enqueue_ai_jobs_bulk(job_rows);
+
+  UPDATE processing_run_stages
+  SET planned_jobs = created_count, status = CASE WHEN created_count = 0 THEN 'completed' ELSE 'running' END, updated_at = NOW()
+  WHERE id = selected_stage_id;
+
+  UPDATE processing_runs
+  SET status = CASE WHEN created_count = 0 THEN 'completed' ELSE 'running' END,
+      current_step = selected_stage || ': ' || created_count || ' job(s) individuais planejados pelo banco.',
+      planned_jobs = planned_jobs + created_count,
+      pending_jobs = pending_jobs + created_count,
+      created_jobs = created_jobs + created_count,
+      finished_at = CASE WHEN created_count = 0 THEN NOW() ELSE NULL END,
+      updated_at = NOW()
+  WHERE id = selected_run.id;
+
+  RETURN jsonb_build_object('run_id', selected_run.id, 'stage_id', selected_stage_id, 'stage', selected_stage, 'created_jobs', created_count, 'status', CASE WHEN created_count = 0 THEN 'completed' ELSE 'running' END);
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.release_claimed_ai_job(p_job_id UUID, p_worker_id TEXT)
 RETURNS VOID
 LANGUAGE plpgsql
@@ -1096,6 +1286,7 @@ $$;
 REVOKE ALL ON FUNCTION public.get_ai_queue_health() FROM public;
 REVOKE ALL ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID) FROM public;
 REVOKE ALL ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) FROM public;
+REVOKE ALL ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) FROM public;
@@ -1107,6 +1298,7 @@ REVOKE ALL ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) FR
 GRANT EXECUTE ON FUNCTION public.get_ai_queue_health() TO service_role;
 GRANT EXECUTE ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID) TO service_role;
 GRANT EXECUTE ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) TO service_role;
+GRANT EXECUTE ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) TO service_role;

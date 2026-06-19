@@ -3,6 +3,20 @@ import { ProcessingRun } from '../types';
 import { getUserId } from './utils';
 
 export class ProcessingRunRepository {
+  static async startSourceProcessingRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<{ run_id: string; stage?: string | null; created_jobs: number; status: string } | null> {
+    if (!isSupabaseConfigured) return null;
+    const { data, error } = await supabase!.rpc('create_or_resume_source_processing_run', {
+      p_source_id: sourceId,
+      p_user_id: getUserId(),
+      p_run_mode: runMode,
+    });
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao iniciar processamento persistido: ${error.message}`);
+    }
+    return data as any;
+  }
+
   static async createRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<ProcessingRun | null> {
     if (!isSupabaseConfigured) return null;
     const { data, error } = await supabase!.from('processing_runs').insert({
