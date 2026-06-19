@@ -4,7 +4,6 @@ import { ProcessingRunRepository } from '../../repositories';
 
 vi.mock('../../repositories', () => ({
   ProcessingRunRepository: {
-    failRun: vi.fn(),
     startSourceProcessingRun: vi.fn(),
   },
 }));
@@ -37,11 +36,9 @@ describe('SourcePreparationService', () => {
     expect(ProcessingRunRepository.startSourceProcessingRun).toHaveBeenCalledWith('source-1', 'all');
   });
 
-  it('marks the run as failed when the database orchestrator rejects', async () => {
+  it('propagates database orchestrator errors without mutating the run in the browser', async () => {
     vi.mocked(ProcessingRunRepository.startSourceProcessingRun).mockRejectedValueOnce(new Error('schema mismatch'));
 
     await expect(SourcePreparationService.prepareSource('source-1', options, 'run-1')).rejects.toThrow('schema mismatch');
-
-    expect(ProcessingRunRepository.failRun).toHaveBeenCalledWith('run-1', 'schema mismatch');
   });
 });

@@ -14,15 +14,7 @@ export interface PreparationOptions {
 }
 
 export class SourcePreparationService {
-  static async prepareSource(sourceId: string, options: PreparationOptions, runId?: string): Promise<void> {
-    try {
-      void runId;
-      await ProcessingRunRepository.startSourceProcessingRun(sourceId, options.runMode || 'all');
-    } catch (error: any) {
-      if (runId) {
-        await ProcessingRunRepository.failRun(runId, error?.message || 'Falha ao preparar fonte.');
-      }
-      throw error;
-    }
+  static async prepareSource(sourceId: string, options: PreparationOptions, _runId?: string): Promise<void> {
+    await ProcessingRunRepository.startSourceProcessingRun(sourceId, options.runMode || 'all');
   }
 }

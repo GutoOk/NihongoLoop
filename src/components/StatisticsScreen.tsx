@@ -56,9 +56,7 @@ export default function StatisticsScreen({
       isSupabaseConfigured
         ? supabase!
             .from("sentences")
-            .select(
-              "id, source_id, favorite, difficulty, portuguese, kana, status",
-            )
+            .select("id, source_id, portuguese, kana, status")
             .eq("user_id", getUserId())
         : { data: [] },
       isSupabaseConfigured
@@ -76,7 +74,7 @@ export default function StatisticsScreen({
       isSupabaseConfigured
         ? supabase!
             .from("sentence_progress")
-            .select("sentence_id, seen_count, wrong_count")
+            .select("sentence_id, seen_count, wrong_count, favorite, difficulty")
             .eq("user_id", getUserId())
         : { data: [] },
       isSupabaseConfigured
@@ -88,7 +86,16 @@ export default function StatisticsScreen({
     ]);
 
     const s = sources || [];
-    const sen = sentences || [];
+    const sp = sentProg || [];
+    const progressBySentence = new Map(sp.map((p: any) => [p.sentence_id, p]));
+    const sen = (sentences || []).map((sentence: any) => {
+      const progress = progressBySentence.get(sentence.id) as any;
+      return {
+        ...sentence,
+        favorite: Boolean(progress?.favorite),
+        difficulty: progress?.difficulty ?? 0,
+      };
+    });
     const w = words || [];
     const rawTerms = terms || [];
     const st = rawTerms.map((t: any) => ({
@@ -96,7 +103,6 @@ export default function StatisticsScreen({
       sentence_id: t.sentence_id,
       dictionary_entry_id: t.dictionary_entry_id || t.dictionary_forms?.dictionary_entry_id || null,
     }));
-    const sp = sentProg || [];
     const dp = dictProg || [];
 
     const sentenceStudiedCount = sp.filter((p) => p.seen_count > 0).length;

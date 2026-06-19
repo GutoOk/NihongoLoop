@@ -26,9 +26,9 @@ import {
   SentenceRepository,
   TermRepository,
   SourceRepository,
+  ProcessingRunRepository,
 } from "../repositories";
 import { SpeechService } from "../services/speechService";
-import { AiJobService } from "../services/aiJobService";
 import { DictionaryEntry, Sentence, SentenceTerm } from "../types";
 import { useModal } from "./ModalProvider";
 
@@ -234,10 +234,15 @@ export default function DictionaryEntryScreen({
   const handleEnrich = async () => {
     if (!entry) return;
     try {
-      await AiJobService.requestDictionaryEnrichment(entry.id, entry.lemma);
+      const sourceId = connectedSources[0]?.id;
+      if (!sourceId) {
+        showAlert("Fila", "Este verbete ainda nao esta associado a uma fonte processavel.");
+        return;
+      }
+      await ProcessingRunRepository.startSourceProcessingRun(sourceId, "dictionary");
       showAlert(
         "Sucesso",
-        "Fila de IA atualizada! O enriquecimento inteligente foi solicitado para esta palavra.",
+        "A fonte associada foi retomada; o banco criara os jobs de dicionario necessarios.",
       );
     } catch (e) {
       showAlert(

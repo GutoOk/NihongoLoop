@@ -385,8 +385,6 @@ function JobList({ jobs }: { jobs: AiJob[] }) {
       {jobs.map((job) => {
         const displayLabel = getJobHumanName(job.type);
         const label = getJobLabel(job, displayLabel);
-        const input = typeof job.input === 'string' ? {} : job.input || {};
-        const itemCount = Array.isArray(input.items) ? input.items.length : 1;
         return (
           <div key={job.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -395,7 +393,6 @@ function JobList({ jobs }: { jobs: AiJob[] }) {
                 <div className="mt-1 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
                   <span>{displayLabel}</span>
                   <span>{job.target_type}:{job.target_id}</span>
-                  <span>{itemCount} itens</span>
                   <span>{job.attempts || 0} tentativas</span>
                   {job.worker_id && <span>{job.worker_id}</span>}
                   {job.latency_ai_ms ? <span>IA {job.latency_ai_ms}ms</span> : null}
@@ -420,8 +417,6 @@ function JobList({ jobs }: { jobs: AiJob[] }) {
 }
 
 function getJobLabel(job: AiJob, fallback: string): string {
-  const input = typeof job.input === 'string' ? {} : job.input || {};
-  if (typeof input.label === 'string') return input.label;
   return fallback;
 }
 

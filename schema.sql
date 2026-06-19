@@ -1,6 +1,8 @@
 -- Nihongo Loop clean Supabase baseline
 -- This schema is intended for a fresh database reset/rebuild.
 
+BEGIN;
+
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 DROP TABLE IF EXISTS study_session_items CASCADE;
@@ -66,12 +68,21 @@ CREATE TABLE processing_runs (
   created_jobs INTEGER DEFAULT 0,
   planned_jobs INTEGER DEFAULT 0,
   pending_jobs INTEGER DEFAULT 0,
+  claimed_jobs INTEGER DEFAULT 0,
+  running_jobs INTEGER DEFAULT 0,
   processed_jobs INTEGER DEFAULT 0,
   completed_jobs INTEGER DEFAULT 0,
+  failed_jobs INTEGER DEFAULT 0,
   retry_jobs INTEGER DEFAULT 0,
   review_jobs INTEGER DEFAULT 0,
+  needs_review_jobs INTEGER DEFAULT 0,
   cancelled_jobs INTEGER DEFAULT 0,
   obsolete_jobs INTEGER DEFAULT 0,
+  total_cost_estimate NUMERIC,
+  total_cost_actual NUMERIC,
+  total_input_tokens INTEGER DEFAULT 0,
+  total_output_tokens INTEGER DEFAULT 0,
+  ai_call_count INTEGER DEFAULT 0,
   applied_items INTEGER DEFAULT 0,
   failed_items INTEGER DEFAULT 0,
   cancel_requested BOOLEAN DEFAULT FALSE,
@@ -91,9 +102,20 @@ CREATE TABLE processing_run_stages (
   stage TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   planned_jobs INTEGER DEFAULT 0,
+  pending_jobs INTEGER DEFAULT 0,
+  claimed_jobs INTEGER DEFAULT 0,
+  running_jobs INTEGER DEFAULT 0,
   completed_jobs INTEGER DEFAULT 0,
   failed_jobs INTEGER DEFAULT 0,
   retry_jobs INTEGER DEFAULT 0,
+  needs_review_jobs INTEGER DEFAULT 0,
+  cancelled_jobs INTEGER DEFAULT 0,
+  obsolete_jobs INTEGER DEFAULT 0,
+  total_input_tokens INTEGER DEFAULT 0,
+  total_output_tokens INTEGER DEFAULT 0,
+  total_cost_estimate NUMERIC,
+  total_cost_actual NUMERIC,
+  ai_call_count INTEGER DEFAULT 0,
   blocked_reason TEXT,
   started_at TIMESTAMPTZ,
   completed_at TIMESTAMPTZ,
@@ -213,6 +235,7 @@ CREATE TABLE ai_jobs (
   user_id TEXT NOT NULL,
   run_id UUID REFERENCES processing_runs(id) ON DELETE SET NULL,
   stage_id UUID REFERENCES processing_run_stages(id) ON DELETE SET NULL,
+  retry_of_job_id UUID REFERENCES ai_jobs(id) ON DELETE SET NULL,
   stage TEXT,
   type TEXT NOT NULL,
   target_type TEXT NOT NULL,
@@ -337,14 +360,21 @@ CREATE TABLE app_admins (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+INSERT INTO app_admins(user_id, email)
+SELECT id, email
+FROM auth.users
+WHERE email = COALESCE(NULLIF(current_setting('app.nihongo_admin_email', true), ''), 'admin@nihongo-loop.local')
+ON CONFLICT (user_id) DO UPDATE
+SET email = EXCLUDED.email;
+
 ALTER TABLE dictionary_entries ADD CONSTRAINT uk_dictionary_entries_user_key UNIQUE (user_id, unique_key);
 ALTER TABLE dictionary_forms ADD CONSTRAINT uk_dictionary_forms_user_key UNIQUE (user_id, unique_key);
 ALTER TABLE dictionary_senses ADD CONSTRAINT uk_dictionary_senses_user_entry_meaning UNIQUE (user_id, dictionary_entry_id, meaning);
 ALTER TABLE sentence_terms ADD CONSTRAINT uk_sentence_terms_span_form UNIQUE (sentence_id, start_index, end_index, dictionary_form_id);
 ALTER TABLE sentence_progress ADD CONSTRAINT uk_sentence_progress UNIQUE (user_id, sentence_id);
 ALTER TABLE dictionary_progress ADD CONSTRAINT uk_dictionary_progress UNIQUE (user_id, dictionary_entry_id);
-ALTER TABLE ai_jobs ADD CONSTRAINT ck_ai_jobs_status CHECK (status IN ('pending','claimed','running','completed','retry_wait','failed','needs_review','cancelled','obsolete'));
-ALTER TABLE processing_runs ADD CONSTRAINT ck_processing_runs_status CHECK (status IN ('pending','planning','running','completed','failed','cancelled','paused','needs_review'));
+ALTER TABLE ai_jobs ADD CONSTRAINT ck_ai_jobs_status CHECK (status IN ('pending','claimed','running','completed','retry_wait','failed','needs_review','cancelled','obsolete','error','rejected','applied'));
+ALTER TABLE processing_runs ADD CONSTRAINT ck_processing_runs_status CHECK (status IN ('pending','planning','running','completed','failed','error','cancelled','paused','needs_review'));
 ALTER TABLE processing_run_stages ADD CONSTRAINT ck_processing_run_stages_status CHECK (status IN ('pending','running','completed','failed','cancelled','blocked','needs_review'));
 
 CREATE OR REPLACE FUNCTION public.is_app_admin()
@@ -361,6 +391,39 @@ $$;
 
 REVOKE ALL ON FUNCTION public.is_app_admin() FROM public;
 GRANT EXECUTE ON FUNCTION public.is_app_admin() TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.request_user_id(p_user_id TEXT DEFAULT NULL)
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_uid TEXT := auth.uid()::TEXT;
+BEGIN
+  IF auth.role() = 'service_role' THEN
+    IF p_user_id IS NULL OR BTRIM(p_user_id) = '' THEN
+      RAISE EXCEPTION 'service_role precisa informar user_id';
+    END IF;
+    RETURN p_user_id;
+  END IF;
+
+  IF current_uid IS NULL THEN
+    RAISE EXCEPTION 'Usuario autenticado obrigatorio';
+  END IF;
+  IF NOT public.is_app_admin() THEN
+    RAISE EXCEPTION 'Admin obrigatorio';
+  END IF;
+  IF p_user_id IS NOT NULL AND p_user_id <> current_uid THEN
+    RAISE EXCEPTION 'p_user_id nao pode divergir do usuario autenticado';
+  END IF;
+  RETURN current_uid;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.request_user_id(TEXT) FROM public;
+GRANT EXECUTE ON FUNCTION public.request_user_id(TEXT) TO authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.touch_updated_at()
 RETURNS trigger
@@ -492,6 +555,8 @@ BEGIN
       j.id,
       j.user_id,
       j.type,
+      j.priority,
+      j.created_at,
       COALESCE((p_type_limits ->> j.type)::INTEGER, p_limit) AS type_limit,
       COALESCE((
         SELECT COUNT(*)::INTEGER
@@ -506,16 +571,20 @@ BEGIN
           AND active_type.status IN ('claimed','running')
       ), 0) AS active_type_count,
       ROW_NUMBER() OVER (PARTITION BY j.user_id ORDER BY j.priority DESC, j.created_at ASC) AS user_rank,
-      ROW_NUMBER() OVER (PARTITION BY j.type ORDER BY j.priority DESC, j.created_at ASC) AS type_rank,
-      ROW_NUMBER() OVER (ORDER BY j.priority DESC, j.created_at ASC) AS global_rank
+      ROW_NUMBER() OVER (PARTITION BY j.type ORDER BY j.priority DESC, j.created_at ASC) AS type_rank
     FROM locked_candidates j
+  ),
+  eligible AS (
+    SELECT *
+    FROM candidates
+    WHERE user_rank <= GREATEST(0, p_user_limit - active_user_count)
+      AND type_rank <= GREATEST(0, type_limit - active_type_count)
   ),
   picked AS (
     SELECT id
-    FROM candidates, capacity
-    WHERE global_rank <= capacity.global_capacity
-      AND user_rank <= GREATEST(0, p_user_limit - active_user_count)
-      AND type_rank <= GREATEST(0, type_limit - active_type_count)
+    FROM eligible, capacity
+    ORDER BY type_rank ASC, priority DESC, created_at ASC
+    LIMIT (SELECT global_capacity FROM capacity)
   )
   UPDATE ai_jobs j
   SET
@@ -635,7 +704,10 @@ DECLARE
   job_rows JSONB;
   created_count INTEGER := 0;
   active_count INTEGER := 0;
+  terminal_failure_exists BOOLEAN := FALSE;
 BEGIN
+  p_user_id := public.request_user_id(p_user_id);
+
   IF NOT EXISTS (SELECT 1 FROM sources WHERE id = p_source_id AND user_id = p_user_id) THEN
     RAISE EXCEPTION 'Fonte nao encontrada para usuario.';
   END IF;
@@ -676,21 +748,47 @@ BEGIN
     RETURN jsonb_build_object('run_id', selected_run.id, 'stage', NULL, 'created_jobs', 0, 'active_jobs', active_count, 'status', 'running');
   END IF;
 
-  IF EXISTS (
+  IF p_run_mode = 'translate' AND NOT EXISTS (
+    SELECT 1 FROM sentences
+    WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NULL
+  ) THEN
+    UPDATE processing_runs
+    SET status = 'completed',
+        current_step = 'Nada a traduzir nesta fonte.',
+        finished_at = NOW(),
+        updated_at = NOW()
+    WHERE id = selected_run.id;
+    RETURN jsonb_build_object('run_id', selected_run.id, 'stage', NULL, 'created_jobs', 0, 'status', 'completed');
+  END IF;
+
+  IF p_run_mode IN ('all','translate') AND EXISTS (
     SELECT 1 FROM sentences
     WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NULL
   ) THEN
     selected_stage := 'translation';
-  ELSIF EXISTS (
+  ELSIF p_run_mode IN ('all','analyze') AND EXISTS (
     SELECT 1 FROM sentences
     WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NOT NULL AND (kana IS NULL OR romaji IS NULL)
   ) THEN
     selected_stage := 'reading';
-  ELSIF EXISTS (
+  ELSIF p_run_mode IN ('all','analyze') AND EXISTS (
     SELECT 1 FROM sentences
     WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NOT NULL AND kana IS NOT NULL AND romaji IS NOT NULL AND terms_source IS NULL
   ) THEN
     selected_stage := 'lexical_analysis';
+  ELSIF p_run_mode IN ('all','dictionary') AND EXISTS (
+    SELECT 1
+    FROM sentence_terms st
+    JOIN sentences s ON s.id = st.sentence_id
+    JOIN dictionary_forms df ON df.id = st.dictionary_form_id
+    JOIN dictionary_entries de ON de.id = df.dictionary_entry_id
+    WHERE s.source_id = p_source_id
+      AND s.user_id = p_user_id
+      AND de.user_id = p_user_id
+      AND de.status <> 'reviewed'
+      AND (de.main_meaning IS NULL OR de.kana IS NULL OR de.romaji IS NULL OR de.status = 'pending')
+  ) THEN
+    selected_stage := 'dictionary_enrichment';
   ELSE
     UPDATE processing_runs
     SET status = 'completed',
@@ -706,6 +804,31 @@ BEGIN
   ON CONFLICT (run_id, stage)
   DO UPDATE SET status = 'running', blocked_reason = NULL, updated_at = NOW()
   RETURNING id INTO selected_stage_id;
+
+  SELECT EXISTS (
+    SELECT 1
+    FROM ai_jobs
+    WHERE run_id = selected_run.id
+      AND stage_id = selected_stage_id
+      AND status IN ('failed','needs_review')
+  ) INTO terminal_failure_exists;
+
+  IF terminal_failure_exists THEN
+    UPDATE processing_run_stages
+    SET status = 'needs_review',
+        blocked_reason = 'Falha terminal exige retry manual.',
+        updated_at = NOW()
+    WHERE id = selected_stage_id;
+
+    UPDATE processing_runs
+    SET status = 'needs_review',
+        current_step = 'Falha terminal exige retry manual.',
+        updated_at = NOW()
+    WHERE id = selected_run.id;
+
+    PERFORM refresh_processing_run_snapshot(selected_run.id);
+    RETURN jsonb_build_object('run_id', selected_run.id, 'stage_id', selected_stage_id, 'stage', selected_stage, 'created_jobs', 0, 'status', 'needs_review');
+  END IF;
 
   IF selected_stage = 'translation' THEN
     SELECT COALESCE(jsonb_agg(row_to_json(job_payload)::jsonb), '[]'::jsonb) INTO job_rows
@@ -750,6 +873,13 @@ BEGIN
         3 AS max_attempts
       FROM sentences s
       WHERE s.source_id = p_source_id AND s.user_id = p_user_id AND s.status <> 'reviewed' AND s.portuguese IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM ai_jobs old
+          WHERE old.run_id = selected_run.id
+            AND old.stage_id = selected_stage_id
+            AND old.target_id = s.id
+            AND old.status IN ('failed','needs_review')
+        )
       ORDER BY s.order_index
     ) job_payload;
   ELSIF selected_stage = 'reading' THEN
@@ -775,9 +905,16 @@ BEGIN
         3 AS max_attempts
       FROM sentences s
       WHERE s.source_id = p_source_id AND s.user_id = p_user_id AND s.status <> 'reviewed' AND s.portuguese IS NOT NULL AND (s.kana IS NULL OR s.romaji IS NULL)
+        AND NOT EXISTS (
+          SELECT 1 FROM ai_jobs old
+          WHERE old.run_id = selected_run.id
+            AND old.stage_id = selected_stage_id
+            AND old.target_id = s.id
+            AND old.status IN ('failed','needs_review')
+        )
       ORDER BY s.order_index
     ) job_payload;
-  ELSE
+  ELSIF selected_stage = 'lexical_analysis' THEN
     SELECT COALESCE(jsonb_agg(row_to_json(job_payload)::jsonb), '[]'::jsonb) INTO job_rows
     FROM (
       SELECT
@@ -800,7 +937,73 @@ BEGIN
         3 AS max_attempts
       FROM sentences s
       WHERE s.source_id = p_source_id AND s.user_id = p_user_id AND s.status <> 'reviewed' AND s.portuguese IS NOT NULL AND s.kana IS NOT NULL AND s.romaji IS NOT NULL AND s.terms_source IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM ai_jobs old
+          WHERE old.run_id = selected_run.id
+            AND old.stage_id = selected_stage_id
+            AND old.target_id = s.id
+            AND old.status IN ('failed','needs_review')
+        )
       ORDER BY s.order_index
+    ) job_payload;
+  ELSE
+    SELECT COALESCE(jsonb_agg(row_to_json(job_payload)::jsonb), '[]'::jsonb) INTO job_rows
+    FROM (
+      WITH eligible AS (
+        SELECT DISTINCT ON (de.id)
+          de.id,
+          de.user_id,
+          de.lemma,
+          de.kana,
+          de.romaji,
+          de.type,
+          de.main_meaning,
+          jsonb_build_object('id', de.id, 'entryId', de.id, 'lemma', de.lemma, 'kana', de.kana, 'romaji', de.romaji, 'type', de.type, 'sourceId', p_source_id) AS payload
+        FROM sentence_terms st
+        JOIN sentences s ON s.id = st.sentence_id
+        JOIN dictionary_forms df ON df.id = st.dictionary_form_id
+        JOIN dictionary_entries de ON de.id = df.dictionary_entry_id
+        WHERE s.source_id = p_source_id
+          AND s.user_id = p_user_id
+          AND de.user_id = p_user_id
+          AND de.status <> 'reviewed'
+          AND (de.main_meaning IS NULL OR de.kana IS NULL OR de.romaji IS NULL OR de.status = 'pending')
+          AND NOT EXISTS (
+            SELECT 1 FROM ai_jobs old
+            WHERE old.run_id = selected_run.id
+              AND old.stage_id = selected_stage_id
+              AND old.target_id = de.id
+              AND old.status IN ('failed','needs_review')
+          )
+        ORDER BY de.id, de.updated_at ASC, de.created_at ASC
+      ),
+      hashed AS (
+        SELECT
+          *,
+          encode(digest(jsonb_build_object('targetType','dictionary_entry','targetId',id,'payload',payload,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS target_hash,
+          encode(digest(jsonb_build_object('type','enrich_dictionary_entry','targetType','dictionary_entry','targetId',id,'lemma',lemma,'kana',kana,'romaji',romaji,'entryType',type,'mainMeaning',main_meaning,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS input_hash
+        FROM eligible
+      )
+      SELECT
+        user_id,
+        selected_run.id AS run_id,
+        selected_stage_id AS stage_id,
+        selected_stage AS stage,
+        'enrich_dictionary_entry' AS type,
+        'dictionary_entry' AS target_type,
+        id AS target_id,
+        100 AS priority,
+        target_hash,
+        input_hash,
+        'enrich_dictionary_entry:dictionary_entry:' || id || ':' || input_hash AS job_key,
+        p_prompt_version AS prompt_version,
+        p_model AS model_version,
+        p_model AS model,
+        payload,
+        payload AS input,
+        3 AS max_attempts
+      FROM hashed
+      ORDER BY lemma, id
     ) job_payload;
   END IF;
 
@@ -839,6 +1042,8 @@ DECLARE
   job_rows JSONB;
   created_count INTEGER := 0;
 BEGIN
+  p_user_id := public.request_user_id(p_user_id);
+
   IF p_entry_ids IS NULL OR array_length(p_entry_ids, 1) IS NULL THEN
     RETURN 0;
   END IF;
@@ -948,6 +1153,8 @@ DECLARE
   stage_value TEXT;
   priority_value INTEGER;
 BEGIN
+  p_user_id := public.request_user_id(p_user_id);
+
   IF p_type NOT IN ('translate_sentence', 'generate_sentence_reading') THEN
     RAISE EXCEPTION 'Tipo de job manual de frase nao permitido: %', p_type;
   END IF;
@@ -1122,15 +1329,44 @@ BEGIN
   SET
     planned_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id), 0),
     pending_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'pending'), 0),
+    claimed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'claimed'), 0),
+    running_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'running'), 0),
     processed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status IN ('completed','failed','needs_review','cancelled','obsolete')), 0),
     completed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'completed'), 0),
+    failed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'failed'), 0),
     retry_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'retry_wait'), 0),
     review_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'needs_review'), 0),
+    needs_review_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'needs_review'), 0),
     cancelled_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'cancelled'), 0),
     obsolete_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'obsolete'), 0),
     failed_items = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'failed'), 0),
+    total_input_tokens = COALESCE((SELECT SUM(input_tokens) FROM ai_jobs WHERE run_id = p_run_id), 0),
+    total_output_tokens = COALESCE((SELECT SUM(output_tokens) FROM ai_jobs WHERE run_id = p_run_id), 0),
+    total_cost_estimate = (SELECT SUM(cost_estimate) FROM ai_jobs WHERE run_id = p_run_id AND cost_estimate IS NOT NULL),
+    total_cost_actual = (SELECT SUM(cost_actual) FROM ai_jobs WHERE run_id = p_run_id AND cost_actual IS NOT NULL),
+    ai_call_count = COALESCE((SELECT COUNT(*) FROM ai_job_attempts WHERE run_id = p_run_id), 0),
     updated_at = NOW()
   WHERE pr.id = p_run_id;
+
+  UPDATE processing_run_stages s
+  SET
+    planned_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id), 0),
+    pending_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'pending'), 0),
+    claimed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'claimed'), 0),
+    running_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'running'), 0),
+    completed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'completed'), 0),
+    failed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'failed'), 0),
+    retry_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'retry_wait'), 0),
+    needs_review_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'needs_review'), 0),
+    cancelled_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'cancelled'), 0),
+    obsolete_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'obsolete'), 0),
+    total_input_tokens = COALESCE((SELECT SUM(input_tokens) FROM ai_jobs WHERE stage_id = s.id), 0),
+    total_output_tokens = COALESCE((SELECT SUM(output_tokens) FROM ai_jobs WHERE stage_id = s.id), 0),
+    total_cost_estimate = (SELECT SUM(cost_estimate) FROM ai_jobs WHERE stage_id = s.id AND cost_estimate IS NOT NULL),
+    total_cost_actual = (SELECT SUM(cost_actual) FROM ai_jobs WHERE stage_id = s.id AND cost_actual IS NOT NULL),
+    ai_call_count = COALESCE((SELECT COUNT(*) FROM ai_job_attempts WHERE run_id = p_run_id AND job_id IN (SELECT id FROM ai_jobs WHERE stage_id = s.id)), 0),
+    updated_at = NOW()
+  WHERE s.run_id = p_run_id;
 END;
 $$;
 
@@ -1146,6 +1382,8 @@ AS $$
 DECLARE
   cancelled_count INTEGER := 0;
 BEGIN
+  p_user_id := public.request_user_id(p_user_id);
+
   UPDATE ai_jobs
   SET status = 'cancelled',
       error = 'Cancelado pelo usuario.',
@@ -1223,6 +1461,8 @@ DECLARE
   run_ids UUID[];
   cancelled_count INTEGER := 0;
 BEGIN
+  p_user_id := public.request_user_id(p_user_id);
+
   SELECT COALESCE(array_agg(id), ARRAY[]::UUID[]) INTO run_ids
   FROM processing_runs
   WHERE source_id = p_source_id AND user_id = p_user_id;
@@ -1296,6 +1536,8 @@ DECLARE
   run_ids UUID[];
   cancelled_count INTEGER := 0;
 BEGIN
+  p_user_id := public.request_user_id(p_user_id);
+
   SELECT COALESCE(array_agg(id), ARRAY[]::UUID[]) INTO run_ids
   FROM processing_runs
   WHERE user_id = p_user_id
@@ -1359,6 +1601,8 @@ AS $$
 DECLARE
   current_run_id UUID;
 BEGIN
+  p_user_id := public.request_user_id(p_user_id);
+
   SELECT run_id INTO current_run_id
   FROM ai_jobs
   WHERE id = p_job_id AND user_id = p_user_id;
@@ -1412,6 +1656,8 @@ DECLARE
   run_ids UUID[];
   retried_count INTEGER := 0;
 BEGIN
+  p_user_id := public.request_user_id(p_user_id);
+
   SELECT COALESCE(array_agg(DISTINCT run_id) FILTER (WHERE run_id IS NOT NULL), ARRAY[]::UUID[]) INTO run_ids
   FROM ai_jobs
   WHERE user_id = p_user_id
@@ -1428,46 +1674,325 @@ BEGIN
       )
     );
 
-  UPDATE ai_jobs
-  SET status = 'pending',
-      error = NULL,
-      error_code = NULL,
-      error_kind = NULL,
-      error_structured = NULL,
-      attempts = 0,
-      retry_count = 0,
-      retry_at = NULL,
-      claimed_at = NULL,
-      started_at = NULL,
-      completed_at = NULL,
-      locked_by = NULL,
-      locked_until = NULL,
-      lease_expires_at = NULL,
-      worker_id = NULL,
-      cancel_requested = FALSE,
-      last_heartbeat_at = NULL,
-      updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND status IN ('error','failed','retry_wait','needs_review')
-    AND (p_run_id IS NULL OR run_id = p_run_id)
-    AND (p_job_id IS NULL OR id = p_job_id)
-    AND (
-      p_source_id IS NULL
-      OR input->>'sourceId' = p_source_id::TEXT
-      OR payload->>'sourceId' = p_source_id::TEXT
-      OR EXISTS (
-        SELECT 1 FROM processing_runs pr
-        WHERE pr.id = ai_jobs.run_id
-          AND pr.source_id = p_source_id
+  WITH retry_source AS (
+    SELECT *
+    FROM ai_jobs
+    WHERE user_id = p_user_id
+      AND status IN ('error','failed','retry_wait','needs_review')
+      AND (p_run_id IS NULL OR run_id = p_run_id)
+      AND (p_job_id IS NULL OR id = p_job_id)
+      AND (
+        p_source_id IS NULL
+        OR input->>'sourceId' = p_source_id::TEXT
+        OR payload->>'sourceId' = p_source_id::TEXT
+        OR EXISTS (
+          SELECT 1 FROM processing_runs pr
+          WHERE pr.id = ai_jobs.run_id
+            AND pr.source_id = p_source_id
+        )
       )
-    );
+    FOR UPDATE
+  ),
+  inserted AS (
+    INSERT INTO ai_jobs(
+      user_id, run_id, stage_id, retry_of_job_id, stage, type, target_type, target_id,
+      status, priority, target_hash, input_hash, job_key, prompt_version, model_version,
+      model, payload, input, max_attempts
+    )
+    SELECT
+      user_id, run_id, stage_id, id, stage, type, target_type, target_id,
+      'pending', priority, target_hash, input_hash,
+      COALESCE(job_key, type || ':' || target_type || ':' || target_id || ':' || input_hash) || ':retry:' || gen_random_uuid(),
+      prompt_version, model_version, model, payload, input, max_attempts
+    FROM retry_source
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO retried_count FROM inserted;
 
-  GET DIAGNOSTICS retried_count = ROW_COUNT;
+  UPDATE processing_run_stages
+  SET status = 'running',
+      blocked_reason = NULL,
+      updated_at = NOW()
+  WHERE run_id = ANY(run_ids)
+    AND status = 'needs_review';
+
+  UPDATE processing_runs
+  SET status = 'running',
+      current_step = 'Retry manual enfileirado.',
+      updated_at = NOW()
+  WHERE id = ANY(run_ids)
+    AND status = 'needs_review';
 
   PERFORM refresh_processing_run_snapshot(ids.run_id)
   FROM unnest(run_ids) AS ids(run_id);
 
   RETURN retried_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.create_or_resume_source_run(
+  p_source_id UUID,
+  p_run_mode TEXT DEFAULT 'all'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN public.create_or_resume_source_processing_run(p_source_id, NULL, p_run_mode);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.advance_processing_run(
+  p_run_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  selected_run processing_runs;
+  request_user TEXT;
+BEGIN
+  request_user := public.request_user_id(NULL);
+
+  SELECT * INTO selected_run
+  FROM processing_runs
+  WHERE id = p_run_id AND user_id = request_user
+  FOR UPDATE;
+
+  IF selected_run.id IS NULL THEN
+    RAISE EXCEPTION 'Run nao encontrada para usuario.';
+  END IF;
+
+  RETURN public.create_or_resume_source_processing_run(selected_run.source_id, request_user, selected_run.run_mode);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.cancel_processing_run(
+  p_run_id UUID
+)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN public.cancel_ai_jobs_by_run(p_run_id, NULL);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.retry_failed_run_jobs(
+  p_run_id UUID
+)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RETURN public.retry_ai_jobs(NULL, p_run_id, NULL, NULL);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.mark_ai_job_obsolete(
+  p_job_id UUID,
+  p_worker_id TEXT,
+  p_reason TEXT DEFAULT 'O alvo mudou depois da criacao do job.'
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_attempt INTEGER;
+  current_run_id UUID;
+BEGIN
+  SELECT attempts, run_id INTO current_attempt, current_run_id
+  FROM ai_jobs
+  WHERE id = p_job_id
+    AND worker_id = p_worker_id
+    AND status IN ('claimed','running')
+  FOR UPDATE;
+
+  IF current_attempt IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  UPDATE ai_jobs
+  SET status = 'obsolete',
+      error = p_reason,
+      error_code = 'OBSOLETE_INPUT',
+      error_kind = 'permanent',
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      completed_at = NOW(),
+      updated_at = NOW()
+  WHERE id = p_job_id;
+
+  UPDATE ai_job_attempts
+  SET status = 'obsolete',
+      completed_at = NOW(),
+      duration_ms = (EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000)::INTEGER,
+      error = p_reason,
+      error_code = 'OBSOLETE_INPUT',
+      error_kind = 'permanent'
+  WHERE job_id = p_job_id AND attempt_number = current_attempt;
+
+  PERFORM refresh_processing_run_snapshot(current_run_id);
+  RETURN TRUE;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.build_ai_job_current_target_hash(current_job ai_jobs)
+RETURNS TEXT
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_sentence sentences;
+  current_entry dictionary_entries;
+  payload JSONB;
+BEGIN
+  IF current_job.target_type = 'sentence' THEN
+    SELECT * INTO current_sentence
+    FROM sentences
+    WHERE id = current_job.target_id AND user_id = current_job.user_id;
+
+    IF current_sentence.id IS NULL THEN
+      RETURN NULL;
+    END IF;
+
+    IF current_job.type = 'translate_sentence' THEN
+      payload := jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'sourceId', current_sentence.source_id);
+    ELSIF current_job.type = 'generate_sentence_reading' THEN
+      payload := jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'portuguese', current_sentence.portuguese, 'sourceId', current_sentence.source_id);
+    ELSIF current_job.type = 'detect_sentence_terms' THEN
+      payload := jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'portuguese', current_sentence.portuguese, 'kana', current_sentence.kana, 'romaji', current_sentence.romaji, 'sourceId', current_sentence.source_id);
+    ELSE
+      RETURN NULL;
+    END IF;
+  ELSIF current_job.target_type = 'dictionary_entry' AND current_job.type = 'enrich_dictionary_entry' THEN
+    SELECT * INTO current_entry
+    FROM dictionary_entries
+    WHERE id = current_job.target_id AND user_id = current_job.user_id;
+
+    IF current_entry.id IS NULL THEN
+      RETURN NULL;
+    END IF;
+
+    payload := jsonb_build_object('id', current_entry.id, 'entryId', current_entry.id, 'lemma', current_entry.lemma, 'kana', current_entry.kana, 'romaji', current_entry.romaji, 'type', current_entry.type);
+    IF current_job.payload ? 'sourceId' THEN
+      payload := payload || jsonb_build_object('sourceId', current_job.payload->>'sourceId');
+    END IF;
+  ELSE
+    RETURN NULL;
+  END IF;
+
+  RETURN encode(digest(jsonb_build_object(
+    'targetType', current_job.target_type,
+    'targetId', current_job.target_id,
+    'payload', payload,
+    'promptVersion', current_job.prompt_version,
+    'model', COALESCE(current_job.model, current_job.model_version)
+  )::text, 'sha256'), 'hex');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.validate_ai_job_for_execution(
+  p_job_id UUID,
+  p_worker_id TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_job ai_jobs;
+  current_hash TEXT;
+BEGIN
+  SELECT * INTO current_job
+  FROM ai_jobs
+  WHERE id = p_job_id
+  FOR UPDATE;
+
+  IF current_job.id IS NULL
+    OR current_job.status NOT IN ('claimed','running')
+    OR current_job.worker_id <> p_worker_id
+    OR current_job.cancel_requested
+    OR current_job.lease_expires_at < NOW()
+  THEN
+    RETURN jsonb_build_object('can_execute', false);
+  END IF;
+
+  current_hash := public.build_ai_job_current_target_hash(current_job);
+
+  IF current_job.target_hash IS NOT NULL AND current_hash IS DISTINCT FROM current_job.target_hash THEN
+    PERFORM public.mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
+    RETURN jsonb_build_object('can_execute', false);
+  END IF;
+
+  RETURN to_jsonb(current_job) || jsonb_build_object('can_execute', true);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.cancel_running_ai_job(
+  p_job_id UUID,
+  p_worker_id TEXT,
+  p_reason TEXT DEFAULT 'Cancelado pelo usuario.'
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_attempt INTEGER;
+  current_run_id UUID;
+BEGIN
+  SELECT attempts, run_id INTO current_attempt, current_run_id
+  FROM ai_jobs
+  WHERE id = p_job_id
+    AND worker_id = p_worker_id
+    AND status = 'running'
+  FOR UPDATE;
+
+  IF current_attempt IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  UPDATE ai_jobs
+  SET status = 'cancelled',
+      error = p_reason,
+      error_code = 'USER_CANCELLED',
+      error_kind = 'permanent',
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      completed_at = NOW(),
+      updated_at = NOW()
+  WHERE id = p_job_id;
+
+  UPDATE ai_job_attempts
+  SET status = 'cancelled',
+      completed_at = NOW(),
+      duration_ms = (EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000)::INTEGER,
+      error = p_reason,
+      error_code = 'USER_CANCELLED',
+      error_kind = 'permanent'
+  WHERE job_id = p_job_id AND attempt_number = current_attempt;
+
+  PERFORM refresh_processing_run_snapshot(current_run_id);
+  RETURN TRUE;
 END;
 $$;
 
@@ -1528,13 +2053,17 @@ DECLARE
   current_attempt INTEGER;
   current_stage_id UUID;
   current_run_id UUID;
+  current_user_id TEXT;
+  current_source_id UUID;
 BEGIN
-  SELECT attempts, stage_id, run_id INTO current_attempt, current_stage_id, current_run_id
-  FROM ai_jobs
-  WHERE id = p_job_id
-    AND worker_id = p_worker_id
-    AND status = 'running'
-  FOR UPDATE;
+  SELECT j.attempts, j.stage_id, j.run_id, j.user_id, pr.source_id
+  INTO current_attempt, current_stage_id, current_run_id, current_user_id, current_source_id
+  FROM ai_jobs j
+  LEFT JOIN processing_runs pr ON pr.id = j.run_id
+  WHERE j.id = p_job_id
+    AND j.worker_id = p_worker_id
+    AND j.status = 'running'
+  FOR UPDATE OF j;
 
   IF current_attempt IS NULL THEN
     RAISE EXCEPTION 'Job % is not running for worker %', p_job_id, p_worker_id;
@@ -1591,6 +2120,23 @@ BEGIN
   END IF;
 
   PERFORM refresh_processing_run_snapshot(current_run_id);
+
+  IF current_run_id IS NOT NULL
+    AND current_source_id IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM ai_jobs
+      WHERE run_id = current_run_id
+        AND status IN ('pending','claimed','running','retry_wait')
+    )
+    AND EXISTS (
+      SELECT 1 FROM processing_runs
+      WHERE id = current_run_id
+        AND status IN ('running','planning','pending')
+        AND cancel_requested = FALSE
+    )
+  THEN
+    PERFORM public.create_or_resume_source_processing_run(current_source_id, current_user_id, COALESCE((SELECT run_mode FROM processing_runs WHERE id = current_run_id), 'all'));
+  END IF;
 END;
 $$;
 
@@ -1615,6 +2161,7 @@ DECLARE
   current_sentence sentences;
   normalized_translation TEXT;
   next_status TEXT;
+  expected_target_hash TEXT;
 BEGIN
   SELECT * INTO current_job
   FROM ai_jobs
@@ -1627,6 +2174,9 @@ BEGIN
   IF current_job.cancel_requested THEN
     RAISE EXCEPTION 'Job cancelado durante o processamento.';
   END IF;
+  IF current_job.type <> 'translate_sentence' OR current_job.target_type <> 'sentence' THEN
+    RAISE EXCEPTION 'Job incompativel para traducao.';
+  END IF;
 
   SELECT * INTO current_sentence
   FROM sentences
@@ -1635,6 +2185,17 @@ BEGIN
 
   IF current_sentence.id IS NULL THEN
     RAISE EXCEPTION 'Frase nao encontrada para traducao.';
+  END IF;
+  expected_target_hash := encode(digest(jsonb_build_object(
+    'targetType', 'sentence',
+    'targetId', current_sentence.id,
+    'payload', jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'sourceId', current_sentence.source_id),
+    'promptVersion', current_job.prompt_version,
+    'model', COALESCE(current_job.model, current_job.model_version)
+  )::text, 'sha256'), 'hex');
+  IF current_job.target_hash IS NOT NULL AND current_job.target_hash <> expected_target_hash THEN
+    PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
+    RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
   END IF;
   IF current_sentence.status = 'reviewed' THEN
     PERFORM complete_ai_job(
@@ -1651,17 +2212,7 @@ BEGIN
     RETURN jsonb_build_object('skipped', 'reviewed', 'sentence_id', current_sentence.id);
   END IF;
   IF current_job.payload ? 'sentence' AND current_job.payload->>'sentence' <> current_sentence.japanese THEN
-    UPDATE ai_jobs
-    SET status = 'obsolete',
-        error = 'A frase mudou depois da criacao do job.',
-        error_code = 'OBSOLETE_INPUT',
-        error_kind = 'permanent',
-        locked_by = NULL,
-        locked_until = NULL,
-        lease_expires_at = NULL,
-        worker_id = NULL,
-        completed_at = NOW()
-    WHERE id = p_job_id;
+    PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'A frase mudou depois da criacao do job.');
     RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
   END IF;
 
@@ -1734,6 +2285,7 @@ DECLARE
   normalized_kana TEXT;
   normalized_romaji TEXT;
   next_status TEXT;
+  expected_target_hash TEXT;
 BEGIN
   SELECT * INTO current_job
   FROM ai_jobs
@@ -1746,6 +2298,9 @@ BEGIN
   IF current_job.cancel_requested THEN
     RAISE EXCEPTION 'Job cancelado durante o processamento.';
   END IF;
+  IF current_job.type <> 'generate_sentence_reading' OR current_job.target_type <> 'sentence' THEN
+    RAISE EXCEPTION 'Job incompativel para leitura.';
+  END IF;
 
   SELECT * INTO current_sentence
   FROM sentences
@@ -1754,6 +2309,17 @@ BEGIN
 
   IF current_sentence.id IS NULL THEN
     RAISE EXCEPTION 'Frase nao encontrada para leitura.';
+  END IF;
+  expected_target_hash := encode(digest(jsonb_build_object(
+    'targetType', 'sentence',
+    'targetId', current_sentence.id,
+    'payload', jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'portuguese', current_sentence.portuguese, 'sourceId', current_sentence.source_id),
+    'promptVersion', current_job.prompt_version,
+    'model', COALESCE(current_job.model, current_job.model_version)
+  )::text, 'sha256'), 'hex');
+  IF current_job.target_hash IS NOT NULL AND current_job.target_hash <> expected_target_hash THEN
+    PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
+    RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
   END IF;
   IF current_sentence.status = 'reviewed' THEN
     PERFORM complete_ai_job(
@@ -1770,17 +2336,7 @@ BEGIN
     RETURN jsonb_build_object('skipped', 'reviewed', 'sentence_id', current_sentence.id);
   END IF;
   IF current_job.payload ? 'sentence' AND current_job.payload->>'sentence' <> current_sentence.japanese THEN
-    UPDATE ai_jobs
-    SET status = 'obsolete',
-        error = 'A frase mudou depois da criacao do job.',
-        error_code = 'OBSOLETE_INPUT',
-        error_kind = 'permanent',
-        locked_by = NULL,
-        locked_until = NULL,
-        lease_expires_at = NULL,
-        worker_id = NULL,
-        completed_at = NOW()
-    WHERE id = p_job_id;
+    PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'A frase mudou depois da criacao do job.');
     RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
   END IF;
 
@@ -1843,6 +2399,7 @@ DECLARE
   inserted_entries INTEGER := 0;
   inserted_forms INTEGER := 0;
   inserted_senses INTEGER := 0;
+  expected_target_hash TEXT;
 BEGIN
   SELECT * INTO current_job
   FROM ai_jobs
@@ -1855,6 +2412,9 @@ BEGIN
   IF current_job.cancel_requested THEN
     RAISE EXCEPTION 'Job cancelado durante o processamento.';
   END IF;
+  IF current_job.type <> 'detect_sentence_terms' OR current_job.target_type <> 'sentence' THEN
+    RAISE EXCEPTION 'Job incompativel para analise lexical.';
+  END IF;
 
   SELECT * INTO current_sentence
   FROM sentences
@@ -1863,6 +2423,17 @@ BEGIN
 
   IF current_sentence.id IS NULL THEN
     RAISE EXCEPTION 'Frase nao encontrada para analise lexical.';
+  END IF;
+  expected_target_hash := encode(digest(jsonb_build_object(
+    'targetType', 'sentence',
+    'targetId', current_sentence.id,
+    'payload', jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'portuguese', current_sentence.portuguese, 'kana', current_sentence.kana, 'romaji', current_sentence.romaji, 'sourceId', current_sentence.source_id),
+    'promptVersion', current_job.prompt_version,
+    'model', COALESCE(current_job.model, current_job.model_version)
+  )::text, 'sha256'), 'hex');
+  IF current_job.target_hash IS NOT NULL AND current_job.target_hash <> expected_target_hash THEN
+    PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
+    RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
   END IF;
   IF current_sentence.status = 'reviewed' THEN
     PERFORM complete_ai_job(
@@ -1879,17 +2450,7 @@ BEGIN
     RETURN jsonb_build_object('skipped', 'reviewed', 'sentence_id', current_sentence.id);
   END IF;
   IF current_job.payload ? 'sentence' AND current_job.payload->>'sentence' <> current_sentence.japanese THEN
-    UPDATE ai_jobs
-    SET status = 'obsolete',
-        error = 'A frase mudou depois da criacao do job.',
-        error_code = 'OBSOLETE_INPUT',
-        error_kind = 'permanent',
-        locked_by = NULL,
-        locked_until = NULL,
-        lease_expires_at = NULL,
-        worker_id = NULL,
-        completed_at = NOW()
-    WHERE id = p_job_id;
+    PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'A frase mudou depois da criacao do job.');
     RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
   END IF;
 
@@ -2141,6 +2702,8 @@ DECLARE
   v_final_romaji TEXT;
   v_final_unique_key TEXT;
   meaning_count INTEGER := 0;
+  expected_target_hash TEXT;
+  expected_payload JSONB;
 BEGIN
   SELECT * INTO current_job
   FROM ai_jobs
@@ -2153,6 +2716,9 @@ BEGIN
   IF current_job.cancel_requested THEN
     RAISE EXCEPTION 'Job cancelado durante o processamento.';
   END IF;
+  IF current_job.type <> 'enrich_dictionary_entry' OR current_job.target_type <> 'dictionary_entry' THEN
+    RAISE EXCEPTION 'Job incompativel para enriquecimento de dicionario.';
+  END IF;
 
   SELECT * INTO current_entry
   FROM dictionary_entries
@@ -2161,6 +2727,28 @@ BEGIN
 
   IF current_entry.id IS NULL THEN
     RAISE EXCEPTION 'Verbete nao encontrado para enriquecimento.';
+  END IF;
+  expected_payload := jsonb_build_object(
+    'id', current_entry.id,
+    'entryId', current_entry.id,
+    'lemma', current_entry.lemma,
+    'kana', current_entry.kana,
+    'romaji', current_entry.romaji,
+    'type', current_entry.type
+  );
+  IF current_job.payload ? 'sourceId' THEN
+    expected_payload := expected_payload || jsonb_build_object('sourceId', current_job.payload->>'sourceId');
+  END IF;
+  expected_target_hash := encode(digest(jsonb_build_object(
+    'targetType', 'dictionary_entry',
+    'targetId', current_entry.id,
+    'payload', expected_payload,
+    'promptVersion', current_job.prompt_version,
+    'model', COALESCE(current_job.model, current_job.model_version)
+  )::text, 'sha256'), 'hex');
+  IF current_job.target_hash IS NOT NULL AND current_job.target_hash <> expected_target_hash THEN
+    PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
+    RETURN jsonb_build_object('obsolete', true, 'entry_id', current_entry.id);
   END IF;
   IF current_entry.status = 'reviewed' THEN
     PERFORM complete_ai_job(
@@ -2177,29 +2765,19 @@ BEGIN
     RETURN jsonb_build_object('skipped', 'reviewed', 'entry_id', current_entry.id);
   END IF;
   IF current_job.payload ? 'lemma' AND current_job.payload->>'lemma' <> current_entry.lemma THEN
-    UPDATE ai_jobs
-    SET status = 'obsolete',
-        error = 'O lemma mudou depois da criacao do job.',
-        error_code = 'OBSOLETE_INPUT',
-        error_kind = 'permanent',
-        locked_by = NULL,
-        locked_until = NULL,
-        lease_expires_at = NULL,
-        worker_id = NULL,
-        completed_at = NOW()
-    WHERE id = p_job_id;
+    PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O lemma mudou depois da criacao do job.');
     RETURN jsonb_build_object('obsolete', true, 'entry_id', current_entry.id);
   END IF;
 
   v_main_meaning := COALESCE(
-    NULLIF(current_entry.main_meaning, ''),
     NULLIF(p_enrichment->>'main_meaning', ''),
     NULLIF(p_enrichment->>'meaning', ''),
-    NULLIF(p_enrichment #>> '{meanings,0}', '')
+    NULLIF(p_enrichment #>> '{meanings,0}', ''),
+    NULLIF(current_entry.main_meaning, '')
   );
-  v_final_type := COALESCE(NULLIF(current_entry.type, ''), NULLIF(p_enrichment->>'type', ''), 'outro');
-  v_final_kana := COALESCE(NULLIF(current_entry.kana, ''), NULLIF(p_enrichment->>'kana', ''));
-  v_final_romaji := COALESCE(NULLIF(current_entry.romaji, ''), NULLIF(p_enrichment->>'romaji', ''));
+  v_final_type := COALESCE(NULLIF(p_enrichment->>'type', ''), NULLIF(current_entry.type, ''), 'outro');
+  v_final_kana := COALESCE(NULLIF(p_enrichment->>'kana', ''), NULLIF(current_entry.kana, ''));
+  v_final_romaji := COALESCE(NULLIF(p_enrichment->>'romaji', ''), NULLIF(current_entry.romaji, ''));
 
   IF v_main_meaning IS NULL OR v_final_type IS NULL OR v_final_kana IS NULL OR v_final_romaji IS NULL THEN
     RAISE EXCEPTION 'Resultado invalido: significado, tipo, kana ou romaji ausente.';
@@ -2215,16 +2793,16 @@ BEGIN
       type = v_final_type,
       kana = v_final_kana,
       romaji = v_final_romaji,
-      jlpt_level = COALESCE(dictionary_entries.jlpt_level, NULLIF(p_enrichment->>'jlpt_level', '')),
+      jlpt_level = COALESCE(NULLIF(p_enrichment->>'jlpt_level', ''), dictionary_entries.jlpt_level),
       tags = CASE
         WHEN array_length(dictionary_entries.tags, 1) IS NULL AND jsonb_typeof(p_enrichment->'tags') = 'array'
         THEN ARRAY(SELECT jsonb_array_elements_text(p_enrichment->'tags'))
         ELSE dictionary_entries.tags
       END,
-      subtype = COALESCE(dictionary_entries.subtype, NULLIF(p_enrichment->>'subtype', '')),
-      components = COALESCE(dictionary_entries.components, p_enrichment->'components'),
-      grammar_info = COALESCE(dictionary_entries.grammar_info, NULLIF(p_enrichment->>'grammar_info', '')),
-      short_note = COALESCE(dictionary_entries.short_note, NULLIF(p_enrichment->>'short_note', '')),
+      subtype = COALESCE(NULLIF(p_enrichment->>'subtype', ''), dictionary_entries.subtype),
+      components = COALESCE(p_enrichment->'components', dictionary_entries.components),
+      grammar_info = COALESCE(NULLIF(p_enrichment->>'grammar_info', ''), dictionary_entries.grammar_info),
+      short_note = COALESCE(NULLIF(p_enrichment->>'short_note', ''), dictionary_entries.short_note),
       status = 'ai_enriched',
       unique_key = CASE
         WHEN EXISTS (
@@ -2410,8 +2988,8 @@ BEGIN
     status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'retry_wait' END,
     retry_at = CASE WHEN attempts >= max_attempts THEN NULL ELSE NOW() + make_interval(secs => p_retry_delay_seconds) END,
     error = COALESCE(error, 'Lease expirada; job recuperado.'),
-    error_code = COALESCE(error_code, 'LEASE_EXPIRED'),
-    error_kind = COALESCE(error_kind, 'transient'),
+    error_code = 'LEASE_EXPIRED',
+    error_kind = 'transient',
     locked_by = NULL,
     locked_until = NULL,
     lease_expires_at = NULL,
@@ -2420,7 +2998,114 @@ BEGIN
   WHERE j.id = recovered.id;
 
   GET DIAGNOSTICS recovered_count = ROW_COUNT;
+
+  UPDATE ai_job_attempts a
+  SET status = j.status,
+      completed_at = NOW(),
+      duration_ms = (EXTRACT(EPOCH FROM (NOW() - a.started_at)) * 1000)::INTEGER,
+      error = COALESCE(j.error, 'Lease expirada; job recuperado.'),
+      error_code = COALESCE(j.error_code, 'LEASE_EXPIRED'),
+      error_kind = COALESCE(j.error_kind, 'transient')
+  FROM ai_jobs j
+  WHERE a.job_id = j.id
+    AND a.completed_at IS NULL
+    AND j.error_code = 'LEASE_EXPIRED';
+
   RETURN recovered_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.verify_ai_queue_reset()
+RETURNS JSONB
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  WITH required_tables(name) AS (
+    VALUES
+      ('sources'), ('sentences'), ('processing_runs'), ('processing_run_stages'),
+      ('ai_jobs'), ('ai_job_attempts'), ('dictionary_entries'), ('dictionary_forms'),
+      ('dictionary_senses'), ('sentence_terms'), ('app_admins'), ('schema_versions')
+  ),
+  required_columns(table_name, column_name) AS (
+    VALUES
+      ('processing_runs','running_jobs'),
+      ('processing_runs','total_cost_estimate'),
+      ('processing_runs','total_cost_actual'),
+      ('processing_runs','total_input_tokens'),
+      ('processing_runs','total_output_tokens'),
+      ('processing_runs','ai_call_count'),
+      ('processing_run_stages','pending_jobs'),
+      ('processing_run_stages','claimed_jobs'),
+      ('processing_run_stages','running_jobs'),
+      ('processing_run_stages','completed_jobs'),
+      ('processing_run_stages','failed_jobs'),
+      ('processing_run_stages','retry_jobs'),
+      ('processing_run_stages','needs_review_jobs'),
+      ('processing_run_stages','cancelled_jobs'),
+      ('processing_run_stages','obsolete_jobs')
+  ),
+  required_rpcs(name) AS (
+    VALUES
+      ('create_or_resume_source_run'), ('advance_processing_run'), ('enqueue_ai_jobs_bulk'),
+      ('cancel_processing_run'), ('retry_failed_run_jobs'), ('claim_ai_jobs'),
+      ('validate_ai_job_for_execution'), ('build_ai_job_current_target_hash'),
+      ('heartbeat_ai_job'), ('get_ai_queue_health')
+  )
+  SELECT jsonb_build_object(
+    'schema_version', (SELECT version FROM schema_versions WHERE key = 'ai_queue'),
+    'missing_tables', COALESCE((SELECT jsonb_agg(name) FROM required_tables rt WHERE NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = rt.name)), '[]'::jsonb),
+    'missing_columns', COALESCE((SELECT jsonb_agg(table_name || '.' || column_name) FROM required_columns rc WHERE NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = rc.table_name AND column_name = rc.column_name)), '[]'::jsonb),
+    'missing_rpcs', COALESCE((SELECT jsonb_agg(name) FROM required_rpcs rr WHERE NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public' AND p.proname = rr.name)), '[]'::jsonb),
+    'admin_count', (SELECT COUNT(*) FROM app_admins),
+    'admin_exactly_one', (SELECT COUNT(*) = 1 FROM app_admins),
+    'worker_health', public.get_ai_queue_health()
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.bootstrap_app_admin(p_email TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  target_user RECORD;
+  admin_count INTEGER;
+BEGIN
+  IF auth.role() <> 'service_role' THEN
+    RAISE EXCEPTION 'Apenas service_role pode executar bootstrap_app_admin.';
+  END IF;
+  IF NULLIF(BTRIM(p_email), '') IS NULL THEN
+    RAISE EXCEPTION 'Email administrativo obrigatorio.';
+  END IF;
+
+  SELECT id, email
+  INTO target_user
+  FROM auth.users
+  WHERE LOWER(email) = LOWER(BTRIM(p_email))
+  ORDER BY created_at ASC
+  LIMIT 1;
+
+  IF target_user.id IS NULL THEN
+    RAISE EXCEPTION 'Usuario auth nao encontrado para %.', p_email;
+  END IF;
+
+  DELETE FROM app_admins WHERE user_id <> target_user.id;
+  INSERT INTO app_admins(user_id, email)
+  VALUES (target_user.id, target_user.email)
+  ON CONFLICT(user_id) DO UPDATE SET email = EXCLUDED.email;
+
+  SELECT COUNT(*) INTO admin_count FROM app_admins;
+  IF admin_count <> 1 THEN
+    RAISE EXCEPTION 'Bootstrap invalido: esperado exatamente 1 admin, encontrado %.', admin_count;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'admin_user_id', target_user.id,
+    'admin_email', target_user.email,
+    'verify', public.verify_ai_queue_reset()
+  );
 END;
 $$;
 
@@ -2435,6 +3120,14 @@ REVOKE ALL ON FUNCTION public.cancel_ai_jobs_by_source(UUID, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.cancel_ai_job(UUID, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) FROM public;
+REVOKE ALL ON FUNCTION public.create_or_resume_source_run(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.advance_processing_run(UUID) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_processing_run(UUID) FROM public;
+REVOKE ALL ON FUNCTION public.retry_failed_run_jobs(UUID) FROM public;
+REVOKE ALL ON FUNCTION public.mark_ai_job_obsolete(UUID, TEXT, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.build_ai_job_current_target_hash(ai_jobs) FROM public;
+REVOKE ALL ON FUNCTION public.validate_ai_job_for_execution(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_running_ai_job(UUID, TEXT, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.refresh_processing_run_snapshot(UUID) FROM public;
@@ -2446,17 +3139,27 @@ REVOKE ALL ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TEXT,
 REVOKE ALL ON FUNCTION public.apply_dictionary_enrichment_result(UUID, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM public;
 REVOKE ALL ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.verify_ai_queue_reset() FROM public;
+REVOKE ALL ON FUNCTION public.bootstrap_app_admin(TEXT) FROM public;
 GRANT EXECUTE ON FUNCTION public.get_ai_queue_health() TO service_role;
 GRANT EXECUTE ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID, INTEGER, JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.enqueue_sentence_ai_job(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.enqueue_sentence_ai_job(UUID, TEXT, TEXT, TEXT, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.cancel_ai_jobs_by_run(UUID, TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.cancel_ai_jobs_by_source(UUID, TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.cancel_ai_job(UUID, TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.create_or_resume_source_run(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.advance_processing_run(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_processing_run(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.retry_failed_run_jobs(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.mark_ai_job_obsolete(UUID, TEXT, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.build_ai_job_current_target_hash(ai_jobs) TO service_role;
+GRANT EXECUTE ON FUNCTION public.validate_ai_job_for_execution(UUID, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_running_ai_job(UUID, TEXT, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.refresh_processing_run_snapshot(UUID) TO service_role;
@@ -2468,6 +3171,8 @@ GRANT EXECUTE ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TE
 GRANT EXECUTE ON FUNCTION public.apply_dictionary_enrichment_result(UUID, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) TO service_role;
 GRANT EXECUTE ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.verify_ai_queue_reset() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.bootstrap_app_admin(TEXT) TO service_role;
 
 ALTER TABLE app_admins ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_admins NO FORCE ROW LEVEL SECURITY;
@@ -2534,3 +3239,5 @@ CREATE UNIQUE INDEX idx_ai_jobs_active_input_unique
   WHERE status IN ('pending','claimed','running','retry_wait','needs_review');
 CREATE INDEX idx_ai_job_attempts_job ON ai_job_attempts(job_id, attempt_number);
 CREATE INDEX idx_study_session_items_session ON study_session_items(study_session_id, order_index);
+
+COMMIT;

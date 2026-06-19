@@ -3,8 +3,8 @@ import { Source } from '../types';
 import { defaultMockSources } from './mockData';
 import { getUserId, isE2EMockMode } from './utils';
 
-const SOURCE_SELECT = 'id,user_id,title,type,created_at,updated_at,favorite,difficulty';
-const SOURCE_DETAIL_SELECT = 'id,user_id,title,type,original_content,created_at,updated_at,favorite,difficulty';
+const SOURCE_SELECT = 'id,user_id,title,type,created_at,updated_at';
+const SOURCE_DETAIL_SELECT = 'id,user_id,title,type,original_content,created_at,updated_at';
 
 export class SourceRepository {
   static async getAll(): Promise<Source[]> {

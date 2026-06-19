@@ -1,5 +1,7 @@
--- Nihongo Loop clean Supabase baseline
--- This schema is intended for a fresh database reset/rebuild.
+-- Nihongo Loop destructive Supabase reset baseline
+-- This schema is intended only for a fresh database reset/rebuild.
+
+BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -364,3 +366,5 @@ CREATE INDEX idx_dictionary_progress_entry ON dictionary_progress(dictionary_ent
 CREATE INDEX idx_ai_jobs_queue ON ai_jobs(user_id, status, priority DESC, created_at);
 CREATE INDEX idx_ai_jobs_target ON ai_jobs(user_id, target_type, target_id, type, status);
 CREATE INDEX idx_study_session_items_session ON study_session_items(study_session_id, order_index);
+
+COMMIT;

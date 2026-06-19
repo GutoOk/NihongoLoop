@@ -22,6 +22,7 @@ import {
   SentenceRepository,
   ProgressRepository,
   TermRepository,
+  ProcessingRunRepository,
 } from "../repositories";
 import {
   Sentence,
@@ -33,7 +34,6 @@ import {
 import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // Assuming we still get settings config from there for general TTS settings if not extracted
 import { TermDetectionService } from "../services/termDetectionService";
-import { AiJobService } from "../services/aiJobService";
 import { useModal } from "./ModalProvider";
 import { TERM_COLORS, getTermColor } from "../ui/termColors";
 import SourcePreparationPanel from "./SourcePreparationPanel";
@@ -138,14 +138,9 @@ export default function ReadingScreen({
     if (reanalyzingId || bulkProcessing) return;
     setReanalyzingId(sentence.id);
     try {
-      const job = await AiJobService.requestSentenceReading(
-        sentence.id,
-        sentence.japanese,
-      );
-      if (job) {
-        await loadData(true);
-        showAlert("Leitura enfileirada", "A leitura desta frase sera gerada pelo worker persistente.");
-      }
+      await ProcessingRunRepository.startSourceProcessingRun(sentence.source_id, "analyze");
+      await loadData(true);
+      showAlert("Leitura enfileirada", "A fonte foi retomada pelo worker persistente.");
     } catch (e: any) {
       console.error(e);
       showAlert("Erro", `Falha ao re-analisar frase: ${e.message || e}`);
@@ -161,29 +156,22 @@ export default function ReadingScreen({
 
     let queuedCount = 0;
     let failCount = 0;
-    const idsArray = Array.from(selectedIds);
+    const sourceIds = Array.from(new Set(
+      Array.from(selectedIds)
+        .map((id) => sentences.find((s) => s.id === id)?.source_id)
+        .filter((id): id is string => Boolean(id)),
+    ));
 
-    for (let i = 0; i < idsArray.length; i++) {
-      const sentenceId = idsArray[i];
-      const sentence = sentences.find((s) => s.id === sentenceId);
-      if (!sentence) continue;
-
-      setBulkProgress({ current: i + 1, total: idsArray.length });
+    for (let i = 0; i < sourceIds.length; i++) {
+      const sourceId = sourceIds[i];
+      setBulkProgress({ current: i + 1, total: sourceIds.length });
 
       try {
-        const job = await AiJobService.requestSentenceReading(
-          sentence.id,
-          sentence.japanese,
-        );
-        if (job) {
-          queuedCount++;
-        } else {
-          failCount++;
-          console.error(`Falha ao enfileirar leitura ID ${sentence.id}`);
-        }
+        await ProcessingRunRepository.startSourceProcessingRun(sourceId, "analyze");
+        queuedCount++;
       } catch (e) {
         failCount++;
-        console.error(`Erro ao re-analisar ID ${sentence.id}:`, e);
+        console.error(`Erro ao retomar fonte ${sourceId}:`, e);
       }
     }
 

@@ -8,8 +8,8 @@ import {
   Trash2,
 } from "lucide-react";
 import {
-  AiJobRepository,
   DictionaryRepository,
+  ProcessingRunRepository,
   SentenceRepository,
   SourceRepository,
   TermRepository,
@@ -147,18 +147,13 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
       async () => {
         setIsQueuing(true);
         try {
-          const entriesToBatch = sourceFilter === "all"
-            ? await DictionaryRepository.getPendingForEnrichment({ limit: 1000, type: typeFilter, jlptLevel: levelFilter })
-            : (await getEntriesForCurrentScope()).entries.filter(needsDictionaryEnrichment);
-
-          if (entriesToBatch.length === 0) {
-            showAlert("Fila", "Todas as palavras desta fonte já estão agendadas.");
+          if (sourceFilter === "all") {
+            showAlert("Fila", "Escolha uma fonte para retomar a esteira persistida de dicionario.");
             return;
           }
+          await ProcessingRunRepository.startSourceProcessingRun(sourceFilter, "dictionary");
 
-          const created = await AiJobRepository.enqueueDictionaryEnrichmentJobs(entriesToBatch.map((entry) => entry.id));
-
-          showAlert("Fila atualizada", `${created} tarefa(s) individuais adicionadas ou reaproveitadas.`);
+          showAlert("Fila atualizada", "A fonte foi retomada; o banco criara os jobs de dicionario necessarios.");
         } catch (e: any) {
           showAlert("Erro", `Falha ao adicionar na fila: ${e.message}`);
         } finally {

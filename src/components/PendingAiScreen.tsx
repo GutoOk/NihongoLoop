@@ -142,16 +142,9 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
 
                 <div className="bg-slate-50/70 rounded-lg p-2.5 border border-slate-100 space-y-1.5">
                   <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs whitespace-nowrap">
-                    {job.input?.text && (
-                      <span className="font-medium text-slate-600 truncate max-w-[200px]" title={job.input.text}>
-                        "{job.input.text.substring(0, 30)}{job.input.text.length > 30 ? "..." : ""}"
-                      </span>
-                    )}
-                    {job.input?.items && (
-                      <span className="font-bold text-indigo-500">
-                        ({job.input.items.length} itens no lote)
-                      </span>
-                    )}
+                    <span className="font-medium text-slate-600 truncate max-w-[220px]" title={`${job.target_type}:${job.target_id}`}>
+                      {job.target_type}:{job.target_id}
+                    </span>
                   </div>
                   {job.error && (
                     <div className="text-[10px] text-rose-600 font-medium bg-rose-50/50 p-1.5 rounded flex items-start gap-1">

@@ -61,6 +61,15 @@ The global budget is authoritative; type limits do not add up beyond it.
 
 The worker requires `schema_versions('ai_queue') = 2026-06-ai-queue-v25`.
 
+After applying the destructive clean baseline, bootstrap the real Auth admin with the service role before starting the worker:
+
+```sql
+select public.bootstrap_app_admin('admin@example.com');
+select public.verify_ai_queue_reset();
+```
+
+`verify_ai_queue_reset()` must report no missing tables, columns or RPCs, `admin_exactly_one = true`, and a compatible worker schema version.
+
 ## Retired Paths
 
 The following paths are not part of the architecture:

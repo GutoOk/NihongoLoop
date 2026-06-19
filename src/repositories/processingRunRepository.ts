@@ -15,10 +15,14 @@ const PROCESSING_RUN_SELECT = [
   'created_jobs',
   'planned_jobs',
   'pending_jobs',
+  'claimed_jobs',
+  'running_jobs',
   'processed_jobs',
   'completed_jobs',
+  'failed_jobs',
   'retry_jobs',
   'review_jobs',
+  'needs_review_jobs',
   'cancelled_jobs',
   'obsolete_jobs',
   'applied_items',
@@ -41,9 +45,8 @@ const PROCESSING_RUN_SELECT = [
 export class ProcessingRunRepository {
   static async startSourceProcessingRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<{ run_id: string; stage?: string | null; created_jobs: number; status: string } | null> {
     if (!isSupabaseConfigured) return null;
-    const { data, error } = await supabase!.rpc('create_or_resume_source_processing_run', {
+    const { data, error } = await supabase!.rpc('create_or_resume_source_run', {
       p_source_id: sourceId,
-      p_user_id: getUserId(),
       p_run_mode: runMode,
     });
     if (error) {
@@ -54,26 +57,11 @@ export class ProcessingRunRepository {
   }
 
   static async createRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<ProcessingRun | null> {
-    if (!isSupabaseConfigured) return null;
-    const { data, error } = await supabase!.from('processing_runs').insert({
-      user_id: getUserId(),
-      source_id: sourceId,
-      status: 'pending',
-      run_mode: runMode
-    }).select(PROCESSING_RUN_SELECT).maybeSingle();
-    if (error) {
-      console.error(error);
-      throw new Error(`Erro do Supabase ao criar processamento: ${error.message}`);
-    }
-    return data as unknown as ProcessingRun | null;
+    const result = await this.startSourceProcessingRun(sourceId, runMode);
+    return result?.run_id ? this.getRun(result.run_id) : null;
   }
 
   static async createOrResumeRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<ProcessingRun | null> {
-    const existing = await this.getResumableRun(sourceId);
-    if (existing) {
-      await this.resumeRun(existing.id);
-      return this.getRun(existing.id);
-    }
     return this.createRun(sourceId, runMode);
   }
 
@@ -133,91 +121,16 @@ export class ProcessingRunRepository {
     return data as unknown as ProcessingRun | null;
   }
 
-  static async updateRun(id: string, patch: Partial<ProcessingRun>): Promise<ProcessingRun | null> {
-    if (!isSupabaseConfigured) return null;
-    const { data, error } = await supabase!.from('processing_runs')
-      .update({ ...patch, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .eq('user_id', getUserId())
-      .select(PROCESSING_RUN_SELECT)
-      .maybeSingle();
-    if (error) {
-      console.error(error);
-      throw new Error(`Erro do Supabase ao atualizar processamento: ${error.message}`);
-    }
-    return data as unknown as ProcessingRun | null;
-  }
-
-  static async appendLog(id: string, message: string, meta?: unknown): Promise<void> {
-    if (!isSupabaseConfigured) return;
-    const run = await this.getRun(id);
-    if (!run) return;
-    const entry = { time: new Date().toISOString(), message, ...(meta ? { meta } : {}) };
-    const logs = Array.isArray(run.log) ? [...run.log, entry] : [entry];
-    await this.updateRun(id, { log: logs });
-  }
-
   static async requestCancel(id: string): Promise<void> {
-    await this.updateRun(id, {
-      cancel_requested: true,
-      status: 'cancelled',
-      finished_at: new Date().toISOString()
-    });
-  }
-
-  static async updateQueueSnapshot(
-    id: string,
-    counters: Pick<
-      Partial<ProcessingRun>,
-      | 'planned_jobs'
-      | 'pending_jobs'
-      | 'running_jobs'
-      | 'completed_jobs'
-      | 'failed_items'
-      | 'retry_jobs'
-      | 'review_jobs'
-      | 'cancelled_jobs'
-      | 'obsolete_jobs'
-      | 'total_cost_estimate'
-      | 'total_cost_actual'
-      | 'ai_call_count'
-    >,
-  ): Promise<void> {
-    await this.updateRun(id, counters);
-  }
-
-  static async pauseRun(id: string): Promise<void> {
-    await this.updateRun(id, {
-      cancel_requested: false,
-      status: 'paused',
-      current_step: 'Pausado. A fila pendente foi preservada para retomada.'
-    });
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase!.rpc('cancel_processing_run', { p_run_id: id });
+    if (error) throw new Error(`Erro do Supabase ao cancelar processamento: ${error.message}`);
   }
 
   static async resumeRun(id: string): Promise<void> {
-    await this.updateRun(id, {
-      cancel_requested: false,
-      status: 'pending',
-      error: null,
-      finished_at: null,
-      current_step: 'Retomando preparacao...'
-    });
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase!.rpc('advance_processing_run', { p_run_id: id });
+    if (error) throw new Error(`Erro do Supabase ao retomar processamento: ${error.message}`);
   }
 
-  static async finishRun(id: string): Promise<void> {
-    await this.updateRun(id, { status: 'completed', finished_at: new Date().toISOString() });
-  }
-
-  static async failRun(id: string, error: string): Promise<void> {
-    await this.updateRun(id, { status: 'failed', error, finished_at: new Date().toISOString() });
-  }
-
-  static async deleteRunsBySource(sourceId: string): Promise<boolean> {
-    if (!isSupabaseConfigured) return false;
-    const { error } = await supabase!.from('processing_runs')
-      .delete()
-      .eq('source_id', sourceId)
-      .eq('user_id', getUserId());
-    return !error;
-  }
 }

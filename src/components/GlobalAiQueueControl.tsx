@@ -91,8 +91,7 @@ export function GlobalAiQueueControl() {
           <div className="rounded-lg bg-slate-50 p-3 text-xs font-semibold text-slate-500">Nenhum job registrado.</div>
         ) : (
           visibleJobs.map((job) => {
-            const input = typeof job.input === 'string' ? {} : job.input || {};
-            const label = typeof input.label === 'string' ? input.label : getJobHumanName(job.type);
+            const label = getJobHumanName(job.type);
             return (
               <div key={job.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">

@@ -1,104 +1,98 @@
-import { describe, expect, it, vi } from 'vitest';
-import { processDetectSentenceTermsJob, validateAiWorkerStartup } from '../queueWorker';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { processTranslateSentenceJob } from '../queueWorker';
+import { generateStructuredJsonWithMeta } from '../../geminiJson';
 
-function makeReviewedSentenceClient() {
-  const rpc = vi.fn(async (name: string) => {
-    if (name === 'start_claimed_ai_job') {
-      return {
-        data: {
-          id: 'job-1',
-          user_id: 'user-1',
-          type: 'detect_sentence_terms',
-          target_type: 'sentence',
-          target_id: 'sentence-1',
-          status: 'running',
-          worker_id: 'worker-1',
-          payload: { id: 'sentence-1', sentence: '待って' },
-        },
-        error: null,
-      };
-    }
-    if (name === 'complete_ai_job') return { data: null, error: null };
-    return { data: null, error: null };
-  });
+vi.mock('../../geminiJson', () => ({
+  generateStructuredJsonWithMeta: vi.fn(),
+}));
 
-  const from = vi.fn((table: string) => {
-    if (table === 'sentences') {
-      const query: any = {
-        select: vi.fn(() => query),
-        eq: vi.fn(() => query),
-        maybeSingle: vi.fn(async () => ({
-          data: {
-            id: 'sentence-1',
-            user_id: 'user-1',
-            source_id: 'source-1',
-            japanese: '待って',
-            japanese_key: '待って',
-            portuguese: 'Espere.',
-            kana: 'まって',
-            romaji: 'matte',
-            status: 'reviewed',
-          },
-          error: null,
-        })),
-      };
-      return query;
-    }
-    if (table === 'sentence_terms') {
-      return {
-        delete: vi.fn(() => {
-          throw new Error('sentence_terms.delete must not be called for reviewed sentence');
-        }),
-      };
-    }
-    return {};
-  });
+const schema = readFileSync(resolve(process.cwd(), 'schema.sql'), 'utf8');
 
-  return { rpc, from } as any;
+function functionBody(name: string) {
+  const start = schema.indexOf(`CREATE OR REPLACE FUNCTION public.${name}`);
+  const end = schema.indexOf('\n$$;', start);
+  return schema.slice(start, end);
 }
 
-describe('queueWorker safety', () => {
-  it('fails startup validation when worker health token is missing', async () => {
-    const previousToken = process.env.INTERNAL_HEALTH_TOKEN;
-    delete process.env.INTERNAL_HEALTH_TOKEN;
-    const result = await validateAiWorkerStartup({
-      supabaseUrl: 'https://example.supabase.co',
-      serviceRoleKey: 'service-role-key',
-      requireHealthToken: true,
-    });
-    process.env.INTERNAL_HEALTH_TOKEN = previousToken;
+function makeClient(canExecute: boolean) {
+  const job = {
+    can_execute: canExecute,
+    id: 'job-1',
+    user_id: 'user-1',
+    type: 'translate_sentence',
+    target_type: 'sentence',
+    target_id: 'sentence-1',
+    status: 'running',
+    worker_id: 'worker-1',
+    payload: { id: 'sentence-1', sentence: '待って', japanese: '待って' },
+  };
+  return {
+    rpc: vi.fn(async (name: string) => {
+      if (name === 'start_claimed_ai_job') return { data: job, error: null };
+      if (name === 'validate_ai_job_for_execution') return { data: canExecute ? job : { can_execute: false }, error: null };
+      if (name === 'apply_sentence_translation_result') return { data: { sentence_id: 'sentence-1' }, error: null };
+      return { data: null, error: null };
+    }),
+  } as any;
+}
 
-    expect(result.ok).toBe(false);
-    expect(result.errors.join(' ')).toContain('INTERNAL_HEALTH_TOKEN');
+describe('queueWorker persisted execution contract', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it('completes a lexical job for reviewed sentence without deleting terms or calling AI', async () => {
-    const client = makeReviewedSentenceClient();
-    const getAi = vi.fn(() => {
-      throw new Error('AI must not be called for reviewed sentence');
-    });
+  it('executes a database-validated fresh job', async () => {
+    vi.mocked(generateStructuredJsonWithMeta).mockResolvedValueOnce({
+      data: { translation: 'Wait.' },
+      meta: { model: 'fake', temperature: 0, latency_ms: 1, input_chars: 1, output_chars: 1 },
+    } as any);
+    const client = makeClient(true);
 
-    await processDetectSentenceTermsJob(
-      client,
-      {
-        id: 'job-1',
-        user_id: 'user-1',
-        type: 'detect_sentence_terms',
-        target_type: 'sentence',
-        target_id: 'sentence-1',
-        payload: { id: 'sentence-1', sentence: '待って' },
-      } as any,
-      'worker-1',
-      300,
-      getAi as any,
-    );
+    await processTranslateSentenceJob(client, { id: 'job-1' } as any, 'worker-1', 300, vi.fn(() => ({})) as any);
 
-    expect(getAi).not.toHaveBeenCalled();
-    expect(client.rpc).toHaveBeenCalledWith('complete_ai_job', expect.objectContaining({
-      p_job_id: 'job-1',
-      p_worker_id: 'worker-1',
-      p_result: expect.objectContaining({ optimization: 'already_reviewed' }),
-    }));
-    expect(client.from).not.toHaveBeenCalledWith('sentence_terms');
+    expect(client.rpc).toHaveBeenCalledWith('validate_ai_job_for_execution', { p_job_id: 'job-1', p_worker_id: 'worker-1' });
+    expect(generateStructuredJsonWithMeta).toHaveBeenCalledTimes(1);
+    expect(client.rpc).toHaveBeenCalledWith('apply_sentence_translation_result', expect.objectContaining({ p_job_id: 'job-1' }));
+  });
+
+  it('skips Gemini when the database invalidates a changed target', async () => {
+    const client = makeClient(false);
+
+    await processTranslateSentenceJob(client, { id: 'job-1' } as any, 'worker-1', 300, vi.fn(() => ({})) as any);
+
+    expect(generateStructuredJsonWithMeta).not.toHaveBeenCalled();
+    expect(client.rpc).not.toHaveBeenCalledWith('apply_sentence_translation_result', expect.anything());
+  });
+
+  it('does not auto-enqueue when a stage has terminal failures', () => {
+    const body = functionBody('create_or_resume_source_processing_run');
+    expect(body).toContain("status IN ('failed','needs_review')");
+    expect(body).toContain("status = 'needs_review'");
+    expect(body).toContain("'Falha terminal exige retry manual.'");
+  });
+
+  it('manual retry creates a new job preserving the previous one', () => {
+    const body = functionBody('retry_ai_jobs');
+    expect(body).toContain('retry_of_job_id');
+    expect(body).toContain('INSERT INTO ai_jobs');
+    expect(body).not.toContain("SET status = 'pending'");
+  });
+
+  it('dictionary enrichment replaces preliminary fields with AI values', () => {
+    const body = functionBody('apply_dictionary_enrichment_result');
+    expect(body).toContain("v_main_meaning := COALESCE(\n    NULLIF(p_enrichment->>'main_meaning', '')");
+    expect(body).toContain("jlpt_level = COALESCE(NULLIF(p_enrichment->>'jlpt_level', ''), dictionary_entries.jlpt_level)");
+    expect(body).not.toContain("COALESCE(dictionary_entries.jlpt_level, NULLIF(p_enrichment->>'jlpt_level'");
+  });
+
+  it('reviewed dictionary entries are completed without overwrite', () => {
+    const body = functionBody('apply_dictionary_enrichment_result');
+    const reviewed = body.indexOf("IF current_entry.status = 'reviewed' THEN");
+    const update = body.indexOf('UPDATE dictionary_entries');
+    expect(reviewed).toBeGreaterThan(-1);
+    expect(update).toBeGreaterThan(reviewed);
+    expect(body.slice(reviewed, update)).toContain("'already_reviewed'");
   });
 });
