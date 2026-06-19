@@ -8,9 +8,11 @@ describe('SourcePreparationPanel audit controls', () => {
   it('keeps the AI audit screen focused on queue maintenance instead of study navigation', () => {
     expect(source).not.toContain('label="Estudar"');
     expect(source).toContain('Retentar problemas');
-    expect(source).toContain('Abortar e zerar fila da fonte');
+    expect(source).toContain('Cancelar nao concluidos');
+    expect(source).toContain('Historico e resultados ja concluidos permanecem');
     expect(source).not.toContain('Retomar travados');
     expect(source).not.toContain('Retentar erros');
+    expect(source).not.toContain('Abortar e zerar fila');
     expect(source).not.toContain('Limpar fila da fonte');
   });
 });

@@ -5,7 +5,7 @@ export function getPromptKind(jobType: string): AiPromptKind | null {
     return "translate_sentence";
   }
 
-  if (jobType === "generate_sentence_reading" || jobType === "batch_analyze_sentences") {
+  if (jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms" || jobType === "batch_analyze_sentences") {
     return "analyze_sentence";
   }
 
@@ -34,7 +34,7 @@ export function getModelForJobType(jobType: string): string {
     return process.env.GEMINI_MODEL_FULL || cheapestModel;
   }
 
-  if (jobType === "batch_analyze_sentences" || jobType === "generate_sentence_reading") {
+  if (jobType === "batch_analyze_sentences" || jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms") {
     return process.env.GEMINI_MODEL_ANALYZE || cheapestModel;
   }
 
@@ -43,6 +43,6 @@ export function getModelForJobType(jobType: string): string {
 
 export function getTemperatureForJobType(jobType: string): number {
   if (jobType === "translate_sentence" || jobType === "batch_translate_sentences") return 0.15;
-  if (jobType === "generate_sentence_reading" || jobType === "batch_analyze_sentences") return 0.1;
+  if (jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms" || jobType === "batch_analyze_sentences") return 0.1;
   return 0.2;
 }

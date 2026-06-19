@@ -39,6 +39,19 @@ ${JSON.stringify(input.sentence || "")}`,
     });
   }
 
+  if (jobType === "detect_sentence_terms") {
+    return withPolicy(jobType, promptVersion, {
+      prompt: buildTermDetectionPrompt({
+        japanese: input.sentence,
+        portuguese: input.portuguese,
+        kana: input.kana,
+        romaji: input.romaji,
+        known_words: input.known_words,
+      }),
+      responseSchema: sentenceAnalysisSchema(),
+    });
+  }
+
   if (jobType === "enrich_dictionary_entry") {
     return withPolicy(jobType, promptVersion, {
       prompt: buildDictionaryPrompt([{ id: "item", lemma: input.lemma, examples: input.examples || [] }], true, false),
@@ -138,6 +151,25 @@ Regras obrigatórias:
 
 Entrada:
 ${JSON.stringify(items)}`;
+}
+
+function buildTermDetectionPrompt(item: any): string {
+  return `Tarefa: detectar termos japoneses relevantes em uma frase ja lida.
+Retorne o objeto da unica frase.
+
+Regras obrigatorias:
+- Preserve kana e romaji recebidos quando estiverem corretos.
+- terms: lista de ocorrencias na frase, nao verbetes longos de dicionario.
+- surface deve ser substring EXATA da frase japonesa original.
+- start_index e end_index devem apontar exatamente para surface.
+- lemma deve ser forma canonica de dicionario.
+- Cubra palavras e particulas relevantes; ignore so pontuacao.
+- context_meaning deve ser curto, 1 a 3 palavras.
+- grammar_note so quando necessario para conjugacoes ou uso contextual.
+- Prefira known_words quando o lemma aparecer de fato na frase.
+
+Entrada:
+${JSON.stringify([{ id: "item", ...item }])}`;
 }
 
 function buildDictionaryPrompt(items: any[], includeFull: boolean, isBatch: boolean): string {

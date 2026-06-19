@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SourcePreparationEngine } from '../SourcePreparationEngine';
-import { AiJobRepository, DictionaryRepository, SentenceRepository, TermRepository } from '../../../repositories';
+import { AiJobRepository, DictionaryRepository, ProcessingRunRepository, SentenceRepository, TermRepository } from '../../../repositories';
 
 vi.mock('../../../repositories', () => ({
   AiJobRepository: {
@@ -9,10 +9,17 @@ vi.mock('../../../repositories', () => ({
     delete: vi.fn(),
     getAll: vi.fn(),
     getByTarget: vi.fn(),
+    getBySource: vi.fn(),
     updateStatuses: vi.fn(),
   },
   DictionaryRepository: {
     getByIds: vi.fn(),
+  },
+  ProcessingRunRepository: {
+    createOrResumeRun: vi.fn(),
+    requestCancel: vi.fn(),
+    resumeRun: vi.fn(),
+    updateRun: vi.fn(),
   },
   SentenceRepository: {
     getAll: vi.fn(),
@@ -98,9 +105,16 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(TermRepository.getBySentencesWithDictionary).mockResolvedValue([]);
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([]);
     vi.mocked(AiJobRepository.getAll).mockResolvedValue([]);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([]);
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([]);
     vi.mocked(AiJobRepository.add).mockImplementation(async (input: any) => ({ id: `job-${input.input_hash}`, ...input } as any));
     vi.mocked(AiJobRepository.updateStatuses).mockResolvedValue(true);
+    vi.mocked(ProcessingRunRepository.createOrResumeRun).mockResolvedValue({
+      id: 'run-1',
+      source_id: 'source-1',
+      status: 'pending',
+      started_at: null,
+    } as any);
+    vi.mocked(ProcessingRunRepository.updateRun).mockResolvedValue(null);
   });
 
   it('diagnoses an empty source without jobs or AI targets', async () => {
@@ -174,7 +188,7 @@ describe('SourcePreparationEngine', () => {
   });
 
   it('diagnoses pending, running, error, stuck and duplicate jobs', async () => {
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({ id: 'p', status: 'pending', input: { items: [{ id: 's1' }] } }),
       job({ id: 'r', status: 'running', input: { items: [{ id: 's2' }] } }),
       job({ id: 'e', status: 'error', input: { items: [{ id: 's3' }] } }),
@@ -199,7 +213,7 @@ describe('SourcePreparationEngine', () => {
   });
 
   it('aborts and clears every source queue job including running history', async () => {
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({ id: 'pending-job', status: 'pending' }),
       job({ id: 'error-job', status: 'error' }),
       job({ id: 'completed-job', status: 'completed' }),
@@ -241,7 +255,7 @@ describe('SourcePreparationEngine', () => {
   });
 
   it('retries errored and stuck jobs with one problem retry command', async () => {
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({ id: 'error-job', status: 'error', error: 'falhou' }),
       job({ id: 'stuck-job', status: 'running', locked_until: '2026-06-17T11:00:00.000Z' }),
       job({ id: 'ok-running', status: 'running', locked_until: '2099-06-17T13:00:00.000Z' }),
@@ -277,7 +291,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getAll).mockResolvedValue([
       sentence({ id: 'source-reusable', source_id: 'source-2', japanese: 'ある', japanese_key: 'ある', portuguese: 'Existe.' }),
     ]);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({ id: 'pending', status: 'pending', input: { items: [{ id: 'pending-target' }] } }),
       job({ id: 'running', status: 'running', input: { items: [{ id: 'running-target' }] } }),
       job({ id: 'completed', status: 'completed', input: { items: [{ id: 'completed-target' }] } }),
@@ -299,8 +313,8 @@ describe('SourcePreparationEngine', () => {
     plan.reuse.translations.push({ sentenceId: 's-cache', reusableSentenceId: 'old', translation: 'Cache.' });
     plan.jobs.translation.push({
       type: 'translate_sentence',
-      targetType: 'batch',
-      targetId: 'source-1',
+      targetType: 'sentence',
+      targetId: 's1',
       stage: 'translation',
       label: 'Traduzir frase 1/1',
       itemCount: 1,
@@ -314,7 +328,8 @@ describe('SourcePreparationEngine', () => {
     expect(SentenceRepository.update).toHaveBeenCalledWith('s-cache', expect.objectContaining({ translation_source: 'cache' }));
     expect(AiJobRepository.add).toHaveBeenCalledWith(expect.objectContaining({
       type: 'translate_sentence',
-      target_id: 'source-1',
+      target_id: 's1',
+      run_id: null,
       input: expect.objectContaining({ label: 'Traduzir frase 1/1' }),
     }));
     expect(AiJobRepository.delete).not.toHaveBeenCalled();
@@ -399,7 +414,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getAll).mockResolvedValue([
       sentence({ id: 'needs-translation', portuguese: null }),
     ]);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({ id: 'old-completed', status: 'completed', input: { items: [{ id: 'needs-translation' }] } }),
     ]);
 
@@ -417,7 +432,7 @@ describe('SourcePreparationEngine', () => {
       sentence({ id: 'translation-error-target', japanese: 'また', japanese_key: 'また', portuguese: null }),
       sentence({ id: 'needs-analysis', japanese: '行くぞ', japanese_key: '行くぞ', portuguese: 'Vamos.', kana: null, romaji: null }),
     ]);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({
         id: 'errored-translation',
         type: 'translate_sentence',
@@ -454,7 +469,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
       entry({ id: 'entry-incomplete', kana: null, status: 'pending' }),
     ]);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({
         id: 'errored-translation',
         type: 'translate_sentence',
@@ -479,7 +494,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(SentenceRepository.getAll).mockResolvedValue([
       sentence({ id: 'needs-analysis', portuguese: 'Pronto.', kana: null, romaji: null }),
     ]);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({
         id: 'old-analysis',
         type: 'batch_analyze_sentences',
@@ -511,7 +526,7 @@ describe('SourcePreparationEngine', () => {
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
       entry({ id: 'entry-incomplete', kana: null, status: 'pending' }),
     ]);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       job({
         id: 'old-dictionary',
         type: 'batch_enrich_dictionary_entries_full',
@@ -536,7 +551,7 @@ describe('SourcePreparationEngine', () => {
     const createdJobs: any[] = [];
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue(firstSource);
     vi.mocked(SentenceRepository.getAll).mockResolvedValue(firstSource);
-    vi.mocked(AiJobRepository.getByTarget).mockImplementation(async () => createdJobs);
+    vi.mocked(AiJobRepository.getBySource).mockImplementation(async () => createdJobs);
     vi.mocked(AiJobRepository.add).mockImplementation(async (input: any) => {
       const existing = createdJobs.find(
         (job) =>
@@ -583,7 +598,7 @@ describe('SourcePreparationEngine', () => {
         portuguese: 'Frase 42.',
       }),
     ]);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([]);
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([]);
     vi.mocked(SentenceRepository.getById).mockResolvedValue(reused);
 
     const reusePlan = await SourcePreparationEngine.buildPlan('source-2', { translateBatchSize: 30 }, now);

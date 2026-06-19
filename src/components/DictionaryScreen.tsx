@@ -174,8 +174,8 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
              await AiJobRepository.add({
                 type: dictType,
                 user_id: "",
-                target_type: sourceFilter === "all" ? 'dictionary_entry' : 'batch',
-                target_id: sourceFilter === "all" ? entry.id : sourceFilter,
+                target_type: 'dictionary_entry',
+                target_id: entry.id,
                 input_hash: inputHash,
                 input,
                 status: 'pending',

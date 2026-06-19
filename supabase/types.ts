@@ -185,32 +185,64 @@ export type AiJobType =
   | 'batch_analyze_sentences'
   | 'batch_enrich_dictionary_entries_fast'
   | 'batch_enrich_dictionary_entries_full';
-export type AiJobStatus = 'pending' | 'running' | 'completed' | 'error' | 'cancelled' | 'rejected' | 'applied';
+export type AiJobStatus =
+  | 'pending'
+  | 'claimed'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'retry_wait'
+  | 'needs_review'
+  | 'cancelled'
+  | 'obsolete'
+  | 'error'
+  | 'rejected'
+  | 'applied';
 
 export interface AiJob {
   id: string;
   user_id: string;
+  run_id?: string | null;
   type: AiJobType;
   target_type: string;
   target_id: string;
+  target_key?: string | null;
+  job_key?: string | null;
   status: AiJobStatus;
   priority?: number;
   input_hash: string;
   input: any;
+  payload?: any;
   result: any;
+  raw_result?: any;
   error: string | null;
+  error_code?: string | null;
+  error_kind?: string | null;
+  error_structured?: any;
   attempts?: number;
   max_attempts?: number;
   model?: string | null;
+  model_version?: string | null;
+  prompt_version?: string | null;
+  target_hash?: string | null;
   input_tokens?: number | null;
   output_tokens?: number | null;
   cost_estimate?: number | null;
+  cost_actual?: number | null;
+  latency_queue_ms?: number | null;
+  latency_ai_ms?: number | null;
+  latency_persist_ms?: number | null;
+  logs?: any[];
   created_at: string;
+  claimed_at?: string | null;
   started_at?: string | null;
   completed_at: string | null;
   updated_at?: string | null;
   locked_by?: string | null;
   locked_until?: string | null;
+  lease_expires_at?: string | null;
+  worker_id?: string | null;
+  retry_at?: string | null;
   retry_count?: number;
   last_heartbeat_at?: string | null;
 }
@@ -276,7 +308,16 @@ export interface AppSettings {
   blockHighlightDuringSpeech?: boolean;
 }
 
-export type ProcessingRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'error' | 'cancelled';
+export type ProcessingRunStatus =
+  | 'pending'
+  | 'planning'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'error'
+  | 'cancelled'
+  | 'needs_review';
 export interface ProcessingRun {
   id: string;
   user_id: string;
@@ -292,6 +333,18 @@ export interface ProcessingRun {
   processed_jobs: number;
   applied_items: number;
   failed_items: number;
+  planned_jobs?: number;
+  pending_jobs?: number;
+  running_jobs?: number;
+  completed_jobs?: number;
+  retry_jobs?: number;
+  review_jobs?: number;
+  cancelled_jobs?: number;
+  obsolete_jobs?: number;
+  total_cost_estimate?: number;
+  total_cost_actual?: number;
+  ai_call_count?: number;
+  metadata?: Record<string, unknown>;
   cancel_requested: boolean;
   log: any[];
   error: string | null;

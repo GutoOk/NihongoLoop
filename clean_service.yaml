@@ -19,16 +19,16 @@ spec:
   template:
     metadata:
       annotations:
-        autoscaling.knative.dev/maxScale: '13'
-        autoscaling.knative.dev/minScale: '0'
+        autoscaling.knative.dev/maxScale: '1'
+        autoscaling.knative.dev/minScale: '1'
         generativelanguage.googleapis.com/nonce: dea27ec4-27ab-4f3e-8e4a-e0aa0e936800
         run.googleapis.com/base-images: '{"app-container":"us-central1-docker.pkg.dev/serverless-runtimes/google-22/runtimes/nodejs22"}'
-        run.googleapis.com/cpu-throttling: 'true'
+        run.googleapis.com/cpu-throttling: 'false'
         run.googleapis.com/sessionAffinity: 'true'
       labels:
         run.googleapis.com/startupProbeType: Custom
     spec:
-      containerConcurrency: 1000
+      containerConcurrency: 80
       containers:
       - args:
         - -c
@@ -50,6 +50,22 @@ spec:
           value: 'False'
         - name: VITE_SUPABASE_ANON_KEY
           value: sb_publishable_nIabNyN_bgDyWPf_hfTUmw_eTVOnICn
+        - name: SUPABASE_SERVICE_ROLE_KEY
+          value: SUPABASE_SERVICE_ROLE_KEY_PLACEHOLDER
+        - name: AI_WORKER_ENABLED
+          value: 'true'
+        - name: AI_WORKER_TRANSLATE_CONCURRENCY
+          value: '8'
+        - name: AI_WORKER_READING_CONCURRENCY
+          value: '8'
+        - name: AI_WORKER_TERMS_CONCURRENCY
+          value: '4'
+        - name: AI_WORKER_DICTIONARY_CONCURRENCY
+          value: '5'
+        - name: AI_WORKER_POLL_MS
+          value: '2000'
+        - name: AI_WORKER_LEASE_SECONDS
+          value: '300'
         - name: GEMINI_MODEL
           value: gemini-2.5-flash-lite
         - name: GEMINI_MODEL_FAST

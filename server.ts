@@ -7,11 +7,13 @@ import { formatGenAiError } from "./server/aiUtils";
 import { generateStructuredJsonWithMeta, GenerateStructuredJsonMeta } from "./server/geminiJson";
 import { buildBatchAiRequest, buildSingleAiRequest } from "./server/ai/prompts";
 import { processBatchJobsForTarget } from "./server/ai/batchJobProcessor";
+import { startAiQueueWorker } from "./server/ai/queueWorker";
 
 let aiClient: GoogleGenAI | null = null;
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || "";
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
 const supabaseAuthClient = isSupabaseConfigured
@@ -191,6 +193,16 @@ function attachAiMeta<T>(data: T, meta: ReturnType<typeof buildAiMeta>): any {
   return { value: data, ai_meta: meta };
 }
 
+function isLegacyAiHttpEnabled() {
+  return process.env.ENABLE_LEGACY_AI_HTTP === "true";
+}
+
+function rejectLegacyAiHttp(res: any) {
+  res.status(410).json({
+    error: "Processamento HTTP legado de IA desativado. Use a fila persistente ai_jobs consumida pelo worker oficial.",
+  });
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
@@ -212,6 +224,10 @@ async function startServer() {
   });
 
   app.post("/api/ai/trigger-batch-jobs", ipRateLimit, authenticateRequest, async (req: any, res: any) => {
+    if (!isLegacyAiHttpEnabled()) {
+      rejectLegacyAiHttp(res);
+      return;
+    }
     try {
       const { targetId, concurrencyLimit } = req.body;
       if (!targetId) {
@@ -238,6 +254,10 @@ async function startServer() {
   });
 
   app.post("/api/ai/process-job", ipRateLimit, authenticateRequest, async (req: any, res: any) => {
+    if (!isLegacyAiHttpEnabled()) {
+      rejectLegacyAiHttp(res);
+      return;
+    }
     try {
       const { job } = req.body;
       if (!job || !job.type) {
@@ -270,6 +290,10 @@ async function startServer() {
   });
 
   app.post("/api/ai/process-jobs-batch", ipRateLimit, authenticateRequest, async (req: any, res: any) => {
+    if (!isLegacyAiHttpEnabled()) {
+      rejectLegacyAiHttp(res);
+      return;
+    }
     try {
       const { jobs } = req.body;
       if (!Array.isArray(jobs) || jobs.length === 0) {
@@ -370,6 +394,13 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+  });
+
+  startAiQueueWorker({
+    enabled: process.env.AI_WORKER_ENABLED !== "false",
+    supabaseUrl,
+    serviceRoleKey: supabaseServiceRoleKey,
+    getAi,
   });
 }
 

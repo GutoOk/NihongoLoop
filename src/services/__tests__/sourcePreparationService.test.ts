@@ -6,6 +6,7 @@ vi.mock('../../repositories', () => ({
   AiJobRepository: {
     add: vi.fn(),
     getByTarget: vi.fn(),
+    getBySource: vi.fn(),
   },
   DictionaryRepository: {
     getByIds: vi.fn(),
@@ -61,7 +62,7 @@ function sentence(overrides: Record<string, unknown>) {
 describe('SourcePreparationService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([]);
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([]);
     vi.mocked(AiJobRepository.add).mockImplementation(async (job: any) => ({ id: 'job-created', ...job }));
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([]);
     vi.mocked(SentenceRepository.getAll).mockResolvedValue([]);
@@ -81,7 +82,9 @@ describe('SourcePreparationService', () => {
 
     expect(AiJobRepository.add).toHaveBeenCalledWith(
       expect.objectContaining({
-        target_id: 'source-1',
+        run_id: 'run-1',
+        target_type: 'sentence',
+        target_id: 'needs-ai',
         type: 'translate_sentence',
         input: expect.objectContaining({
           id: 'needs-ai',
@@ -91,7 +94,7 @@ describe('SourcePreparationService', () => {
     );
     expect(ProcessingRunRepository.updateRun).toHaveBeenCalledWith(
       'run-1',
-      expect.objectContaining({ status: 'completed' }),
+      expect.objectContaining({ status: 'running' }),
     );
   });
 
@@ -99,10 +102,11 @@ describe('SourcePreparationService', () => {
     const sentences = [sentence({ id: 'sent-2', japanese: 'テスト', japanese_key: 'テスト' })];
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue(sentences);
     vi.mocked(SentenceRepository.getAll).mockResolvedValue(sentences);
-    vi.mocked(AiJobRepository.getByTarget).mockResolvedValue([
+    vi.mocked(AiJobRepository.getBySource).mockResolvedValue([
       {
         id: 'job-1',
-        target_id: 'source-1',
+        target_id: 'sent-2',
+        target_type: 'sentence',
         status: 'pending',
         type: 'translate_sentence',
         input: { id: 'sent-2' },

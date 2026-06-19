@@ -1,13 +1,13 @@
 import {
   AiJobRepository,
   DictionaryRepository,
+  ProcessingRunRepository,
   SentenceRepository,
   TermRepository,
 } from '../../repositories';
 import { stableHash } from '../../core/hash';
 import { makeJapaneseKey } from '../../core/japaneseNormalize';
-import { AiJob, AiJobStatus, AiJobType, DictionaryEntry, Sentence, SentenceTermWithDictionary } from '../../types';
-import { AiJobService } from '../../services/aiJobService';
+import { AiJob, AiJobStatus, AiJobType, DictionaryEntry, ProcessingRun, Sentence, SentenceTermWithDictionary } from '../../types';
 
 export const SOURCE_PREPARATION_DEFINITIONS = {
   existingTranslation:
@@ -64,7 +64,7 @@ export interface SourcePreparationDiagnosis {
   targets: {
     reusableTranslations: Array<{ sentenceId: string; reusableSentenceId: string; translation: string }>;
     aiTranslations: Array<{ sentenceId: string; japanese: string }>;
-    lexicalAnalyses: Array<{ sentenceId: string; japanese: string; portuguese: string | null }>;
+    lexicalAnalyses: Array<{ sentenceId: string; japanese: string; portuguese: string | null; mode: 'reading' | 'terms'; kana?: string | null; romaji?: string | null }>;
     dictionaryEntries: Array<{ entryId: string; lemma: string }>;
     erroredJobs: AiJob[];
     stuckJobs: AiJob[];
@@ -105,11 +105,12 @@ export interface SourcePreparationQueueResult {
   plan: SourcePreparationPlan;
   jobs: AiJob[];
   appliedReusableTranslations: number;
+  run?: ProcessingRun | null;
 }
 
 export interface PlannedPreparationJob {
   type: AiJobType;
-  targetType: 'batch';
+  targetType: 'sentence' | 'dictionary_entry';
   targetId: string;
   stage: 'translation' | 'lexical_analysis' | 'dictionary';
   label: string;
@@ -126,9 +127,17 @@ const JOB_TYPES = {
   dictionary: 'enrich_dictionary_entry',
 } as const satisfies Record<PreparationStage, AiJobType>;
 
-const JOB_STATUSES_FOR_DUPLICATE_AUDIT: AiJobStatus[] = ['pending', 'running', 'completed', 'applied'];
-const ACTIVE_STATUSES: AiJobStatus[] = ['pending', 'running'];
-const BLOCKING_STATUSES: AiJobStatus[] = ['error'];
+const JOB_STATUSES_FOR_DUPLICATE_AUDIT: AiJobStatus[] = [
+  'pending',
+  'claimed',
+  'running',
+  'retry_wait',
+  'needs_review',
+  'completed',
+  'applied',
+];
+const ACTIVE_STATUSES: AiJobStatus[] = ['pending', 'claimed', 'running', 'retry_wait'];
+const BLOCKING_STATUSES: AiJobStatus[] = ['error', 'failed', 'needs_review'];
 function hasText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
@@ -146,8 +155,9 @@ function isDictionaryEntryComplete(entry: DictionaryEntry | null | undefined): b
 }
 
 function isJobStuck(job: AiJob, now: Date): boolean {
-  if (job.status !== 'running') return false;
-  if (job.locked_until && new Date(job.locked_until).getTime() < now.getTime()) return true;
+  if (job.status !== 'running' && job.status !== 'claimed') return false;
+  const leaseExpiresAt = job.lease_expires_at || job.locked_until;
+  if (leaseExpiresAt && new Date(leaseExpiresAt).getTime() < now.getTime()) return true;
   if (!job.locked_until && job.last_heartbeat_at) {
     return now.getTime() - new Date(job.last_heartbeat_at).getTime() > 5 * 60_000;
   }
@@ -168,6 +178,7 @@ function getInput(job: AiJob): any {
 function canonicalJobType(type: string): string {
   if (type === 'batch_translate_sentences') return JOB_TYPES.translation;
   if (type === 'batch_analyze_sentences') return JOB_TYPES.lexical_analysis;
+  if (type === 'detect_sentence_terms') return JOB_TYPES.lexical_analysis;
   if (type === 'batch_enrich_dictionary_entries_fast' || type === 'batch_enrich_dictionary_entries_full') return JOB_TYPES.dictionary;
   return type;
 }
@@ -190,7 +201,8 @@ function getJobHumanLabel(job: Pick<AiJob, 'type' | 'input'>): string {
   const input = getInput(job as AiJob);
   const count = Array.isArray(input.items) ? input.items.length : 1;
   if (job.type === JOB_TYPES.translation) return `Traduzir frases (${count})`;
-  if (job.type === JOB_TYPES.lexical_analysis) return `Analisar frases (${count})`;
+  if (job.type === JOB_TYPES.lexical_analysis) return `Gerar leitura (${count})`;
+  if (job.type === 'detect_sentence_terms') return `Detectar termos (${count})`;
   if (job.type === JOB_TYPES.dictionary) return `Completar dicionario (${count})`;
   return String(job.type);
 }
@@ -222,7 +234,7 @@ function buildJobItemStatusIndex(jobs: AiJob[], now: Date) {
     if (ACTIVE_STATUSES.includes(job.status)) {
       keys.forEach((key) => activeOrDone.add(key));
     }
-    if (job.status === 'error') {
+    if (job.status === 'error' || job.status === 'failed' || job.status === 'needs_review') {
       keys.forEach((key) => error.add(key));
     }
     if (isJobStuck(job, now)) {
@@ -258,7 +270,7 @@ export class SourcePreparationEngine {
     const allSentences = await SentenceRepository.getAll();
     const sentenceIds = sourceSentences.map((sentence) => sentence.id);
     const terms = await TermRepository.getBySentencesWithDictionary(sentenceIds);
-    const jobs = await AiJobRepository.getByTarget(sourceId);
+    const jobs = await AiJobRepository.getBySource(sourceId);
 
     const sourceKeys = sourceSentences.map((sentence) => sentence.japanese_key || makeJapaneseKey(sentence.japanese));
     const keyCounts = new Map<string, number>();
@@ -317,11 +329,23 @@ export class SourcePreparationEngine {
       if (hasValidLexicalAnalysis(sentence, sentenceTerms)) {
         withValidLexicalAnalysis++;
       } else if (hasExistingTranslation(sentence)) {
-        lexicalAnalyses.push({
-          sentenceId: sentence.id,
-          japanese: sentence.japanese,
-          portuguese: sentence.portuguese || null,
-        });
+        if (!sentence.kana || !sentence.romaji) {
+          lexicalAnalyses.push({
+            sentenceId: sentence.id,
+            japanese: sentence.japanese,
+            portuguese: sentence.portuguese || null,
+            mode: 'reading',
+          });
+        } else {
+          lexicalAnalyses.push({
+            sentenceId: sentence.id,
+            japanese: sentence.japanese,
+            portuguese: sentence.portuguese || null,
+            mode: 'terms',
+            kana: sentence.kana,
+            romaji: sentence.romaji,
+          });
+        }
       }
     }
 
@@ -375,9 +399,9 @@ export class SourcePreparationEngine {
       },
       jobs: {
         pending: jobs.filter((job) => job.status === 'pending').length,
-        running: jobs.filter((job) => job.status === 'running').length,
+        running: jobs.filter((job) => job.status === 'running' || job.status === 'claimed').length,
         completed: jobs.filter((job) => job.status === 'completed' || job.status === 'applied').length,
-        error: jobs.filter((job) => job.status === 'error').length,
+        error: jobs.filter((job) => job.status === 'error' || job.status === 'failed' || job.status === 'needs_review').length,
         stuck: stuckJobs.length,
         possibleDuplicates: duplicateJobs.count,
       },
@@ -386,7 +410,7 @@ export class SourcePreparationEngine {
         aiTranslations,
         lexicalAnalyses,
         dictionaryEntries: needsAiEntries.map((entry) => ({ entryId: entry.id, lemma: entry.lemma })),
-        erroredJobs: jobs.filter((job) => job.status === 'error'),
+        erroredJobs: jobs.filter((job) => job.status === 'error' || job.status === 'failed' || job.status === 'needs_review'),
         stuckJobs,
         duplicateJobs: duplicateJobs.jobs,
       },
@@ -399,7 +423,7 @@ export class SourcePreparationEngine {
     now = new Date(),
   ): Promise<SourcePreparationPlan> {
     const diagnosis = await this.diagnoseSource(sourceId, now);
-    const jobs = await AiJobRepository.getByTarget(sourceId);
+    const jobs = await AiJobRepository.getBySource(sourceId);
     const itemStatus = buildJobItemStatusIndex(jobs, now);
 
     const translationTargets = diagnosis.targets.aiTranslations.filter((target) => {
@@ -430,7 +454,7 @@ export class SourcePreparationEngine {
       sourceId,
       'lexical_analysis',
       shouldPlanLexicalAnalysis
-        ? lexicalTargets.map((target) => ({ id: target.sentenceId, japanese: target.japanese, portuguese: target.portuguese }))
+        ? lexicalTargets.map((target) => ({ id: target.sentenceId, japanese: target.japanese, portuguese: target.portuguese, mode: target.mode, kana: target.kana, romaji: target.romaji }))
         : [],
       options.analyzeBatchSize || 10,
       (item) => `${item.japanese}${item.portuguese || ''}`,
@@ -469,7 +493,7 @@ export class SourcePreparationEngine {
     };
   }
 
-  static async createQueueFromPlan(plan: SourcePreparationPlan): Promise<SourcePreparationQueueResult> {
+  static async createQueueFromPlan(plan: SourcePreparationPlan, runId?: string | null): Promise<SourcePreparationQueueResult> {
     const appliedReusableTranslations = await this.applyReusableTranslations(plan.reuse.translations);
     const created: AiJob[] = [];
     for (const planned of [...plan.jobs.translation, ...plan.jobs.lexicalAnalysis, ...plan.jobs.dictionary]) {
@@ -478,14 +502,19 @@ export class SourcePreparationEngine {
         sourceId: plan.sourceId,
         targetKeys: planned.targetKeys,
       });
+      const jobKey = `${planned.type}:${planned.targetType}:${planned.targetId}:${inputHash}`;
       const job = await AiJobRepository.add({
+        run_id: runId || null,
         type: planned.type,
         target_type: planned.targetType,
         target_id: planned.targetId,
+        target_key: planned.targetKeys[0] || null,
+        job_key: jobKey,
         status: 'pending',
         priority: this.priorityForStage(planned.stage),
         input_hash: inputHash,
         input: planned.input,
+        payload: planned.input,
         result: null,
         error: null,
         attempts: 0,
@@ -497,12 +526,42 @@ export class SourcePreparationEngine {
   }
 
   static async createQueueForSource(sourceId: string, options: PreparationBatchOptions = {}): Promise<SourcePreparationQueueResult> {
+    const run = await ProcessingRunRepository.createOrResumeRun(sourceId, 'all');
+    if (run) {
+      await ProcessingRunRepository.updateRun(run.id, {
+        status: 'planning',
+        started_at: run.started_at || new Date().toISOString(),
+        current_step: 'Diagnosticando lacunas reais e criando jobs individuais...',
+      });
+    }
+
     const plan = await this.buildPlan(sourceId, options);
-    return this.createQueueFromPlan(plan);
+    const result = await this.createQueueFromPlan(plan, run?.id);
+    if (run) {
+      await ProcessingRunRepository.updateRun(run.id, {
+        status: result.jobs.length > 0 || result.appliedReusableTranslations > 0 ? 'running' : 'completed',
+        finished_at: result.jobs.length > 0 ? null : new Date().toISOString(),
+        current_step:
+          result.jobs.length > 0
+            ? `${result.jobs.length} job(s) individuais aguardando worker persistente.`
+            : 'Nada a fazer: nenhuma lacuna real sem fila existente.',
+        total_items: plan.totals.translationItems + plan.totals.lexicalAnalysisItems + plan.totals.dictionaryItems,
+        created_jobs: result.jobs.length,
+        planned_jobs: plan.totals.jobs,
+        pending_jobs: result.jobs.length,
+        completed_jobs: 0,
+        failed_items: 0,
+        retry_jobs: 0,
+        review_jobs: 0,
+        cancelled_jobs: 0,
+        obsolete_jobs: 0,
+      });
+    }
+    return { ...result, run };
   }
 
   private static async requeueStuckJobsForSource(sourceId: string): Promise<boolean> {
-    const jobs = await AiJobRepository.getByTarget(sourceId);
+    const jobs = await AiJobRepository.getBySource(sourceId);
     const now = new Date();
     const stuckIds = jobs.filter((job) => isJobStuck(job, now)).map((job) => job.id);
     if (stuckIds.length === 0) return true;
@@ -516,7 +575,7 @@ export class SourcePreparationEngine {
   }
 
   static async retryProblemJobs(sourceId: string): Promise<boolean> {
-    const jobs = await AiJobRepository.getByTarget(sourceId);
+    const jobs = await AiJobRepository.getBySource(sourceId);
     return this.retryProblemJobsFromList(jobs);
   }
 
@@ -525,10 +584,29 @@ export class SourcePreparationEngine {
     return this.retryProblemJobsFromList(jobs);
   }
 
+  static async retryProblemJobsByRun(runId: string): Promise<boolean> {
+    await ProcessingRunRepository.resumeRun(runId);
+    return AiJobRepository.retryProblemJobsByRun(runId);
+  }
+
+  static async cancelRun(runId: string): Promise<boolean> {
+    await AiJobRepository.cancelActiveJobsByRun(runId);
+    await ProcessingRunRepository.requestCancel(runId);
+    return true;
+  }
+
+  static async cancelSourceActiveJobs(sourceId: string): Promise<boolean> {
+    return AiJobRepository.cancelActiveJobsBySource(sourceId);
+  }
+
+  static async cancelAllActiveJobs(): Promise<boolean> {
+    return AiJobRepository.cancelAllActiveJobs();
+  }
+
   private static async retryProblemJobsFromList(jobs: AiJob[]): Promise<boolean> {
     const now = new Date();
     const ids = jobs
-      .filter((job) => job.status === 'error' || isJobStuck(job, now))
+      .filter((job) => job.status === 'error' || job.status === 'failed' || job.status === 'needs_review' || isJobStuck(job, now))
       .map((job) => job.id);
     if (ids.length === 0) return true;
     return AiJobRepository.updateStatuses(ids, {
@@ -542,7 +620,7 @@ export class SourcePreparationEngine {
   }
 
   static async clearQueueJobs(sourceId: string): Promise<boolean> {
-    const jobs = await AiJobRepository.getByTarget(sourceId);
+    const jobs = await AiJobRepository.getBySource(sourceId);
     for (const job of jobs) {
       await AiJobRepository.delete(job.id);
     }
@@ -558,25 +636,18 @@ export class SourcePreparationEngine {
   }
 
   static async processNextSourceJob(sourceId: string, runnerId: string, signal?: AbortSignal): Promise<AiJob | null> {
-    const [processed] = await this.processNextSourceJobs(sourceId, runnerId, 1, signal);
-    return processed || null;
+    void sourceId;
+    void runnerId;
+    void signal;
+    return null;
   }
 
   static async processNextSourceJobs(sourceId: string, runnerId: string, concurrencyLimit: number, signal?: AbortSignal): Promise<AiJob[]> {
-    await this.requeueStuckJobsForSource(sourceId);
-    const jobs = await AiJobRepository.getByTarget(sourceId);
-    const pending = jobs
-      .filter((job) => job.status === 'pending')
-      .sort((a, b) => this.jobSortValue(a) - this.jobSortValue(b));
-    const selected: AiJob[] = [];
-    for (const job of pending) {
-      if (selected.length >= Math.max(1, concurrencyLimit)) break;
-      const claimed = await AiJobRepository.claimJob(job.id, runnerId);
-      if (claimed) selected.push(job);
-    }
-    if (selected.length === 0) return [];
-    await Promise.all(selected.map((job) => AiJobService.processJob(job)));
-    return selected;
+    void sourceId;
+    void runnerId;
+    void concurrencyLimit;
+    void signal;
+    return [];
   }
 
   private static createPlannedJobs<T extends { id: string }>(
@@ -586,11 +657,15 @@ export class SourcePreparationEngine {
     maxItems: number,
     getText: (item: T) => string,
   ): PlannedPreparationJob[] {
-    const type = JOB_TYPES[stage];
-    return items.map((item, index) => ({
+    const targetType = stage === 'dictionary' ? 'dictionary_entry' : 'sentence';
+    return items.map((item, index) => {
+      const type = stage === 'lexical_analysis' && (item as any).mode === 'terms'
+        ? 'detect_sentence_terms'
+        : JOB_TYPES[stage];
+      return {
       type,
-      targetType: 'batch',
-      targetId: sourceId,
+      targetType,
+      targetId: item.id,
       stage,
       label: this.createPlannedJobLabel(stage, index + 1, items.length),
       itemCount: 1,
@@ -600,11 +675,19 @@ export class SourcePreparationEngine {
         label: this.createPlannedJobLabel(stage, index + 1, items.length),
         id: item.id,
         ...(stage === 'translation' ? { sentence: (item as any).japanese, japanese: (item as any).japanese } : {}),
-        ...(stage === 'lexical_analysis' ? { sentence: (item as any).japanese, japanese: (item as any).japanese, portuguese: (item as any).portuguese } : {}),
+        ...(stage === 'lexical_analysis' ? {
+          sentence: (item as any).japanese,
+          japanese: (item as any).japanese,
+          portuguese: (item as any).portuguese,
+          mode: (item as any).mode || 'reading',
+          kana: (item as any).kana || null,
+          romaji: (item as any).romaji || null,
+        } : {}),
         ...(stage === 'dictionary' ? { lemma: (item as any).lemma } : {}),
       },
       targetKeys: [`${type}:${item.id}`],
-    }));
+    };
+    });
   }
 
   private static createPlannedJobLabel(stage: PreparationStage, batch: number, total: number): string {

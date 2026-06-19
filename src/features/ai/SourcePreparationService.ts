@@ -31,19 +31,21 @@ export class SourcePreparationService {
         dictionaryBatchSize: options.dictFullBatchSize,
       });
 
-      const result = await SourcePreparationEngine.createQueueFromPlan(plan);
+      const result = await SourcePreparationEngine.createQueueFromPlan(plan, runId);
 
       if (runId) {
         await ProcessingRunRepository.updateRun(runId, {
-          status: 'completed',
-          finished_at: new Date().toISOString(),
+          status: result.jobs.length > 0 ? 'running' : 'completed',
+          finished_at: result.jobs.length > 0 ? null : new Date().toISOString(),
           current_step:
             result.jobs.length === 0 && result.appliedReusableTranslations === 0
               ? 'Nada a fazer: nenhuma lacuna real sem fila existente.'
-              : `${result.jobs.length} tarefa(s) individuais criadas e ${result.appliedReusableTranslations} reaproveitamento(s) aplicados a partir de pendencias reais.`,
+              : `${result.jobs.length} job(s) individuais criados para worker persistente e ${result.appliedReusableTranslations} reaproveitamento(s) aplicados.`,
           total_items:
             plan.totals.translationItems + plan.totals.lexicalAnalysisItems + plan.totals.dictionaryItems,
           created_jobs: result.jobs.length,
+          planned_jobs: plan.totals.jobs,
+          pending_jobs: result.jobs.length,
         });
       }
     } catch (error: any) {

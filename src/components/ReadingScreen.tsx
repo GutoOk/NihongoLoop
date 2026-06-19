@@ -22,8 +22,6 @@ import {
   SentenceRepository,
   ProgressRepository,
   TermRepository,
-  DictionaryRepository,
-  AiJobRepository,
 } from "../repositories";
 import {
   Sentence,
@@ -31,7 +29,6 @@ import {
   SentenceProgress,
   SentenceTerm,
   DictionaryEntry,
-  AiJob,
 } from "../types";
 import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // Assuming we still get settings config from there for general TTS settings if not extracted
@@ -78,6 +75,8 @@ export default function ReadingScreen({
   const [editingSentenceRo, setEditingSentenceRo] = useState<string>("");
   const [editingSentencePt, setEditingSentencePt] = useState<string>("");
   const [visibleCount, setVisibleCount] = useState(25);
+  const [totalSentences, setTotalSentences] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const handleEditClick = (sent: Sentence) => {
     setEditingSentenceId(sent.id);
@@ -143,14 +142,9 @@ export default function ReadingScreen({
         sentence.id,
         sentence.japanese,
       );
-      const result = await AiJobService.processJob(job);
-      if (result.success) {
+      if (job) {
         await loadData(true);
-      } else {
-        showAlert(
-          "Erro",
-          `Falha ao re-analisar com IA: ${result.error || "Erro desconhecido"}`,
-        );
+        showAlert("Leitura enfileirada", "A leitura desta frase sera gerada pelo worker persistente.");
       }
     } catch (e: any) {
       console.error(e);
@@ -165,7 +159,7 @@ export default function ReadingScreen({
     setBulkProcessing(true);
     setBulkProgress({ current: 0, total: selectedIds.size });
 
-    let successCount = 0;
+    let queuedCount = 0;
     let failCount = 0;
     const idsArray = Array.from(selectedIds);
 
@@ -181,15 +175,11 @@ export default function ReadingScreen({
           sentence.id,
           sentence.japanese,
         );
-        const result = await AiJobService.processJob(job);
-        if (result.success) {
-          successCount++;
+        if (job) {
+          queuedCount++;
         } else {
           failCount++;
-          console.error(
-            `Falha ao re-analisar ID ${sentence.id}:`,
-            result.error,
-          );
+          console.error(`Falha ao enfileirar leitura ID ${sentence.id}`);
         }
       } catch (e) {
         failCount++;
@@ -204,12 +194,12 @@ export default function ReadingScreen({
     if (failCount > 0) {
       showAlert(
         "Re-análise concluída",
-        `${successCount} frases re-analisadas com sucesso. ${failCount} falharam.`,
+        `${queuedCount} leituras enfileiradas. ${failCount} falharam.`,
       );
     } else {
       showAlert(
         "Sucesso",
-        `Todas as ${successCount} frases foram re-analisadas com sucesso!`,
+        `${queuedCount} leituras foram enfileiradas para o worker persistente.`,
       );
     }
   };
@@ -225,17 +215,17 @@ export default function ReadingScreen({
       const src = await SourceRepository.getById(sourceId);
       if (src) setSource(src);
 
-      const sents = await SentenceRepository.getBySourceId(sourceId);
+      const [sents, total] = await Promise.all([
+        SentenceRepository.getPageBySourceId(sourceId, 0, 50),
+        SentenceRepository.countBySourceId(sourceId),
+      ]);
       setSentences(sents);
+      setTotalSentences(total);
+      setVisibleCount(sents.length);
 
       const pMap: Record<string, SentenceProgress | null> = {};
       const tMap: Record<string, SentenceTerm[]> = {};
       const dMap: Record<string, DictionaryEntry> = {};
-
-      const allDicts = await DictionaryRepository.getAll();
-      for (const d of allDicts) {
-        dMap[d.id] = d;
-      }
 
       const sentenceIds = sents.map((s) => s.id);
 
@@ -262,6 +252,11 @@ export default function ReadingScreen({
           termsBySentence[term.sentence_id] = [];
         }
         termsBySentence[term.sentence_id].push(term);
+        const entry = (term as any).entry || (term as any).form?.entry;
+        const entryId = term.dictionary_entry_id || entry?.id;
+        if (entryId && entry) {
+          dMap[entryId] = entry;
+        }
       }
 
       for (const sent of sents) {
@@ -429,19 +424,49 @@ export default function ReadingScreen({
     return <span className="break-words">{elements}</span>;
   };
 
-  const loadMore = () => {
-    setVisibleCount((prev) => {
-      if (prev < sentences.length) {
-        return Math.min(prev + 25, sentences.length);
+  const loadMore = async () => {
+    if (loadingMore || sentences.length >= totalSentences) return;
+    setLoadingMore(true);
+    try {
+      const next = await SentenceRepository.getPageBySourceId(sourceId, sentences.length, 50);
+      if (next.length === 0) return;
+      const sentenceIds = next.map((s) => s.id);
+      const [nextProgress, nextTerms] = await Promise.all([
+        ProgressRepository.getSentenceProgressForSentences(sentenceIds),
+        TermRepository.getBySentences(sentenceIds),
+      ]);
+
+      const pMap: Record<string, SentenceProgress | null> = {};
+      const tMap: Record<string, SentenceTerm[]> = {};
+      const dMap: Record<string, DictionaryEntry> = {};
+      for (const sent of next) {
+        pMap[sent.id] = null;
+        tMap[sent.id] = [];
       }
-      return prev;
-    });
+      for (const prog of nextProgress) {
+        pMap[prog.sentence_id] = prog;
+      }
+      for (const term of nextTerms) {
+        if (!tMap[term.sentence_id]) tMap[term.sentence_id] = [];
+        tMap[term.sentence_id].push(term);
+        const entry = (term as any).entry || (term as any).form?.entry;
+        const entryId = term.dictionary_entry_id || entry?.id;
+        if (entryId && entry) dMap[entryId] = entry;
+      }
+      setSentences((current) => [...current, ...next]);
+      setVisibleCount((current) => current + next.length);
+      setProgressMap((current) => ({ ...current, ...pMap }));
+      setTermsMap((current) => ({ ...current, ...tMap }));
+      setDictMap((current) => ({ ...current, ...dMap }));
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
     if (target.scrollHeight - target.scrollTop - target.clientHeight < 250) {
-      loadMore();
+      void loadMore();
     }
   };
 
@@ -519,7 +544,7 @@ export default function ReadingScreen({
             <Info className="w-3.5 h-3.5" /> Cores
           </button>
         </div>
-        <p className="text-[10px] text-[#86868B] font-mono">{sentences.length} frases</p>
+        <p className="text-[10px] text-[#86868B] font-mono">{totalSentences || sentences.length} frases</p>
       </header>
 
       {selectedIds.size > 0 && (

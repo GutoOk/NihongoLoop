@@ -18,13 +18,22 @@ export class ProcessingRunRepository {
     return data;
   }
 
+  static async createOrResumeRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<ProcessingRun | null> {
+    const existing = await this.getResumableRun(sourceId);
+    if (existing) {
+      await this.resumeRun(existing.id);
+      return this.getRun(existing.id);
+    }
+    return this.createRun(sourceId, runMode);
+  }
+
   static async getActiveRun(sourceId: string): Promise<ProcessingRun | null> {
     if (!isSupabaseConfigured) return null;
     const { data } = await supabase!.from('processing_runs')
       .select('*')
       .eq('source_id', sourceId)
       .eq('user_id', getUserId())
-      .in('status', ['pending', 'running'])
+      .in('status', ['pending', 'planning', 'running', 'paused', 'needs_review'])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -37,7 +46,7 @@ export class ProcessingRunRepository {
       .select('*')
       .eq('source_id', sourceId)
       .eq('user_id', getUserId())
-      .in('status', ['pending', 'running', 'paused', 'error'])
+      .in('status', ['pending', 'planning', 'running', 'paused', 'needs_review', 'error', 'failed'])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -106,6 +115,27 @@ export class ProcessingRunRepository {
     });
   }
 
+  static async updateQueueSnapshot(
+    id: string,
+    counters: Pick<
+      Partial<ProcessingRun>,
+      | 'planned_jobs'
+      | 'pending_jobs'
+      | 'running_jobs'
+      | 'completed_jobs'
+      | 'failed_items'
+      | 'retry_jobs'
+      | 'review_jobs'
+      | 'cancelled_jobs'
+      | 'obsolete_jobs'
+      | 'total_cost_estimate'
+      | 'total_cost_actual'
+      | 'ai_call_count'
+    >,
+  ): Promise<void> {
+    await this.updateRun(id, counters);
+  }
+
   static async pauseRun(id: string): Promise<void> {
     await this.updateRun(id, {
       cancel_requested: false,
@@ -129,7 +159,7 @@ export class ProcessingRunRepository {
   }
 
   static async failRun(id: string, error: string): Promise<void> {
-    await this.updateRun(id, { status: 'error', error, finished_at: new Date().toISOString() });
+    await this.updateRun(id, { status: 'failed', error, finished_at: new Date().toISOString() });
   }
 
   static async deleteRunsBySource(sourceId: string): Promise<boolean> {

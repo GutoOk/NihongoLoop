@@ -1,19 +1,17 @@
-import { SourcePreparationRunner } from './SourcePreparationRunner';
-
 export class GlobalAiQueueRunner {
   static get isRunning(): boolean {
-    return SourcePreparationRunner.isRunning;
+    return false;
   }
 
   static subscribe(listener: (isRunning: boolean) => void): () => void {
-    return SourcePreparationRunner.subscribe(listener);
+    listener(false);
+    return () => undefined;
   }
 
-  static start(_onProgress?: () => void): void {
-    throw new Error('A fila global foi aposentada. Inicie o processamento pela fonte para manter auditoria e ordem.');
+  static start(onProgress?: () => void): void {
+    onProgress?.();
   }
 
   static stop(): void {
-    SourcePreparationRunner.stop();
   }
 }

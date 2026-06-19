@@ -2,21 +2,19 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   Database,
-  Eraser,
   ListPlus,
   Play,
   RefreshCw,
   RotateCcw,
   Square,
 } from 'lucide-react';
-import { AiJob } from '../types';
+import { AiJob, ProcessingRun } from '../types';
 import {
   SourcePreparationDiagnosis,
   SourcePreparationEngine,
   SourcePreparationPlan,
 } from '../features/ai/SourcePreparationEngine';
-import { SourcePreparationRunner } from '../features/ai/SourcePreparationRunner';
-import { AiJobRepository } from '../repositories';
+import { AiJobRepository, ProcessingRunRepository } from '../repositories';
 import { useModal } from './ModalProvider';
 import { getJobHumanName } from './sourcePreparation/jobDisplay';
 
@@ -40,8 +38,8 @@ export default function SourcePreparationPanel({
   const [diagnosis, setDiagnosis] = useState<SourcePreparationDiagnosis | null>(null);
   const [plan, setPlan] = useState<SourcePreparationPlan | null>(null);
   const [jobs, setJobs] = useState<AiJob[]>([]);
+  const [run, setRun] = useState<ProcessingRun | null>(null);
   const [showGlobal, setShowGlobal] = useState(false);
-  const [isRunning, setIsRunning] = useState(SourcePreparationRunner.isRunning);
   const [isBusy, setIsBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const signatureRef = useRef<string | null>(null);
@@ -49,14 +47,9 @@ export default function SourcePreparationPanel({
   const { showConfirm } = useModal();
 
   useEffect(() => {
-    const unsub = SourcePreparationRunner.subscribe(setIsRunning);
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
     signatureRef.current = null;
     void refresh();
-    const interval = setInterval(() => void refresh(true), 2500);
+    const interval = setInterval(() => void refresh(true), 6000);
     return () => clearInterval(interval);
   }, [sourceId, showGlobal]);
 
@@ -64,20 +57,33 @@ export default function SourcePreparationPanel({
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const [nextDiagnosis, nextPlan, sourceJobs] = await Promise.all([
+      const [nextDiagnosis, nextPlan, latestRun] = await Promise.all([
         SourcePreparationEngine.diagnoseSource(sourceId),
         SourcePreparationEngine.buildPlan(sourceId, PLAN_OPTIONS),
-        showGlobal ? AiJobRepository.getAll() : AiJobRepository.getByTarget(sourceId),
+        showGlobal ? Promise.resolve(null) : ProcessingRunRepository.getLatestRunBySource(sourceId),
       ]);
+      const sourceJobs = showGlobal
+        ? await AiJobRepository.getAll()
+        : latestRun
+          ? await AiJobRepository.getByRun(latestRun.id, 100)
+          : await AiJobRepository.getBySource(sourceId);
       const signature = JSON.stringify({
         diagnosis: nextDiagnosis.sentences,
         dictionary: nextDiagnosis.dictionary,
         jobs: nextDiagnosis.jobs,
+        run: latestRun ? {
+          status: latestRun.status,
+          pending: latestRun.pending_jobs,
+          running: latestRun.running_jobs,
+          completed: latestRun.completed_jobs,
+          failed: latestRun.failed_items,
+        } : null,
       });
       if (signatureRef.current && signatureRef.current !== signature) onContentUpdated?.();
       signatureRef.current = signature;
       setDiagnosis(nextDiagnosis);
       setPlan(nextPlan);
+      setRun(latestRun);
       setJobs(sourceJobs);
       setLoadError(null);
     } catch (error: any) {
@@ -92,6 +98,7 @@ export default function SourcePreparationPanel({
     try {
       const result = await SourcePreparationEngine.createQueueForSource(sourceId, PLAN_OPTIONS);
       setPlan(result.plan);
+      if (result.run) setRun(result.run);
       await refresh();
     } catch (error: any) {
       setLoadError(error?.message || 'Nao foi possivel gerar a fila das pendencias.');
@@ -100,12 +107,8 @@ export default function SourcePreparationPanel({
     }
   };
 
-  const startProcessing = () => {
-    SourcePreparationRunner.start(sourceId, () => void refresh(true));
-  };
-
-  const stopProcessing = () => {
-    SourcePreparationRunner.stop();
+  const startProcessing = async () => {
+    await queueRealGaps();
   };
 
   const retryProblems = async () => {
@@ -113,6 +116,8 @@ export default function SourcePreparationPanel({
     try {
       if (showGlobal) {
         await SourcePreparationEngine.retryAllProblemJobs();
+      } else if (run) {
+        await SourcePreparationEngine.retryProblemJobsByRun(run.id);
       } else {
         await SourcePreparationEngine.retryProblemJobs(sourceId);
       }
@@ -122,18 +127,19 @@ export default function SourcePreparationPanel({
     }
   };
 
-  const clearPending = async () => {
+  const cancelPending = async () => {
     const scopeLabel = showGlobal ? 'global' : 'desta fonte';
-    if (!(await showConfirm('Abortar e zerar fila', `Isso vai parar o processamento e apagar todos os jobs ${scopeLabel}: pendentes, rodando, erros, concluidos, cancelados e historico. Nao apaga frases, traducoes, termos nem dicionario. Depois voce podera gerar uma nova fila a partir do diagnostico atual.`))) {
+    if (!(await showConfirm('Cancelar jobs nao concluidos', `Isso vai marcar como cancelados os jobs ${scopeLabel} que ainda estejam pendentes, reivindicados, rodando, em retry ou em revisao. Historico e resultados ja concluidos permanecem para auditoria.`))) {
       return;
     }
     setIsBusy(true);
     try {
-      SourcePreparationRunner.stop();
       if (showGlobal) {
-        await SourcePreparationEngine.clearAllQueueJobs();
+        await SourcePreparationEngine.cancelAllActiveJobs();
+      } else if (run) {
+        await SourcePreparationEngine.cancelRun(run.id);
       } else {
-        await SourcePreparationEngine.clearQueueJobs(sourceId);
+        await SourcePreparationEngine.cancelSourceActiveJobs(sourceId);
       }
       await refresh();
     } finally {
@@ -177,9 +183,10 @@ export default function SourcePreparationPanel({
                 label="Gerar fila das pendencias reais"
               />
               <ToolbarButton
-                onClick={isRunning ? stopProcessing : startProcessing}
-                icon={isRunning ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                label={isRunning ? 'Pausar' : 'Iniciar processamento'}
+                onClick={startProcessing}
+                disabled={isBusy}
+                icon={<Play className="h-4 w-4" />}
+                label="Criar/retomar execucao"
               />
             </div>
           </div>
@@ -244,20 +251,44 @@ export default function SourcePreparationPanel({
             )}
           </Panel>
 
+          <Panel title="Execucao persistida">
+            {run ? (
+              <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-8">
+                <Metric label="Status" valueText={statusLabel(run.status)} />
+                <Metric label="Planejados" value={run.planned_jobs || run.created_jobs || 0} />
+                <Metric label="Pendentes" value={run.pending_jobs || 0} />
+                <Metric label="Rodando" value={run.running_jobs || 0} />
+                <Metric label="Concluidos" value={run.completed_jobs || 0} />
+                <Metric label="Retry" value={run.retry_jobs || 0} />
+                <Metric label="Revisao" value={run.review_jobs || 0} />
+                <Metric label="Falhas" value={run.failed_items || 0} />
+                <div className="sm:col-span-4 lg:col-span-8 rounded-lg bg-slate-50 p-3 text-xs font-semibold leading-relaxed text-slate-600">
+                  {run.current_step || 'Execucao criada. O worker persistente consome os jobs sem depender desta tela.'}
+                </div>
+              </div>
+            ) : (
+              <EmptyState text="Nenhuma execucao persistida encontrada para esta fonte." />
+            )}
+          </Panel>
+
           <Panel
             title={showGlobal ? 'Fila global' : 'Fila da fonte'}
             actions={
               <div className="flex flex-wrap gap-2">
                 <ToolbarButton small onClick={() => setShowGlobal((value) => !value)} label={showGlobal ? 'Ver fonte' : 'Ver global'} />
-                <ToolbarButton small onClick={retryProblems} disabled={isBusy || queueCounts.error + queueCounts.stuck === 0} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retentar problemas" />
-                <ToolbarButton small onClick={clearPending} disabled={isBusy || jobs.length === 0} icon={<Eraser className="h-3.5 w-3.5" />} label={showGlobal ? 'Abortar e zerar fila global' : 'Abortar e zerar fila da fonte'} />
+                <ToolbarButton small onClick={retryProblems} disabled={isBusy || queueCounts.error + queueCounts.stuck + queueCounts.retry + queueCounts.review === 0} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retentar problemas" />
+                <ToolbarButton small onClick={cancelPending} disabled={isBusy || jobs.length === 0} icon={<Square className="h-3.5 w-3.5" />} label={showGlobal ? 'Cancelar fila global ativa' : 'Cancelar nao concluidos'} />
               </div>
             }
           >
-            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
               <Metric label="Pendentes" value={queueCounts.pending} />
               <Metric label="Rodando" value={queueCounts.running} />
+              <Metric label="Retry" value={queueCounts.retry} />
+              <Metric label="Revisao" value={queueCounts.review} />
+              <Metric label="Concluidos" value={queueCounts.completed} />
               <Metric label="Erros" value={queueCounts.error} />
+              <Metric label="Cancelados" value={queueCounts.cancelled} />
               <Metric label="Travados" value={queueCounts.stuck} />
             </div>
             <JobList jobs={visibleJobs} />
@@ -280,10 +311,10 @@ function Panel({ title, actions, children }: { title: string; actions?: React.Re
   );
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
+function Metric({ label, value, valueText }: { label: string; value?: number; valueText?: string }) {
   return (
     <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-      <div className="text-xl font-black text-slate-900">{value}</div>
+      <div className="text-xl font-black text-slate-900">{valueText ?? value ?? 0}</div>
       <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{label}</div>
     </div>
   );
@@ -332,9 +363,10 @@ function ToolbarButton({
 }
 
 function isStuckJob(job: AiJob): boolean {
-  if (job.status !== 'running') return false;
+  if (job.status !== 'running' && job.status !== 'claimed') return false;
   const now = Date.now();
-  if (job.locked_until && new Date(job.locked_until).getTime() < now) return true;
+  const leaseExpiresAt = job.lease_expires_at || job.locked_until;
+  if (leaseExpiresAt && new Date(leaseExpiresAt).getTime() < now) return true;
   if (!job.locked_until && job.last_heartbeat_at) {
     return now - new Date(job.last_heartbeat_at).getTime() > 5 * 60_000;
   }
@@ -346,14 +378,18 @@ function isClearableQueueJob(job: AiJob): boolean {
 }
 
 function isVisibleQueueJob(job: AiJob): boolean {
-  return job.status === 'pending' || job.status === 'running' || job.status === 'error';
+  return !['obsolete'].includes(job.status);
 }
 
 function summarizeJobs(jobs: AiJob[]) {
   return {
     pending: jobs.filter((job) => job.status === 'pending').length,
-    running: jobs.filter((job) => job.status === 'running').length,
-    error: jobs.filter((job) => job.status === 'error').length,
+    running: jobs.filter((job) => job.status === 'running' || job.status === 'claimed').length,
+    retry: jobs.filter((job) => job.status === 'retry_wait').length,
+    review: jobs.filter((job) => job.status === 'needs_review').length,
+    completed: jobs.filter((job) => job.status === 'completed' || job.status === 'applied').length,
+    cancelled: jobs.filter((job) => job.status === 'cancelled').length,
+    error: jobs.filter((job) => job.status === 'error' || job.status === 'failed').length,
     stuck: jobs.filter(isStuckJob).length,
     clearable: jobs.filter(isClearableQueueJob).length,
   };
@@ -375,8 +411,12 @@ function JobList({ jobs }: { jobs: AiJob[] }) {
                 <div className="font-black text-slate-900">{label}</div>
                 <div className="mt-1 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
                   <span>{displayLabel}</span>
+                  <span>{job.target_type}:{job.target_id}</span>
                   <span>{itemCount} itens</span>
                   <span>{job.attempts || 0} tentativas</span>
+                  {job.worker_id && <span>{job.worker_id}</span>}
+                  {job.latency_ai_ms ? <span>IA {job.latency_ai_ms}ms</span> : null}
+                  {job.latency_persist_ms ? <span>DB {job.latency_persist_ms}ms</span> : null}
                   {job.updated_at && <span>{new Date(job.updated_at).toLocaleString()}</span>}
                 </div>
               </div>
@@ -402,19 +442,27 @@ function getJobLabel(job: AiJob, fallback: string): string {
   return SourcePreparationEngine.getHumanJobLabel(job) || fallback;
 }
 
-function statusLabel(status: AiJob['status']): string {
+function statusLabel(status: AiJob['status'] | ProcessingRun['status']): string {
   if (status === 'pending') return 'pendente';
+  if (status === 'planning') return 'planejando';
+  if (status === 'paused') return 'pausado';
   if (status === 'running') return 'rodando';
+  if (status === 'retry_wait') return 'retry';
+  if (status === 'claimed') return 'reivindicado';
+  if (status === 'needs_review') return 'revisao';
   if (status === 'completed' || status === 'applied') return 'concluido';
-  if (status === 'error') return 'erro';
+  if (status === 'error' || status === 'failed') return 'erro';
   if (status === 'cancelled') return 'cancelado';
+  if (status === 'obsolete') return 'obsoleto';
   return status;
 }
 
 function statusClass(status: AiJob['status']): string {
-  if (status === 'running') return 'bg-sky-100 text-sky-700';
-  if (status === 'error') return 'bg-rose-100 text-rose-700';
+  if (status === 'running' || status === 'claimed') return 'bg-sky-100 text-sky-700';
+  if (status === 'error' || status === 'failed' || status === 'needs_review') return 'bg-rose-100 text-rose-700';
+  if (status === 'retry_wait') return 'bg-purple-100 text-purple-700';
   if (status === 'pending') return 'bg-amber-100 text-amber-700';
   if (status === 'completed' || status === 'applied') return 'bg-emerald-100 text-emerald-700';
+  if (status === 'cancelled' || status === 'obsolete') return 'bg-slate-200 text-slate-600';
   return 'bg-slate-100 text-slate-700';
 }

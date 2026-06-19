@@ -1,13 +1,11 @@
-import { SourcePreparationRunner } from './SourcePreparationRunner';
 import { PreparationOptions, SourcePreparationService } from './SourcePreparationService';
 
 export class ProcessingRunner {
   static get isRunning(): boolean {
-    return SourcePreparationRunner.isRunning;
+    return false;
   }
 
   static stop(): void {
-    SourcePreparationRunner.stop();
   }
 
   static async startPreparation(
@@ -16,23 +14,22 @@ export class ProcessingRunner {
     onProgress?: () => void,
   ) {
     await SourcePreparationService.prepareSource(sourceId, options);
-    SourcePreparationRunner.start(sourceId, onProgress);
+    onProgress?.();
   }
 
   static async resumePreparation(
     sourceId: string,
-    _runId: string,
-    _options: PreparationOptions,
+    runId: string,
+    options: PreparationOptions,
     onProgress?: () => void,
   ) {
-    SourcePreparationRunner.start(sourceId, onProgress);
+    await SourcePreparationService.prepareSource(sourceId, options, runId);
+    onProgress?.();
   }
 
   static async cancelPreparation(): Promise<void> {
-    SourcePreparationRunner.stop();
   }
 
   static async pausePreparation(): Promise<void> {
-    SourcePreparationRunner.stop();
   }
 }
