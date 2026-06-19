@@ -122,7 +122,6 @@ export default function SourcePreparationPanel({
         await AiJobRepository.cancelAllActiveJobs();
       } else if (run) {
         await AiJobRepository.cancelActiveJobsByRun(run.id);
-        await ProcessingRunRepository.requestCancel(run.id);
       } else {
         await AiJobRepository.cancelActiveJobsBySource(sourceId);
       }

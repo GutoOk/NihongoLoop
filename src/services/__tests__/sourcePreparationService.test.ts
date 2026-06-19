@@ -9,14 +9,9 @@ vi.mock('../../repositories', () => ({
 }));
 
 const options = {
-  dictMode: 'full' as const,
   useCache: true,
   overwriteReviewed: false,
   runMode: 'all' as const,
-  translateBatchSize: 20,
-  analyzeBatchSize: 5,
-  dictFastBatchSize: 30,
-  dictFullBatchSize: 10,
 };
 
 describe('SourcePreparationService', () => {
