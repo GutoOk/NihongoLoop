@@ -9,11 +9,6 @@ import {
   Square,
 } from 'lucide-react';
 import { AiJob, ProcessingRun } from '../types';
-import {
-  SourcePreparationDiagnosis,
-  SourcePreparationEngine,
-  SourcePreparationPlan,
-} from '../features/ai/SourcePreparationEngine';
 import { AiJobRepository, ProcessingRunRepository } from '../repositories';
 import { useModal } from './ModalProvider';
 import { getJobHumanName } from './sourcePreparation/jobDisplay';
@@ -24,19 +19,13 @@ interface SourcePreparationPanelProps {
   onContentUpdated?: () => void;
 }
 
-const PLAN_OPTIONS = {
-  translateBatchSize: 1,
-  analyzeBatchSize: 1,
-  dictionaryBatchSize: 1,
-};
-
 export default function SourcePreparationPanel({
   sourceId,
   onPreparationComplete,
   onContentUpdated,
 }: SourcePreparationPanelProps) {
-  const [diagnosis, setDiagnosis] = useState<SourcePreparationDiagnosis | null>(null);
-  const [plan, setPlan] = useState<SourcePreparationPlan | null>(null);
+  const [diagnosis, setDiagnosis] = useState<any>(null);
+  const [plan, setPlan] = useState<any>(null);
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [run, setRun] = useState<ProcessingRun | null>(null);
   const [showGlobal, setShowGlobal] = useState(false);
@@ -58,20 +47,12 @@ export default function SourcePreparationPanel({
     loadingRef.current = true;
     try {
       const latestRun = showGlobal ? null : await ProcessingRunRepository.getLatestRunBySource(sourceId);
-      const shouldRefreshPlan = !silent || !latestRun || !diagnosis || !plan;
-      const nextPlan = shouldRefreshPlan
-        ? await SourcePreparationEngine.buildPlan(sourceId, PLAN_OPTIONS)
-        : plan;
-      const nextDiagnosis = nextPlan.diagnosis;
       const sourceJobs = showGlobal
         ? await AiJobRepository.getAll()
         : latestRun
           ? await AiJobRepository.getByRun(latestRun.id, 100)
           : await AiJobRepository.getBySource(sourceId);
       const signature = JSON.stringify({
-        diagnosis: nextDiagnosis.sentences,
-        dictionary: nextDiagnosis.dictionary,
-        jobs: nextDiagnosis.jobs,
         run: latestRun ? {
           status: latestRun.status,
           pending: latestRun.pending_jobs,
@@ -82,8 +63,8 @@ export default function SourcePreparationPanel({
       });
       if (signatureRef.current && signatureRef.current !== signature) onContentUpdated?.();
       signatureRef.current = signature;
-      setDiagnosis(nextDiagnosis);
-      setPlan(nextPlan);
+      setDiagnosis(null);
+      setPlan(null);
       setRun(latestRun);
       setJobs(sourceJobs);
       setLoadError(null);
@@ -118,11 +99,11 @@ export default function SourcePreparationPanel({
     setIsBusy(true);
     try {
       if (showGlobal) {
-        await SourcePreparationEngine.retryAllProblemJobs();
+        await AiJobRepository.retryAllProblemJobs();
       } else if (run) {
-        await SourcePreparationEngine.retryProblemJobsByRun(run.id);
+        await AiJobRepository.retryProblemJobsByRun(run.id);
       } else {
-        await SourcePreparationEngine.retryProblemJobs(sourceId);
+        await AiJobRepository.retryProblemJobsBySource(sourceId);
       }
       await refresh();
     } finally {
@@ -138,11 +119,12 @@ export default function SourcePreparationPanel({
     setIsBusy(true);
     try {
       if (showGlobal) {
-        await SourcePreparationEngine.cancelAllActiveJobs();
+        await AiJobRepository.cancelAllActiveJobs();
       } else if (run) {
-        await SourcePreparationEngine.cancelRun(run.id);
+        await AiJobRepository.cancelActiveJobsByRun(run.id);
+        await ProcessingRunRepository.requestCancel(run.id);
       } else {
-        await SourcePreparationEngine.cancelSourceActiveJobs(sourceId);
+        await AiJobRepository.cancelActiveJobsBySource(sourceId);
       }
       await refresh();
     } finally {
@@ -150,17 +132,15 @@ export default function SourcePreparationPanel({
     }
   };
 
-  const pendingTotals = useMemo(() => {
-    if (!diagnosis) return { translation: 0, analysis: 0, dictionary: 0, total: 0 };
-    const translation = diagnosis.sentences.needsAiTranslation;
-    const analysis = diagnosis.sentences.withoutValidLexicalAnalysis;
-    const dictionary = diagnosis.dictionary.needsAiEntries;
-    return { translation, analysis, dictionary, total: translation + analysis + dictionary };
-  }, [diagnosis]);
-
-  const plannedActions = plan?.totals.actions || 0;
   const queueCounts = useMemo(() => summarizeJobs(jobs), [jobs]);
   const visibleJobs = useMemo(() => jobs.filter(isVisibleQueueJob), [jobs]);
+  const pendingTotals = useMemo(() => {
+    const active = jobs.filter((job) => ['pending', 'claimed', 'running', 'retry_wait', 'needs_review'].includes(job.status));
+    const translation = active.filter((job) => job.type === 'translate_sentence').length;
+    const analysis = active.filter((job) => job.type === 'detect_sentence_terms' || job.type === 'generate_sentence_reading').length;
+    const dictionary = active.filter((job) => job.type === 'enrich_dictionary_entry').length;
+    return { translation, analysis, dictionary, total: translation + analysis + dictionary };
+  }, [jobs]);
 
   return (
     <section className="border-b border-[#E5E5E7] bg-white">
@@ -180,7 +160,7 @@ export default function SourcePreparationPanel({
               <ToolbarButton onClick={() => refresh()} icon={<RefreshCw className="h-4 w-4" />} label="Atualizar diagnostico" />
               <ToolbarButton
                 onClick={queueRealGaps}
-                disabled={isBusy || plannedActions === 0}
+                disabled={isBusy}
                 primary
                 icon={<ListPlus className="h-4 w-4" />}
                 label="Gerar fila das pendencias reais"
@@ -219,7 +199,7 @@ export default function SourcePreparationPanel({
                   <Metric label="Duplicados possiveis" value={diagnosis.jobs.possibleDuplicates} />
                 </div>
               ) : (
-                <EmptyState text="Carregando diagnostico..." />
+                <EmptyState text="Diagnostico detalhado movido para a execucao persistida no banco." />
               )}
             </Panel>
 
@@ -250,7 +230,7 @@ export default function SourcePreparationPanel({
                 </div>
               </div>
             ) : (
-              <EmptyState text="Atualize o diagnostico para montar o plano." />
+              <EmptyState text="O banco planeja as etapas e cria jobs individuais quando a execucao e iniciada ou retomada." />
             )}
           </Panel>
 
@@ -442,7 +422,7 @@ function JobList({ jobs }: { jobs: AiJob[] }) {
 function getJobLabel(job: AiJob, fallback: string): string {
   const input = typeof job.input === 'string' ? {} : job.input || {};
   if (typeof input.label === 'string') return input.label;
-  return SourcePreparationEngine.getHumanJobLabel(job) || fallback;
+  return fallback;
 }
 
 function statusLabel(status: AiJob['status'] | ProcessingRun['status']): string {

@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { cleanAndParseJSON, withTimeout } from "./aiUtils";
+import { cleanAndParseJSON, withAbortableTimeout } from "./aiUtils";
 
 interface GenerateStructuredJsonOptions {
   ai: GoogleGenAI;
@@ -26,15 +26,18 @@ export async function generateStructuredJsonWithMeta<T = any>({
   temperature = 0.2,
 }: GenerateStructuredJsonOptions): Promise<{ data: T; meta: GenerateStructuredJsonMeta }> {
   const startedAt = Date.now();
-  const response = await withTimeout(ai.models.generateContent({
-    model,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema,
-      temperature,
-    },
-  }));
+  const response = await withAbortableTimeout((abortSignal) =>
+    ai.models.generateContent({
+      model,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema,
+        temperature,
+        abortSignal,
+      },
+    }),
+  );
 
   const text = response.text || "{}";
   return {

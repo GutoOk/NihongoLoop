@@ -41,20 +41,17 @@ describe('StandardWordsQuizScreen', () => {
     });
   });
 
-  it('does not crash and uses fallbacks if getAll takes too long or fails', async () => {
+  it('does not crash and uses fallbacks if global distractors fail', async () => {
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
       { id: '1', main_meaning: 'Carro', lemma: '車' } as any
     ]);
-    // Simulate a slow global distractor page
-    vi.mocked(DictionaryRepository.getPage).mockImplementation(() =>
-      new Promise(resolve => setTimeout(() => resolve({ entries: [], total: 0 } as any), 5000))
-    );
+    vi.mocked(DictionaryRepository.getPage).mockRejectedValue(new Error('distractor query failed'));
 
     render(<StandardWordsQuizScreen entryIds={['1']} onBack={() => {}} />);
     
     await waitFor(() => {
       expect(screen.getByText('Iniciar Quiz')).toBeInTheDocument();
-    }, { timeout: 4000 }); // Should complete before the 5000ms delay due to 3500ms timeout
+    });
   });
 
   it('logs progress on correct answer', async () => {

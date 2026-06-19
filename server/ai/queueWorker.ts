@@ -172,100 +172,56 @@ function getUserLimit(): number {
   return Math.max(1, Math.min(Number(process.env.AI_WORKER_USER_CONCURRENCY || 4), 32));
 }
 
-function estimateCostActual(inputTokens: number | null | undefined, outputTokens: number | null | undefined): number | null {
+type ModelPrice = { inputPerMillion: number; outputPerMillion: number };
+const modelPriceCache = new Map<string, ModelPrice | null>();
+
+async function getModelPrice(client: SupabaseClient, model: string | null | undefined): Promise<ModelPrice | null> {
+  const modelKey = model || process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
+  if (modelPriceCache.has(modelKey)) return modelPriceCache.get(modelKey) || null;
+
+  const { data, error } = await client
+    .from("ai_model_prices")
+    .select("input_per_million,output_per_million")
+    .eq("provider", "google")
+    .eq("model", modelKey)
+    .lte("effective_from", new Date().toISOString())
+    .or("effective_to.is.null,effective_to.gt." + new Date().toISOString())
+    .order("effective_from", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!error && data) {
+    const price = {
+      inputPerMillion: Number((data as any).input_per_million),
+      outputPerMillion: Number((data as any).output_per_million),
+    };
+    modelPriceCache.set(modelKey, price);
+    return price;
+  }
+
   const inputPerMillion = Number(process.env.GEMINI_INPUT_PRICE_PER_MILLION || "");
   const outputPerMillion = Number(process.env.GEMINI_OUTPUT_PRICE_PER_MILLION || "");
-  if (!Number.isFinite(inputPerMillion) || !Number.isFinite(outputPerMillion)) return null;
+  const fallback = Number.isFinite(inputPerMillion) && Number.isFinite(outputPerMillion)
+    ? { inputPerMillion, outputPerMillion }
+    : null;
+  modelPriceCache.set(modelKey, fallback);
+  return fallback;
+}
+
+async function estimateCostActual(
+  client: SupabaseClient,
+  model: string | null | undefined,
+  inputTokens: number | null | undefined,
+  outputTokens: number | null | undefined,
+): Promise<number | null> {
   if (inputTokens == null && outputTokens == null) return null;
-  return ((inputTokens || 0) / 1_000_000) * inputPerMillion + ((outputTokens || 0) / 1_000_000) * outputPerMillion;
+  const price = await getModelPrice(client, model);
+  if (!price) return null;
+  return ((inputTokens || 0) / 1_000_000) * price.inputPerMillion + ((outputTokens || 0) / 1_000_000) * price.outputPerMillion;
 }
 
 function stableServerHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
-async function ensureRunStage(
-  client: SupabaseClient,
-  params: { userId: string; runId: string; stage: string },
-): Promise<string> {
-  const { data, error } = await client
-    .from("processing_run_stages")
-    .upsert({
-      user_id: params.userId,
-      run_id: params.runId,
-      stage: params.stage,
-      status: "running",
-      started_at: new Date().toISOString(),
-    }, { onConflict: "run_id,stage" })
-    .select("id")
-    .single();
-  if (error) throw error;
-  return data.id;
-}
-
-function buildWorkerJobRow(
-  params: {
-    userId: string;
-    runId: string;
-    stageId: string;
-    stage: string;
-    type: string;
-    targetType: string;
-    targetId: string;
-    priority: number;
-    payload: Record<string, unknown>;
-  },
-) {
-  const request = buildSingleAiRequest(params.type, params.payload);
-  const targetHash = stableServerHash({
-    targetType: params.targetType,
-    targetId: params.targetId,
-    payload: params.payload,
-    promptVersion: request.promptVersion,
-    model: request.model,
-  });
-  const inputHash = stableServerHash({
-    type: params.type,
-    targetType: params.targetType,
-    targetId: params.targetId,
-    targetHash,
-  });
-  return {
-    user_id: params.userId,
-    run_id: params.runId,
-    stage_id: params.stageId,
-    stage: params.stage,
-    type: params.type,
-    target_type: params.targetType,
-    target_id: params.targetId,
-    priority: params.priority,
-    target_hash: targetHash,
-    input_hash: inputHash,
-    job_key: `${params.type}:${params.targetType}:${params.targetId}:${inputHash}`,
-    prompt_version: request.promptVersion,
-    model_version: request.model,
-    model: request.model,
-    payload: params.payload,
-    input: params.payload,
-    max_attempts: 3,
-  };
-}
-
-async function enqueueWorkerJobsBulk(
-  client: SupabaseClient,
-  rows: Array<ReturnType<typeof buildWorkerJobRow>>,
-) {
-  if (rows.length === 0) return 0;
-  const { data, error } = await client.rpc("enqueue_ai_jobs_bulk", {
-    p_jobs: rows,
-  });
-  if (error) throw error;
-  return Number(data || 0);
-}
-
-async function refreshRunSnapshot(client: SupabaseClient, runId: string) {
-  const { error } = await client.rpc("refresh_processing_run_snapshot", { p_run_id: runId });
-  if (error) throw error;
 }
 
 async function maybeAdvanceRun(client: SupabaseClient, runId: string | null | undefined) {
@@ -279,188 +235,12 @@ async function maybeAdvanceRun(client: SupabaseClient, runId: string | null | un
   if (runError) throw runError;
   if (!run || run.cancel_requested || run.status === "cancelled" || run.status === "completed") return;
 
-  const { count: activeCount, error: activeError } = await client
-    .from("ai_jobs")
-    .select("id", { count: "exact", head: true })
-    .eq("run_id", runId)
-    .in("status", ["pending", "claimed", "running", "retry_wait"]);
-  if (activeError) throw activeError;
-  if ((activeCount || 0) > 0) return;
-
-  const rows: any[] = [];
-  const pageSize = 500;
-  for (let offset = 0; ; offset += pageSize) {
-    const { data: sentences, error: sentencesError } = await client
-      .from("sentences")
-      .select("id,user_id,source_id,japanese,japanese_key,portuguese,kana,romaji,status,terms_source")
-      .eq("source_id", run.source_id)
-      .eq("user_id", run.user_id)
-      .order("order_index", { ascending: true })
-      .range(offset, offset + pageSize - 1);
-    if (sentencesError) throw sentencesError;
-    rows.push(...(sentences || []));
-    if (!sentences || sentences.length < pageSize) break;
-  }
-  const untranslated = rows.filter((sentence) => sentence.status !== "reviewed" && !sentence.portuguese);
-  if (untranslated.length > 0) {
-    const stageId = await ensureRunStage(client, { userId: run.user_id, runId, stage: "translation" });
-    const jobRows = untranslated.map((sentence) =>
-      buildWorkerJobRow({
-        userId: run.user_id,
-        runId,
-        stageId,
-        stage: "translation",
-        type: "translate_sentence",
-        targetType: "sentence",
-        targetId: sentence.id,
-        priority: 300,
-        payload: { id: sentence.id, sentence: sentence.japanese, japanese: sentence.japanese, sourceId: run.source_id },
-      }),
-    );
-    const created = await enqueueWorkerJobsBulk(client, jobRows);
-    await client.from("processing_run_stages").update({ status: "running", planned_jobs: created, started_at: new Date().toISOString() }).eq("id", stageId);
-    await refreshRunSnapshot(client, runId);
-    await client.from("processing_runs").update({
-      status: "running",
-      current_step: `Traducao: ${created} job(s) individuais planejados pelo worker.`,
-    }).eq("id", runId);
-    return;
-  }
-
-  const missingReading = rows.filter((sentence) =>
-    sentence.status !== "reviewed" &&
-    sentence.portuguese &&
-    (!sentence.kana || !sentence.romaji)
-  );
-  if (missingReading.length > 0) {
-    const stageId = await ensureRunStage(client, { userId: run.user_id, runId, stage: "reading" });
-    const jobRows = missingReading.map((sentence) =>
-      buildWorkerJobRow({
-        userId: run.user_id,
-        runId,
-        stageId,
-        stage: "reading",
-        type: "generate_sentence_reading",
-        targetType: "sentence",
-        targetId: sentence.id,
-        priority: 200,
-        payload: {
-          id: sentence.id,
-          sentence: sentence.japanese,
-          japanese: sentence.japanese,
-          portuguese: sentence.portuguese,
-          sourceId: run.source_id,
-        },
-      }),
-    );
-    const created = await enqueueWorkerJobsBulk(client, jobRows);
-    await client.from("processing_run_stages").update({ status: "running", planned_jobs: created, started_at: new Date().toISOString() }).eq("id", stageId);
-    await refreshRunSnapshot(client, runId);
-    await client.from("processing_runs").update({
-      status: "running",
-      current_step: `Leitura: ${created} job(s) individuais planejados pelo worker.`,
-    }).eq("id", runId);
-    return;
-  }
-
-  const missingTerms = rows.filter((sentence) =>
-    sentence.status !== "reviewed" &&
-    sentence.portuguese &&
-    sentence.kana &&
-    sentence.romaji &&
-    !sentence.terms_source
-  );
-  if (missingTerms.length > 0) {
-    const stageId = await ensureRunStage(client, { userId: run.user_id, runId, stage: "lexical_analysis" });
-    const jobRows = missingTerms.map((sentence) =>
-      buildWorkerJobRow({
-        userId: run.user_id,
-        runId,
-        stageId,
-        stage: "lexical_analysis",
-        type: "detect_sentence_terms",
-        targetType: "sentence",
-        targetId: sentence.id,
-        priority: 150,
-        payload: {
-          id: sentence.id,
-          sentence: sentence.japanese,
-          japanese: sentence.japanese,
-          portuguese: sentence.portuguese,
-          kana: sentence.kana,
-          romaji: sentence.romaji,
-          sourceId: run.source_id,
-        },
-      }),
-    );
-    const created = await enqueueWorkerJobsBulk(client, jobRows);
-    await client.from("processing_run_stages").update({ status: "running", planned_jobs: created, started_at: new Date().toISOString() }).eq("id", stageId);
-    await refreshRunSnapshot(client, runId);
-    await client.from("processing_runs").update({
-      status: "running",
-      current_step: `Analise lexical: ${created} job(s) individuais planejados pelo worker.`,
-    }).eq("id", runId);
-    return;
-  }
-
-  const sentenceIds = rows.map((sentence) => sentence.id);
-  const { data: terms, error: termsError } = sentenceIds.length > 0
-    ? await client
-      .from("sentence_terms")
-      .select("dictionary_forms(dictionary_entry_id)")
-      .eq("user_id", run.user_id)
-      .in("sentence_id", sentenceIds)
-    : { data: [], error: null };
-  if (termsError) throw termsError;
-
-  const entryIds = Array.from(new Set((terms || [])
-    .map((term: any) => term.dictionary_forms?.dictionary_entry_id)
-    .filter(Boolean)));
-
-  if (entryIds.length > 0) {
-    const { data: entries, error: entriesError } = await client
-      .from("dictionary_entries")
-      .select("id,lemma,kana,romaji,type,main_meaning,status")
-      .eq("user_id", run.user_id)
-      .in("id", entryIds);
-    if (entriesError) throw entriesError;
-
-    const incomplete = (entries || []).filter((entry: any) =>
-      entry.status !== "reviewed" &&
-      (!entry.main_meaning || !entry.kana || !entry.romaji || !entry.type)
-    );
-    if (incomplete.length > 0) {
-      const stageId = await ensureRunStage(client, { userId: run.user_id, runId, stage: "dictionary" });
-      const jobRows = incomplete.map((entry: any) =>
-        buildWorkerJobRow({
-          userId: run.user_id,
-          runId,
-          stageId,
-          stage: "dictionary",
-          type: "enrich_dictionary_entry",
-          targetType: "dictionary_entry",
-          targetId: entry.id,
-          priority: 100,
-          payload: { id: entry.id, entryId: entry.id, lemma: entry.lemma, sourceId: run.source_id },
-        }),
-      );
-      const created = await enqueueWorkerJobsBulk(client, jobRows);
-      await client.from("processing_run_stages").update({ status: "running", planned_jobs: created, started_at: new Date().toISOString() }).eq("id", stageId);
-      await refreshRunSnapshot(client, runId);
-      await client.from("processing_runs").update({
-        status: "running",
-        current_step: `Dicionario: ${created} job(s) individuais planejados pelo worker.`,
-      }).eq("id", runId);
-      return;
-    }
-  }
-
-  await client.from("processing_runs").update({
-    status: "completed",
-    current_step: "Preparacao concluida pelo worker.",
-    finished_at: new Date().toISOString(),
-    pending_jobs: 0,
-  }).eq("id", runId);
+  const { error } = await client.rpc("create_or_resume_source_processing_run", {
+    p_source_id: run.source_id,
+    p_user_id: run.user_id,
+    p_run_mode: "all",
+  });
+  if (error) throw error;
 }
 
 function isSameAsJapanese(japanese: string | null | undefined, translation: string | null | undefined): boolean {
@@ -512,6 +292,8 @@ async function claimJobs(
   jobTypes: string[],
   claimLimit: number,
   leaseSeconds: number,
+  userLimit: number,
+  typeLimits: Record<string, number>,
 ): Promise<QueueJob[]> {
   const { data, error } = await client.rpc("claim_ai_jobs", {
     p_worker_id: workerId,
@@ -520,6 +302,8 @@ async function claimJobs(
     p_lease_seconds: leaseSeconds,
     p_user_id: null,
     p_run_id: null,
+    p_user_limit: userLimit,
+    p_type_limits: typeLimits,
   });
   if (error) throw error;
   return (data || []) as QueueJob[];
@@ -533,28 +317,8 @@ async function claimCoordinatedJobs(
   const supportedTypes = ["translate_sentence", "generate_sentence_reading", "detect_sentence_terms", "enrich_dictionary_entry"];
   const globalLimit = getGlobalLimit();
   const userLimit = getUserLimit();
-  const jobs: QueueJob[] = [];
-  const byUser = new Map<string, number>();
-  const byType = new Map<string, number>();
-
-  const claimed = await claimJobs(client, workerId, supportedTypes, globalLimit, leaseSeconds);
-  for (const job of claimed) {
-    const userCount = byUser.get(job.user_id) || 0;
-    const typeCount = byType.get(job.type) || 0;
-    if (
-      userCount >= userLimit ||
-      typeCount >= getTypeLimit(job.type) ||
-      jobs.length >= globalLimit
-    ) {
-      await client.rpc("release_claimed_ai_job", { p_job_id: job.id, p_worker_id: workerId });
-      continue;
-    }
-    byUser.set(job.user_id, userCount + 1);
-    byType.set(job.type, typeCount + 1);
-    jobs.push(job);
-  }
-
-  return jobs;
+  const typeLimits = Object.fromEntries(supportedTypes.map((type) => [type, getTypeLimit(type)]));
+  return claimJobs(client, workerId, supportedTypes, globalLimit, leaseSeconds, userLimit, typeLimits);
 }
 
 async function startJob(client: SupabaseClient, job: QueueJob, workerId: string, leaseSeconds: number): Promise<QueueJob> {
@@ -1284,7 +1048,9 @@ export async function processTranslateSentenceJob(
       latencyAiMs: meta.latency_ms,
       inputTokens: (meta.usage_metadata as any)?.promptTokenCount ?? null,
       outputTokens: (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
-      costActual: estimateCostActual(
+      costActual: await estimateCostActual(
+        client,
+        meta.model,
         (meta.usage_metadata as any)?.promptTokenCount ?? null,
         (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
       ),
@@ -1372,7 +1138,9 @@ export async function processGenerateSentenceReadingJob(
       latencyAiMs: meta.latency_ms,
       inputTokens: (meta.usage_metadata as any)?.promptTokenCount ?? null,
       outputTokens: (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
-      costActual: estimateCostActual(
+      costActual: await estimateCostActual(
+        client,
+        meta.model,
         (meta.usage_metadata as any)?.promptTokenCount ?? null,
         (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
       ),
@@ -1461,7 +1229,9 @@ export async function processDetectSentenceTermsJob(
       latencyAiMs: meta.latency_ms,
       inputTokens: (meta.usage_metadata as any)?.promptTokenCount ?? null,
       outputTokens: (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
-      costActual: estimateCostActual(
+      costActual: await estimateCostActual(
+        client,
+        meta.model,
         (meta.usage_metadata as any)?.promptTokenCount ?? null,
         (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
       ),
@@ -1536,7 +1306,9 @@ export async function processEnrichDictionaryEntryJob(
       latencyAiMs: meta.latency_ms,
       inputTokens: (meta.usage_metadata as any)?.promptTokenCount ?? null,
       outputTokens: (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
-      costActual: estimateCostActual(
+      costActual: await estimateCostActual(
+        client,
+        meta.model,
         (meta.usage_metadata as any)?.promptTokenCount ?? null,
         (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
       ),

@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, Database, Eraser, RefreshCw } from 'lucide-react';
+import { AlertCircle, Database, RefreshCw, Square } from 'lucide-react';
 import { AiJobRepository } from '../repositories';
 import { AiJob } from '../types';
-import { SourcePreparationEngine } from '../features/ai/SourcePreparationEngine';
 import { getJobHumanName } from './sourcePreparation/jobDisplay';
 import { useModal } from './ModalProvider';
 
@@ -35,12 +34,12 @@ export function GlobalAiQueueControl() {
   const visibleJobs = jobs.filter(isVisibleQueueJob);
 
   const clearQueue = async () => {
-    if (!(await showConfirm('Abortar e zerar fila global', 'Isso vai apagar todos os jobs da fila global: pendentes, rodando, erros, concluidos, cancelados e historico. Nao apaga frases, traducoes, termos nem dicionario.'))) {
+    if (!(await showConfirm('Cancelar fila global ativa', 'Isso vai cancelar jobs ainda nao concluidos e solicitar cancelamento dos que estiverem rodando. Historico e resultados ja concluidos permanecem para auditoria.'))) {
       return;
     }
     setIsClearing(true);
     try {
-      await SourcePreparationEngine.clearAllQueueJobs();
+      await AiJobRepository.cancelAllActiveJobs();
       await loadJobs();
     } finally {
       setIsClearing(false);
@@ -67,8 +66,8 @@ export function GlobalAiQueueControl() {
             disabled={isClearing || clearable === 0}
             className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-rose-100 bg-white px-3 text-[11px] font-black uppercase tracking-wide text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
           >
-            <Eraser className="h-3.5 w-3.5" />
-            Abortar e zerar fila global
+            <Square className="h-3.5 w-3.5" />
+            Cancelar fila ativa
           </button>
         </div>
       </div>
@@ -93,7 +92,7 @@ export function GlobalAiQueueControl() {
         ) : (
           visibleJobs.map((job) => {
             const input = typeof job.input === 'string' ? {} : job.input || {};
-            const label = typeof input.label === 'string' ? input.label : SourcePreparationEngine.getHumanJobLabel(job);
+            const label = typeof input.label === 'string' ? input.label : getJobHumanName(job.type);
             return (
               <div key={job.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">

@@ -293,6 +293,11 @@ CREATE TABLE ai_model_prices (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+INSERT INTO ai_model_prices(provider, model, input_per_million, output_per_million, effective_from)
+VALUES
+  ('google', 'gemini-2.5-flash-lite', 0.10, 0.40, '2025-07-22T00:00:00Z'),
+  ('google', 'gemini-2.5-flash', 0.30, 2.50, '2025-06-01T00:00:00Z');
+
 CREATE TABLE schema_versions (
   key TEXT PRIMARY KEY,
   version TEXT NOT NULL,
@@ -447,7 +452,9 @@ CREATE OR REPLACE FUNCTION public.claim_ai_jobs(
   p_limit INTEGER,
   p_lease_seconds INTEGER,
   p_user_id TEXT DEFAULT NULL,
-  p_run_id UUID DEFAULT NULL
+  p_run_id UUID DEFAULT NULL,
+  p_user_limit INTEGER DEFAULT 4,
+  p_type_limits JSONB DEFAULT '{}'::jsonb
 )
 RETURNS SETOF ai_jobs
 LANGUAGE plpgsql
@@ -458,25 +465,57 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('ai_jobs_claim_capacity'));
 
   RETURN QUERY
-  WITH picked AS (
-    SELECT id
-    FROM ai_jobs
-    WHERE
-      status IN ('pending','retry_wait')
-      AND type = ANY(p_job_types)
-      AND (p_user_id IS NULL OR user_id = p_user_id)
-      AND (p_run_id IS NULL OR run_id = p_run_id)
-      AND (retry_at IS NULL OR retry_at <= NOW())
-    ORDER BY priority DESC, created_at ASC
-    LIMIT GREATEST(
+  WITH capacity AS (
+    SELECT GREATEST(
       0,
       p_limit - (
         SELECT COUNT(*)::INTEGER
         FROM ai_jobs active_jobs
         WHERE active_jobs.status IN ('claimed','running')
       )
-    )
+    ) AS global_capacity
+  ),
+  locked_candidates AS (
+    SELECT j.*
+    FROM ai_jobs j
+    WHERE
+      j.status IN ('pending','retry_wait')
+      AND j.type = ANY(p_job_types)
+      AND (p_user_id IS NULL OR j.user_id = p_user_id)
+      AND (p_run_id IS NULL OR j.run_id = p_run_id)
+      AND (j.retry_at IS NULL OR j.retry_at <= NOW())
+    ORDER BY j.priority DESC, j.created_at ASC
     FOR UPDATE SKIP LOCKED
+  ),
+  candidates AS (
+    SELECT
+      j.id,
+      j.user_id,
+      j.type,
+      COALESCE((p_type_limits ->> j.type)::INTEGER, p_limit) AS type_limit,
+      COALESCE((
+        SELECT COUNT(*)::INTEGER
+        FROM ai_jobs active_user
+        WHERE active_user.user_id = j.user_id
+          AND active_user.status IN ('claimed','running')
+      ), 0) AS active_user_count,
+      COALESCE((
+        SELECT COUNT(*)::INTEGER
+        FROM ai_jobs active_type
+        WHERE active_type.type = j.type
+          AND active_type.status IN ('claimed','running')
+      ), 0) AS active_type_count,
+      ROW_NUMBER() OVER (PARTITION BY j.user_id ORDER BY j.priority DESC, j.created_at ASC) AS user_rank,
+      ROW_NUMBER() OVER (PARTITION BY j.type ORDER BY j.priority DESC, j.created_at ASC) AS type_rank,
+      ROW_NUMBER() OVER (ORDER BY j.priority DESC, j.created_at ASC) AS global_rank
+    FROM locked_candidates j
+  ),
+  picked AS (
+    SELECT id
+    FROM candidates, capacity
+    WHERE global_rank <= capacity.global_capacity
+      AND user_rank <= GREATEST(0, p_user_limit - active_user_count)
+      AND type_rank <= GREATEST(0, type_limit - active_type_count)
   )
   UPDATE ai_jobs j
   SET
@@ -595,6 +634,7 @@ DECLARE
   selected_stage TEXT;
   job_rows JSONB;
   created_count INTEGER := 0;
+  active_count INTEGER := 0;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM sources WHERE id = p_source_id AND user_id = p_user_id) THEN
     RAISE EXCEPTION 'Fonte nao encontrada para usuario.';
@@ -624,6 +664,16 @@ BEGIN
         updated_at = NOW()
     WHERE id = selected_run.id
     RETURNING * INTO selected_run;
+  END IF;
+
+  SELECT COUNT(*) INTO active_count
+  FROM ai_jobs
+  WHERE run_id = selected_run.id
+    AND status IN ('pending','claimed','running','retry_wait');
+
+  IF active_count > 0 THEN
+    PERFORM refresh_processing_run_snapshot(selected_run.id);
+    RETURN jsonb_build_object('run_id', selected_run.id, 'stage', NULL, 'created_jobs', 0, 'active_jobs', active_count, 'status', 'running');
   END IF;
 
   IF EXISTS (
@@ -875,6 +925,139 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.enqueue_sentence_ai_job(
+  p_sentence_id UUID,
+  p_user_id TEXT,
+  p_type TEXT,
+  p_model TEXT DEFAULT 'gemini-2.5-flash-lite',
+  p_prompt_version TEXT DEFAULT 'manual-sentence-worker:2026-06-v1'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  selected_sentence sentences;
+  job_rows JSONB;
+  created_count INTEGER := 0;
+  selected_job ai_jobs;
+  payload JSONB;
+  target_hash_value TEXT;
+  input_hash_value TEXT;
+  stage_value TEXT;
+  priority_value INTEGER;
+BEGIN
+  IF p_type NOT IN ('translate_sentence', 'generate_sentence_reading') THEN
+    RAISE EXCEPTION 'Tipo de job manual de frase nao permitido: %', p_type;
+  END IF;
+
+  SELECT * INTO selected_sentence
+  FROM sentences
+  WHERE id = p_sentence_id AND user_id = p_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Frase nao encontrada para usuario.';
+  END IF;
+
+  IF selected_sentence.status = 'reviewed' THEN
+    RETURN jsonb_build_object('created_jobs', 0, 'job_id', NULL, 'status', 'reviewed');
+  END IF;
+
+  IF p_type = 'translate_sentence' THEN
+    stage_value := 'translation';
+    priority_value := 300;
+    payload := jsonb_build_object(
+      'id', selected_sentence.id,
+      'sentence', selected_sentence.japanese,
+      'japanese', selected_sentence.japanese,
+      'sourceId', selected_sentence.source_id
+    );
+    target_hash_value := encode(digest(jsonb_build_object(
+      'targetType', 'sentence',
+      'targetId', selected_sentence.id,
+      'payload', payload,
+      'promptVersion', p_prompt_version,
+      'model', p_model
+    )::text, 'sha256'), 'hex');
+    input_hash_value := encode(digest(jsonb_build_object(
+      'type', p_type,
+      'targetType', 'sentence',
+      'targetId', selected_sentence.id,
+      'japanese', selected_sentence.japanese,
+      'promptVersion', p_prompt_version,
+      'model', p_model
+    )::text, 'sha256'), 'hex');
+  ELSE
+    stage_value := 'reading';
+    priority_value := 200;
+    payload := jsonb_build_object(
+      'id', selected_sentence.id,
+      'sentence', selected_sentence.japanese,
+      'japanese', selected_sentence.japanese,
+      'portuguese', selected_sentence.portuguese,
+      'sourceId', selected_sentence.source_id
+    );
+    target_hash_value := encode(digest(jsonb_build_object(
+      'targetType', 'sentence',
+      'targetId', selected_sentence.id,
+      'payload', payload,
+      'promptVersion', p_prompt_version,
+      'model', p_model
+    )::text, 'sha256'), 'hex');
+    input_hash_value := encode(digest(jsonb_build_object(
+      'type', p_type,
+      'targetType', 'sentence',
+      'targetId', selected_sentence.id,
+      'japanese', selected_sentence.japanese,
+      'portuguese', selected_sentence.portuguese,
+      'promptVersion', p_prompt_version,
+      'model', p_model
+    )::text, 'sha256'), 'hex');
+  END IF;
+
+  job_rows := jsonb_build_array(jsonb_build_object(
+    'user_id', p_user_id,
+    'run_id', NULL,
+    'stage_id', NULL,
+    'stage', stage_value,
+    'type', p_type,
+    'target_type', 'sentence',
+    'target_id', selected_sentence.id,
+    'priority', priority_value,
+    'target_hash', target_hash_value,
+    'input_hash', input_hash_value,
+    'job_key', p_type || ':sentence:' || selected_sentence.id || ':' || input_hash_value,
+    'prompt_version', p_prompt_version,
+    'model_version', p_model,
+    'model', p_model,
+    'payload', payload,
+    'input', payload,
+    'max_attempts', 3
+  ));
+
+  created_count := public.enqueue_ai_jobs_bulk(job_rows);
+
+  SELECT * INTO selected_job
+  FROM ai_jobs
+  WHERE user_id = p_user_id
+    AND type = p_type
+    AND target_type = 'sentence'
+    AND target_id = selected_sentence.id
+    AND input_hash = input_hash_value
+    AND status IN ('pending','claimed','running','retry_wait','needs_review')
+  ORDER BY created_at DESC
+  LIMIT 1;
+
+  RETURN jsonb_build_object(
+    'created_jobs', created_count,
+    'job_id', selected_job.id,
+    'status', COALESCE(selected_job.status::TEXT, 'already_terminal')
+  );
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.release_claimed_ai_job(p_job_id UUID, p_worker_id TEXT)
 RETURNS VOID
 LANGUAGE plpgsql
@@ -948,6 +1131,343 @@ BEGIN
     failed_items = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'failed'), 0),
     updated_at = NOW()
   WHERE pr.id = p_run_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.cancel_ai_jobs_by_run(
+  p_run_id UUID,
+  p_user_id TEXT
+)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  cancelled_count INTEGER := 0;
+BEGIN
+  UPDATE ai_jobs
+  SET status = 'cancelled',
+      error = 'Cancelado pelo usuario.',
+      error_code = 'USER_CANCELLED',
+      error_kind = 'permanent',
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      retry_at = NULL,
+      completed_at = NOW(),
+      updated_at = NOW()
+  WHERE run_id = p_run_id
+    AND user_id = p_user_id
+    AND status IN ('pending','claimed','retry_wait','needs_review');
+
+  GET DIAGNOSTICS cancelled_count = ROW_COUNT;
+
+  UPDATE ai_jobs
+  SET cancel_requested = TRUE,
+      logs = COALESCE(logs, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('at', NOW(), 'event', 'cancel_requested')),
+      updated_at = NOW()
+  WHERE run_id = p_run_id
+    AND user_id = p_user_id
+    AND status = 'running';
+
+  UPDATE processing_run_stages
+  SET status = CASE
+        WHEN EXISTS (
+          SELECT 1 FROM ai_jobs
+          WHERE stage_id = processing_run_stages.id
+            AND status = 'running'
+            AND cancel_requested = TRUE
+        ) THEN status
+        ELSE 'cancelled'
+      END,
+      cancelled_jobs = (
+        SELECT COUNT(*) FROM ai_jobs
+        WHERE stage_id = processing_run_stages.id AND status = 'cancelled'
+      ),
+      updated_at = NOW()
+  WHERE run_id = p_run_id
+    AND user_id = p_user_id
+    AND status IN ('pending','running','needs_review','blocked');
+
+  UPDATE processing_runs
+  SET cancel_requested = TRUE,
+      status = CASE
+        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = p_run_id AND status = 'running') THEN status
+        ELSE 'cancelled'
+      END,
+      finished_at = CASE
+        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = p_run_id AND status = 'running') THEN finished_at
+        ELSE NOW()
+      END,
+      current_step = 'Cancelamento solicitado pelo usuario.',
+      updated_at = NOW()
+  WHERE id = p_run_id AND user_id = p_user_id;
+
+  PERFORM refresh_processing_run_snapshot(p_run_id);
+  RETURN cancelled_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.cancel_ai_jobs_by_source(
+  p_source_id UUID,
+  p_user_id TEXT
+)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  run_ids UUID[];
+  cancelled_count INTEGER := 0;
+BEGIN
+  SELECT COALESCE(array_agg(id), ARRAY[]::UUID[]) INTO run_ids
+  FROM processing_runs
+  WHERE source_id = p_source_id AND user_id = p_user_id;
+
+  UPDATE ai_jobs
+  SET status = 'cancelled',
+      error = 'Cancelado pelo usuario.',
+      error_code = 'USER_CANCELLED',
+      error_kind = 'permanent',
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      retry_at = NULL,
+      completed_at = NOW(),
+      updated_at = NOW()
+  WHERE user_id = p_user_id
+    AND status IN ('pending','claimed','retry_wait','needs_review')
+    AND (
+      run_id = ANY(run_ids)
+      OR target_id = p_source_id
+      OR input->>'sourceId' = p_source_id::TEXT
+      OR payload->>'sourceId' = p_source_id::TEXT
+    );
+
+  GET DIAGNOSTICS cancelled_count = ROW_COUNT;
+
+  UPDATE ai_jobs
+  SET cancel_requested = TRUE,
+      logs = COALESCE(logs, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('at', NOW(), 'event', 'cancel_requested')),
+      updated_at = NOW()
+  WHERE user_id = p_user_id
+    AND status = 'running'
+    AND (
+      run_id = ANY(run_ids)
+      OR target_id = p_source_id
+      OR input->>'sourceId' = p_source_id::TEXT
+      OR payload->>'sourceId' = p_source_id::TEXT
+    );
+
+  UPDATE processing_runs
+  SET cancel_requested = TRUE,
+      status = CASE
+        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = processing_runs.id AND status = 'running') THEN status
+        ELSE 'cancelled'
+      END,
+      finished_at = CASE
+        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = processing_runs.id AND status = 'running') THEN finished_at
+        ELSE NOW()
+      END,
+      current_step = 'Cancelamento solicitado pelo usuario.',
+      updated_at = NOW()
+  WHERE id = ANY(run_ids) AND user_id = p_user_id;
+
+  PERFORM refresh_processing_run_snapshot(ids.run_id)
+  FROM unnest(run_ids) AS ids(run_id);
+
+  RETURN cancelled_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.cancel_all_ai_jobs_for_user(
+  p_user_id TEXT
+)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  run_ids UUID[];
+  cancelled_count INTEGER := 0;
+BEGIN
+  SELECT COALESCE(array_agg(id), ARRAY[]::UUID[]) INTO run_ids
+  FROM processing_runs
+  WHERE user_id = p_user_id
+    AND status IN ('pending','planning','running','paused','needs_review');
+
+  UPDATE ai_jobs
+  SET status = 'cancelled',
+      error = 'Cancelado pelo usuario.',
+      error_code = 'USER_CANCELLED',
+      error_kind = 'permanent',
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      retry_at = NULL,
+      completed_at = NOW(),
+      updated_at = NOW()
+  WHERE user_id = p_user_id
+    AND status IN ('pending','claimed','retry_wait','needs_review');
+
+  GET DIAGNOSTICS cancelled_count = ROW_COUNT;
+
+  UPDATE ai_jobs
+  SET cancel_requested = TRUE,
+      logs = COALESCE(logs, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('at', NOW(), 'event', 'cancel_requested')),
+      updated_at = NOW()
+  WHERE user_id = p_user_id
+    AND status = 'running';
+
+  UPDATE processing_runs
+  SET cancel_requested = TRUE,
+      status = CASE
+        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = processing_runs.id AND status = 'running') THEN status
+        ELSE 'cancelled'
+      END,
+      finished_at = CASE
+        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = processing_runs.id AND status = 'running') THEN finished_at
+        ELSE NOW()
+      END,
+      current_step = 'Cancelamento global solicitado pelo usuario.',
+      updated_at = NOW()
+  WHERE user_id = p_user_id
+    AND status IN ('pending','planning','running','paused','needs_review');
+
+  PERFORM refresh_processing_run_snapshot(ids.run_id)
+  FROM unnest(run_ids) AS ids(run_id);
+
+  RETURN cancelled_count;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.cancel_ai_job(
+  p_job_id UUID,
+  p_user_id TEXT
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_run_id UUID;
+BEGIN
+  SELECT run_id INTO current_run_id
+  FROM ai_jobs
+  WHERE id = p_job_id AND user_id = p_user_id;
+
+  UPDATE ai_jobs
+  SET status = 'cancelled',
+      error = 'Cancelado pelo usuario.',
+      error_code = 'USER_CANCELLED',
+      error_kind = 'permanent',
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      retry_at = NULL,
+      completed_at = NOW(),
+      updated_at = NOW()
+  WHERE id = p_job_id
+    AND user_id = p_user_id
+    AND status IN ('pending','claimed','retry_wait','needs_review','failed','error');
+
+  IF NOT FOUND THEN
+    UPDATE ai_jobs
+    SET cancel_requested = TRUE,
+        logs = COALESCE(logs, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('at', NOW(), 'event', 'cancel_requested')),
+        updated_at = NOW()
+    WHERE id = p_job_id
+      AND user_id = p_user_id
+      AND status = 'running';
+  END IF;
+
+  IF current_run_id IS NOT NULL THEN
+    PERFORM refresh_processing_run_snapshot(current_run_id);
+  END IF;
+
+  RETURN TRUE;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.retry_ai_jobs(
+  p_user_id TEXT,
+  p_run_id UUID DEFAULT NULL,
+  p_source_id UUID DEFAULT NULL,
+  p_job_id UUID DEFAULT NULL
+)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  run_ids UUID[];
+  retried_count INTEGER := 0;
+BEGIN
+  SELECT COALESCE(array_agg(DISTINCT run_id) FILTER (WHERE run_id IS NOT NULL), ARRAY[]::UUID[]) INTO run_ids
+  FROM ai_jobs
+  WHERE user_id = p_user_id
+    AND (p_run_id IS NULL OR run_id = p_run_id)
+    AND (p_job_id IS NULL OR id = p_job_id)
+    AND (
+      p_source_id IS NULL
+      OR input->>'sourceId' = p_source_id::TEXT
+      OR payload->>'sourceId' = p_source_id::TEXT
+      OR EXISTS (
+        SELECT 1 FROM processing_runs pr
+        WHERE pr.id = ai_jobs.run_id
+          AND pr.source_id = p_source_id
+      )
+    );
+
+  UPDATE ai_jobs
+  SET status = 'pending',
+      error = NULL,
+      error_code = NULL,
+      error_kind = NULL,
+      error_structured = NULL,
+      attempts = 0,
+      retry_count = 0,
+      retry_at = NULL,
+      claimed_at = NULL,
+      started_at = NULL,
+      completed_at = NULL,
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      cancel_requested = FALSE,
+      last_heartbeat_at = NULL,
+      updated_at = NOW()
+  WHERE user_id = p_user_id
+    AND status IN ('error','failed','retry_wait','needs_review')
+    AND (p_run_id IS NULL OR run_id = p_run_id)
+    AND (p_job_id IS NULL OR id = p_job_id)
+    AND (
+      p_source_id IS NULL
+      OR input->>'sourceId' = p_source_id::TEXT
+      OR payload->>'sourceId' = p_source_id::TEXT
+      OR EXISTS (
+        SELECT 1 FROM processing_runs pr
+        WHERE pr.id = ai_jobs.run_id
+          AND pr.source_id = p_source_id
+      )
+    );
+
+  GET DIAGNOSTICS retried_count = ROW_COUNT;
+
+  PERFORM refresh_processing_run_snapshot(ids.run_id)
+  FROM unnest(run_ids) AS ids(run_id);
+
+  RETURN retried_count;
 END;
 $$;
 
@@ -1905,10 +2425,16 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.get_ai_queue_health() FROM public;
-REVOKE ALL ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID) FROM public;
+REVOKE ALL ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID, INTEGER, JSONB) FROM public;
 REVOKE ALL ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) FROM public;
 REVOKE ALL ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.enqueue_sentence_ai_job(UUID, TEXT, TEXT, TEXT, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_ai_jobs_by_run(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_ai_jobs_by_source(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_ai_job(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) FROM public;
 REVOKE ALL ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.refresh_processing_run_snapshot(UUID) FROM public;
@@ -1921,10 +2447,16 @@ REVOKE ALL ON FUNCTION public.apply_dictionary_enrichment_result(UUID, TEXT, JSO
 REVOKE ALL ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM public;
 REVOKE ALL ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) FROM public;
 GRANT EXECUTE ON FUNCTION public.get_ai_queue_health() TO service_role;
-GRANT EXECUTE ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID, INTEGER, JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.enqueue_sentence_ai_job(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_ai_jobs_by_run(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_ai_jobs_by_source(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_ai_job(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.refresh_processing_run_snapshot(UUID) TO service_role;

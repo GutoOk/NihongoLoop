@@ -1,107 +1,43 @@
+import { isSupabaseConfigured, supabase } from '../core/supabaseClient';
 import { AiJobRepository } from '../repositories';
-import { AuthService } from '../core/authService';
-import { stableHash } from '../core/hash';
+import { getUserId } from '../repositories/utils';
 
-const PROMPT_VERSION = 'client-requested:2026-06-v1';
-const MODEL_VERSION = 'gemini-2.5-flash-lite';
+const SENTENCE_MODEL = 'gemini-2.5-flash-lite';
+const SENTENCE_PROMPT_VERSION = 'manual-sentence-worker:2026-06-v1';
 
-async function buildJobContract(type: string, targetType: string, targetId: string, input: Record<string, unknown>) {
-  const targetHash = await stableHash({
-    targetType,
-    targetId,
-    payload: input,
-    promptVersion: PROMPT_VERSION,
-    model: MODEL_VERSION,
+type ManualSentenceJobResult = {
+  created_jobs?: number;
+  job_id?: string | null;
+  status?: string;
+};
+
+async function enqueueSentenceJob(sentenceId: string, type: 'translate_sentence' | 'generate_sentence_reading') {
+  if (!isSupabaseConfigured) return null;
+  const { data, error } = await supabase!.rpc('enqueue_sentence_ai_job', {
+    p_sentence_id: sentenceId,
+    p_user_id: getUserId(),
+    p_type: type,
+    p_model: SENTENCE_MODEL,
+    p_prompt_version: SENTENCE_PROMPT_VERSION,
   });
-  const inputHash = await stableHash({
-    type,
-    targetType,
-    targetId,
-    targetHash,
-  });
-  return {
-    inputHash,
-    targetHash,
-    jobKey: `${type}:${targetType}:${targetId}:${inputHash}`,
-  };
+  if (error) {
+    console.error(error);
+    throw new Error(`Erro do Supabase ao enfileirar job de frase: ${error.message}`);
+  }
+  return data as ManualSentenceJobResult | null;
 }
 
 export class AiJobService {
-  static async requestSentenceTranslation(sentenceId: string, japanese: string) {
-    const input = { id: sentenceId, sentence: japanese, japanese };
-    const contract = await buildJobContract('translate_sentence', 'sentence', sentenceId, input);
-    const existing = await AiJobRepository.getPendingByTarget('translate_sentence', 'sentence', sentenceId);
-    if (existing && existing.input_hash === contract.inputHash) return existing;
-
-    return AiJobRepository.add({
-      user_id: AuthService.getCurrentUserId(),
-      type: 'translate_sentence',
-      target_type: 'sentence',
-      target_id: sentenceId,
-      status: 'pending',
-      priority: 300,
-      input_hash: contract.inputHash,
-      target_hash: contract.targetHash,
-      job_key: contract.jobKey,
-      prompt_version: PROMPT_VERSION,
-      model_version: MODEL_VERSION,
-      model: MODEL_VERSION,
-      input,
-      payload: input,
-      error: null,
-      result: null,
-    } as any);
+  static async requestSentenceTranslation(sentenceId: string, _japanese: string) {
+    return enqueueSentenceJob(sentenceId, 'translate_sentence');
   }
 
-  static async requestSentenceReading(sentenceId: string, japanese: string, portuguese?: string | null) {
-    const input = { id: sentenceId, sentence: japanese, japanese, portuguese: portuguese || null };
-    const contract = await buildJobContract('generate_sentence_reading', 'sentence', sentenceId, input);
-    const existing = await AiJobRepository.getPendingByTarget('generate_sentence_reading', 'sentence', sentenceId);
-    if (existing && existing.input_hash === contract.inputHash) return existing;
-
-    return AiJobRepository.add({
-      user_id: AuthService.getCurrentUserId(),
-      type: 'generate_sentence_reading',
-      target_type: 'sentence',
-      target_id: sentenceId,
-      status: 'pending',
-      priority: 200,
-      input_hash: contract.inputHash,
-      target_hash: contract.targetHash,
-      job_key: contract.jobKey,
-      prompt_version: PROMPT_VERSION,
-      model_version: MODEL_VERSION,
-      model: MODEL_VERSION,
-      input,
-      payload: input,
-      error: null,
-      result: null,
-    } as any);
+  static async requestSentenceReading(sentenceId: string, _japanese: string, _portuguese?: string | null) {
+    return enqueueSentenceJob(sentenceId, 'generate_sentence_reading');
   }
 
-  static async requestDictionaryEnrichment(entryId: string, lemma: string) {
-    const input = { id: entryId, entryId, lemma };
-    const contract = await buildJobContract('enrich_dictionary_entry', 'dictionary_entry', entryId, input);
-    const existing = await AiJobRepository.getPendingByTarget('enrich_dictionary_entry', 'dictionary_entry', entryId);
-    if (existing && existing.input_hash === contract.inputHash) return existing;
-
-    return AiJobRepository.add({
-      user_id: AuthService.getCurrentUserId(),
-      type: 'enrich_dictionary_entry',
-      target_type: 'dictionary_entry',
-      target_id: entryId,
-      status: 'pending',
-      priority: 100,
-      input_hash: contract.inputHash,
-      target_hash: contract.targetHash,
-      job_key: contract.jobKey,
-      prompt_version: PROMPT_VERSION,
-      model_version: MODEL_VERSION,
-      model: MODEL_VERSION,
-      input,
-      payload: input,
-      error: null,
-      result: null,
-    } as any);
+  static async requestDictionaryEnrichment(entryId: string, _lemma: string) {
+    const created = await AiJobRepository.enqueueDictionaryEnrichmentJobs([entryId]);
+    return { created_jobs: created };
   }
 }

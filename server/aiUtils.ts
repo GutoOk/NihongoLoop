@@ -1,15 +1,20 @@
-export function withTimeout<T>(
-  promise: Promise<T>,
+export async function withAbortableTimeout<T>(
+  task: (signal: AbortSignal) => Promise<T>,
   ms: number = 120000,
   errorMsg: string = "Tempo limite de 120s excedido na chamada do Gemini (Timeout).",
 ): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(errorMsg)), ms);
-  });
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timeoutId) clearTimeout(timeoutId);
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(new Error(errorMsg)), ms);
+  try {
+    return await task(controller.signal);
+  } catch (error: any) {
+    if (controller.signal.aborted) {
+      throw controller.signal.reason instanceof Error ? controller.signal.reason : new Error(errorMsg);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 export function cleanAndParseJSON<T = any>(text: string): T {

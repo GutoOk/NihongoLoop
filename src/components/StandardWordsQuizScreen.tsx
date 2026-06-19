@@ -87,23 +87,6 @@ export default function StandardWordsQuizScreen({
     return String(val || "").trim();
   };
 
-  const withTimeout = async <T,>(promise: Promise<T>, ms: number): Promise<T> => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        promise,
-        new Promise<T>((_, reject) => {
-          timeoutId = setTimeout(
-            () => reject(new Error("timeout loading distractors")),
-            ms,
-          );
-        }),
-      ]);
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
-  };
-
   const buildQuizQueue = async (_cancelled: boolean) => {
     try {
       setIsLoading(true);
@@ -137,7 +120,7 @@ export default function StandardWordsQuizScreen({
       let distPool = entries.map(getOptionText).filter(Boolean);
 
       try {
-        const { entries: allDict } = await withTimeout(DictionaryRepository.getPage({ limit: 1000 }), 3500);
+        const { entries: allDict } = await DictionaryRepository.getPage({ limit: 1000 });
         const globalPool = allDict
           .map((d) => {
             const val = reverseMode ? d.lemma : d.main_meaning;

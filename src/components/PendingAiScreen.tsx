@@ -7,7 +7,7 @@ import {
   XCircle,
   AlertTriangle,
   Play,
-  Trash2,
+  Square,
 } from "lucide-react";
 import { AiJobRepository } from "../repositories";
 import { AiJob } from "../types";
@@ -60,9 +60,9 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
     cancelled: <XCircle className="w-3.5 h-3.5" />,
   };
 
-  const deleteSingleJob = async (id: string, e: React.MouseEvent) => {
+  const cancelSingleJob = async (id: string, e: React.MouseEvent) => {
      e.stopPropagation();
-     await AiJobRepository.delete(id);
+     await AiJobRepository.cancelJob(id);
      loadJobs();
   };
 
@@ -135,8 +135,8 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
                       </h3>
                    </div>
                    
-                   <button onClick={(e) => deleteSingleJob(job.id, e)} className="p-1.5 bg-rose-50 text-rose-500 hover:bg-rose-100 rounded-md transition-colors" title="Excluir">
-                     <Trash2 className="w-3.5 h-3.5" />
+                   <button onClick={(e) => cancelSingleJob(job.id, e)} className="p-1.5 bg-rose-50 text-rose-500 hover:bg-rose-100 rounded-md transition-colors" title="Cancelar job">
+                     <Square className="w-3.5 h-3.5" />
                    </button>
                 </div>
 
