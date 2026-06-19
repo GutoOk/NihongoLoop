@@ -15,14 +15,21 @@ export const supabase = isSupabaseConfigured
             if (options?.signal?.aborted) {
               throw options.signal.reason || new Error("Request aborted");
             }
+            const timeoutController = new AbortController();
+            const upstreamSignal = options?.signal;
+            const abortFromUpstream = () => timeoutController.abort(upstreamSignal?.reason || new Error("Request aborted"));
+            if (upstreamSignal) {
+              upstreamSignal.addEventListener('abort', abortFromUpstream, { once: true });
+            }
+            const timeoutId = window.setTimeout(
+              () => timeoutController.abort(new Error('Tempo limite excedido na resposta do Supabase (Timeout).')),
+              30000,
+            );
             try {
-              const timeoutPromise = new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Tempo limite excedido na resposta do Supabase (Timeout).')), 30000)
-              );
-              const response = await Promise.race([
-                fetch(url, options),
-                timeoutPromise
-              ]);
+              const response = await fetch(url, {
+                ...options,
+                signal: timeoutController.signal,
+              });
 
               if (response.status >= 500 && attempt < maxRetries) {
                 console.warn(`Erro no servidor Supabase ${response.status}. Tentando novamente em ${delay}ms... (Tentativa ${attempt + 1}/${maxRetries + 1})`);
@@ -33,10 +40,11 @@ export const supabase = isSupabaseConfigured
 
               return response;
             } catch (error: any) {
+              const abortReason = timeoutController.signal.reason;
               if (options?.signal?.aborted || error?.name === 'AbortError') {
-                throw error;
+                throw abortReason || error;
               }
-              const isTimeout = error?.message?.includes('Tempo limite excedido');
+              const isTimeout = error?.message?.includes('Tempo limite excedido') || abortReason?.message?.includes('Tempo limite excedido');
               const isNetworkError = error instanceof TypeError || error?.message?.includes('Failed to fetch') || error?.message?.includes('network');
 
               if ((isTimeout || isNetworkError) && attempt < maxRetries) {
@@ -47,6 +55,11 @@ export const supabase = isSupabaseConfigured
               }
 
               throw error;
+            } finally {
+              window.clearTimeout(timeoutId);
+              if (upstreamSignal) {
+                upstreamSignal.removeEventListener('abort', abortFromUpstream);
+              }
             }
           }
           throw new Error('Falha ao conectar ao Supabase após várias tentativas de reenvio.');

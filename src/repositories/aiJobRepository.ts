@@ -46,10 +46,12 @@ const AI_JOB_LIST_SELECT = [
   'worker_id',
   'retry_at',
   'retry_count',
+  'cancel_requested',
   'last_heartbeat_at',
 ].join(',');
 
 const ACTIVE_QUEUE_STATUSES: AiJob['status'][] = ['pending', 'claimed', 'running', 'retry_wait', 'needs_review'];
+const CANCELLABLE_QUEUE_STATUSES: AiJob['status'][] = ['pending', 'claimed', 'retry_wait', 'needs_review'];
 const PROBLEM_QUEUE_STATUSES: AiJob['status'][] = ['error', 'failed', 'retry_wait', 'needs_review'];
 
 export interface ClaimAiJobsParams {
@@ -310,7 +312,14 @@ export class AiJobRepository {
       } as any)
       .eq('run_id', runId)
       .eq('user_id', getUserId())
-      .in('status', ACTIVE_QUEUE_STATUSES);
+      .in('status', CANCELLABLE_QUEUE_STATUSES);
+    if (!error) {
+      await supabase!.from('ai_jobs')
+        .update({ cancel_requested: true, updated_at: now } as any)
+        .eq('run_id', runId)
+        .eq('user_id', getUserId())
+        .eq('status', 'running');
+    }
     if (error) {
       console.error(error);
       throw new Error(`Erro do Supabase ao cancelar jobs da execucao: ${error.message}`);
@@ -335,8 +344,15 @@ export class AiJobRepository {
         updated_at: now,
       } as any)
       .eq('user_id', getUserId())
-      .in('status', ACTIVE_QUEUE_STATUSES)
+      .in('status', CANCELLABLE_QUEUE_STATUSES)
       .or(`target_id.eq.${sourceId},input->>sourceId.eq.${sourceId},payload->>sourceId.eq.${sourceId}`);
+    if (!error) {
+      await supabase!.from('ai_jobs')
+        .update({ cancel_requested: true, updated_at: now } as any)
+        .eq('user_id', getUserId())
+        .eq('status', 'running')
+        .or(`target_id.eq.${sourceId},input->>sourceId.eq.${sourceId},payload->>sourceId.eq.${sourceId}`);
+    }
     if (error) {
       console.error(error);
       throw new Error(`Erro do Supabase ao cancelar jobs da fonte: ${error.message}`);
@@ -361,7 +377,13 @@ export class AiJobRepository {
         updated_at: now,
       } as any)
       .eq('user_id', getUserId())
-      .in('status', ACTIVE_QUEUE_STATUSES);
+      .in('status', CANCELLABLE_QUEUE_STATUSES);
+    if (!error) {
+      await supabase!.from('ai_jobs')
+        .update({ cancel_requested: true, updated_at: now } as any)
+        .eq('user_id', getUserId())
+        .eq('status', 'running');
+    }
     if (error) {
       console.error(error);
       throw new Error(`Erro do Supabase ao cancelar fila ativa: ${error.message}`);

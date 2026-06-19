@@ -66,6 +66,10 @@ async function startServer() {
   app.get("/api/queue-health", async (req, res) => {
     const token = req.headers["x-internal-health-token"];
     const expectedToken = process.env.INTERNAL_HEALTH_TOKEN;
+    if (isWorkerOnly && (!expectedToken || expectedToken.includes("PLACEHOLDER"))) {
+      res.status(503).json({ error: "INTERNAL_HEALTH_TOKEN ausente no worker." });
+      return;
+    }
     if (expectedToken && token !== expectedToken) {
       res.status(403).json({ error: "Healthcheck interno nao autorizado." });
       return;
@@ -145,6 +149,7 @@ async function startServer() {
       supabaseUrl,
       serviceRoleKey: supabaseServiceRoleKey,
       requireGemini: true,
+      requireHealthToken: true,
     });
     if (!validation.ok) {
       throw new Error(`AI worker startup validation failed: ${validation.errors.join("; ")}`);

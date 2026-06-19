@@ -49,7 +49,7 @@ export default function SourcePreparationPanel({
   useEffect(() => {
     signatureRef.current = null;
     void refresh();
-    const interval = setInterval(() => void refresh(true), 6000);
+    const interval = setInterval(() => void refresh(true), 15000);
     return () => clearInterval(interval);
   }, [sourceId, showGlobal]);
 
@@ -57,11 +57,11 @@ export default function SourcePreparationPanel({
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const [nextDiagnosis, nextPlan, latestRun] = await Promise.all([
-        SourcePreparationEngine.diagnoseSource(sourceId),
+      const [nextPlan, latestRun] = await Promise.all([
         SourcePreparationEngine.buildPlan(sourceId, PLAN_OPTIONS),
         showGlobal ? Promise.resolve(null) : ProcessingRunRepository.getLatestRunBySource(sourceId),
       ]);
+      const nextDiagnosis = nextPlan.diagnosis;
       const sourceJobs = showGlobal
         ? await AiJobRepository.getAll()
         : latestRun

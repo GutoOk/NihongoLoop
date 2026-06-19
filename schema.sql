@@ -212,6 +212,7 @@ CREATE TABLE ai_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id TEXT NOT NULL,
   run_id UUID REFERENCES processing_runs(id) ON DELETE SET NULL,
+  stage_id UUID REFERENCES processing_run_stages(id) ON DELETE SET NULL,
   stage TEXT,
   type TEXT NOT NULL,
   target_type TEXT NOT NULL,
@@ -236,6 +237,7 @@ CREATE TABLE ai_jobs (
   attempts INTEGER DEFAULT 0,
   retry_count INTEGER DEFAULT 0,
   max_attempts INTEGER DEFAULT 3,
+  cancel_requested BOOLEAN DEFAULT FALSE,
   retry_at TIMESTAMPTZ,
   model TEXT,
   input_tokens INTEGER DEFAULT 0,
@@ -453,6 +455,8 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('ai_jobs_claim_capacity'));
+
   RETURN QUERY
   WITH picked AS (
     SELECT id
@@ -464,7 +468,14 @@ BEGIN
       AND (p_run_id IS NULL OR run_id = p_run_id)
       AND (retry_at IS NULL OR retry_at <= NOW())
     ORDER BY priority DESC, created_at ASC
-    LIMIT GREATEST(0, p_limit)
+    LIMIT GREATEST(
+      0,
+      p_limit - (
+        SELECT COUNT(*)::INTEGER
+        FROM ai_jobs active_jobs
+        WHERE active_jobs.status IN ('claimed','running')
+      )
+    )
     FOR UPDATE SKIP LOCKED
   )
   UPDATE ai_jobs j
@@ -482,6 +493,87 @@ BEGIN
   FROM picked
   WHERE j.id = picked.id
   RETURNING j.*;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.enqueue_ai_jobs_bulk(p_jobs JSONB)
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  inserted_count INTEGER;
+BEGIN
+  WITH incoming AS (
+    SELECT *
+    FROM jsonb_to_recordset(p_jobs) AS x(
+      user_id TEXT,
+      run_id UUID,
+      stage_id UUID,
+      stage TEXT,
+      type TEXT,
+      target_type TEXT,
+      target_id UUID,
+      priority INTEGER,
+      target_hash TEXT,
+      input_hash TEXT,
+      job_key TEXT,
+      prompt_version TEXT,
+      model_version TEXT,
+      model TEXT,
+      payload JSONB,
+      input JSONB,
+      max_attempts INTEGER
+    )
+  ),
+  inserted AS (
+    INSERT INTO ai_jobs(
+      user_id,
+      run_id,
+      stage_id,
+      stage,
+      type,
+      target_type,
+      target_id,
+      status,
+      priority,
+      target_hash,
+      input_hash,
+      job_key,
+      prompt_version,
+      model_version,
+      model,
+      payload,
+      input,
+      max_attempts
+    )
+    SELECT
+      user_id,
+      run_id,
+      stage_id,
+      stage,
+      type,
+      target_type,
+      target_id,
+      'pending',
+      COALESCE(priority, 0),
+      target_hash,
+      input_hash,
+      job_key,
+      prompt_version,
+      model_version,
+      model,
+      payload,
+      COALESCE(input, payload),
+      COALESCE(max_attempts, 3)
+    FROM incoming
+    ON CONFLICT DO NOTHING
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO inserted_count FROM inserted;
+
+  RETURN inserted_count;
 END;
 $$;
 
@@ -589,8 +681,9 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   current_attempt INTEGER;
+  current_stage_id UUID;
 BEGIN
-  SELECT attempts INTO current_attempt
+  SELECT attempts, stage_id INTO current_attempt, current_stage_id
   FROM ai_jobs
   WHERE id = p_job_id
     AND worker_id = p_worker_id
@@ -622,11 +715,256 @@ BEGIN
   SET
     status = 'completed',
     completed_at = NOW(),
-    duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - started_at))::INTEGER,
+    duration_ms = (EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000)::INTEGER,
     input_tokens = COALESCE(p_input_tokens, input_tokens),
     output_tokens = COALESCE(p_output_tokens, output_tokens),
     cost_actual = COALESCE(p_cost_actual, cost_actual)
   WHERE job_id = p_job_id AND attempt_number = current_attempt;
+
+  IF current_stage_id IS NOT NULL THEN
+    UPDATE processing_run_stages
+    SET
+      completed_jobs = completed_jobs + 1,
+      status = CASE
+        WHEN NOT EXISTS (
+          SELECT 1 FROM ai_jobs
+          WHERE stage_id = current_stage_id
+            AND status IN ('pending','claimed','running','retry_wait')
+        ) THEN 'completed'
+        ELSE status
+      END,
+      completed_at = CASE
+        WHEN NOT EXISTS (
+          SELECT 1 FROM ai_jobs
+          WHERE stage_id = current_stage_id
+            AND status IN ('pending','claimed','running','retry_wait')
+        ) THEN NOW()
+        ELSE completed_at
+      END
+    WHERE id = current_stage_id;
+  END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.apply_sentence_translation_result(
+  p_job_id UUID,
+  p_worker_id TEXT,
+  p_translation TEXT,
+  p_result JSONB,
+  p_raw_result JSONB,
+  p_input_tokens INTEGER DEFAULT NULL,
+  p_output_tokens INTEGER DEFAULT NULL,
+  p_cost_actual NUMERIC DEFAULT NULL,
+  p_latency_ai_ms INTEGER DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_job ai_jobs;
+  current_sentence sentences;
+  normalized_translation TEXT;
+  next_status TEXT;
+BEGIN
+  SELECT * INTO current_job
+  FROM ai_jobs
+  WHERE id = p_job_id AND worker_id = p_worker_id AND status = 'running'
+  FOR UPDATE;
+
+  IF current_job.id IS NULL THEN
+    RAISE EXCEPTION 'Job % is not running for worker %', p_job_id, p_worker_id;
+  END IF;
+  IF current_job.cancel_requested THEN
+    RAISE EXCEPTION 'Job cancelado durante o processamento.';
+  END IF;
+
+  SELECT * INTO current_sentence
+  FROM sentences
+  WHERE id = current_job.target_id AND user_id = current_job.user_id
+  FOR UPDATE;
+
+  IF current_sentence.id IS NULL THEN
+    RAISE EXCEPTION 'Frase nao encontrada para traducao.';
+  END IF;
+  IF current_sentence.status = 'reviewed' THEN
+    PERFORM complete_ai_job(
+      p_job_id,
+      p_worker_id,
+      jsonb_build_object('optimization', 'already_reviewed', 'sentence_id', current_sentence.id),
+      p_raw_result,
+      p_input_tokens,
+      p_output_tokens,
+      p_cost_actual,
+      p_latency_ai_ms,
+      NULL
+    );
+    RETURN jsonb_build_object('skipped', 'reviewed', 'sentence_id', current_sentence.id);
+  END IF;
+  IF current_job.payload ? 'sentence' AND current_job.payload->>'sentence' <> current_sentence.japanese THEN
+    UPDATE ai_jobs
+    SET status = 'obsolete',
+        error = 'A frase mudou depois da criacao do job.',
+        error_code = 'OBSOLETE_INPUT',
+        error_kind = 'permanent',
+        locked_by = NULL,
+        locked_until = NULL,
+        lease_expires_at = NULL,
+        worker_id = NULL,
+        completed_at = NOW()
+    WHERE id = p_job_id;
+    RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
+  END IF;
+
+  normalized_translation := NULLIF(BTRIM(p_translation), '');
+  IF normalized_translation IS NULL THEN
+    RAISE EXCEPTION 'Resultado invalido: traducao ausente.';
+  END IF;
+  IF normalized_translation = current_sentence.japanese THEN
+    normalized_translation := 'Expressao japonesa sem traducao literal direta: ' || current_sentence.japanese || '.';
+  END IF;
+
+  next_status := CASE WHEN current_sentence.kana IS NOT NULL AND current_sentence.romaji IS NOT NULL THEN 'reading_ready' ELSE 'translated' END;
+
+  UPDATE sentences
+  SET portuguese = normalized_translation,
+      status = next_status,
+      translation_source = 'ai_worker',
+      updated_at = NOW()
+  WHERE id = current_sentence.id AND user_id = current_sentence.user_id;
+
+  IF current_sentence.japanese_key IS NOT NULL THEN
+    UPDATE sentences
+    SET portuguese = normalized_translation,
+        status = CASE WHEN kana IS NOT NULL AND romaji IS NOT NULL THEN 'reading_ready' ELSE 'translated' END,
+        translation_source = 'cache',
+        updated_at = NOW()
+    WHERE source_id = current_sentence.source_id
+      AND user_id = current_sentence.user_id
+      AND japanese_key = current_sentence.japanese_key
+      AND portuguese IS NULL
+      AND status <> 'reviewed';
+  END IF;
+
+  PERFORM complete_ai_job(
+    p_job_id,
+    p_worker_id,
+    COALESCE(p_result, jsonb_build_object('translation', normalized_translation, 'sentence_id', current_sentence.id)),
+    p_raw_result,
+    p_input_tokens,
+    p_output_tokens,
+    p_cost_actual,
+    p_latency_ai_ms,
+    NULL
+  );
+
+  RETURN jsonb_build_object('translation', normalized_translation, 'sentence_id', current_sentence.id);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.apply_sentence_reading_result(
+  p_job_id UUID,
+  p_worker_id TEXT,
+  p_kana TEXT,
+  p_romaji TEXT,
+  p_result JSONB,
+  p_raw_result JSONB,
+  p_input_tokens INTEGER DEFAULT NULL,
+  p_output_tokens INTEGER DEFAULT NULL,
+  p_cost_actual NUMERIC DEFAULT NULL,
+  p_latency_ai_ms INTEGER DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  current_job ai_jobs;
+  current_sentence sentences;
+  normalized_kana TEXT;
+  normalized_romaji TEXT;
+  next_status TEXT;
+BEGIN
+  SELECT * INTO current_job
+  FROM ai_jobs
+  WHERE id = p_job_id AND worker_id = p_worker_id AND status = 'running'
+  FOR UPDATE;
+
+  IF current_job.id IS NULL THEN
+    RAISE EXCEPTION 'Job % is not running for worker %', p_job_id, p_worker_id;
+  END IF;
+  IF current_job.cancel_requested THEN
+    RAISE EXCEPTION 'Job cancelado durante o processamento.';
+  END IF;
+
+  SELECT * INTO current_sentence
+  FROM sentences
+  WHERE id = current_job.target_id AND user_id = current_job.user_id
+  FOR UPDATE;
+
+  IF current_sentence.id IS NULL THEN
+    RAISE EXCEPTION 'Frase nao encontrada para leitura.';
+  END IF;
+  IF current_sentence.status = 'reviewed' THEN
+    PERFORM complete_ai_job(
+      p_job_id,
+      p_worker_id,
+      jsonb_build_object('optimization', 'already_reviewed', 'sentence_id', current_sentence.id),
+      p_raw_result,
+      p_input_tokens,
+      p_output_tokens,
+      p_cost_actual,
+      p_latency_ai_ms,
+      NULL
+    );
+    RETURN jsonb_build_object('skipped', 'reviewed', 'sentence_id', current_sentence.id);
+  END IF;
+  IF current_job.payload ? 'sentence' AND current_job.payload->>'sentence' <> current_sentence.japanese THEN
+    UPDATE ai_jobs
+    SET status = 'obsolete',
+        error = 'A frase mudou depois da criacao do job.',
+        error_code = 'OBSOLETE_INPUT',
+        error_kind = 'permanent',
+        locked_by = NULL,
+        locked_until = NULL,
+        lease_expires_at = NULL,
+        worker_id = NULL,
+        completed_at = NOW()
+    WHERE id = p_job_id;
+    RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
+  END IF;
+
+  normalized_kana := NULLIF(BTRIM(p_kana), '');
+  normalized_romaji := LOWER(REGEXP_REPLACE(BTRIM(COALESCE(p_romaji, '')), '[[:space:]]+', ' ', 'g'));
+  IF normalized_kana IS NULL OR normalized_romaji IS NULL OR normalized_romaji = '' THEN
+    RAISE EXCEPTION 'Resultado invalido: kana ou romaji ausente.';
+  END IF;
+
+  next_status := CASE WHEN current_sentence.portuguese IS NOT NULL THEN 'reading_ready' ELSE current_sentence.status END;
+
+  UPDATE sentences
+  SET kana = normalized_kana,
+      romaji = normalized_romaji,
+      status = next_status,
+      reading_source = 'ai_worker',
+      updated_at = NOW()
+  WHERE id = current_sentence.id AND user_id = current_sentence.user_id;
+
+  PERFORM complete_ai_job(
+    p_job_id,
+    p_worker_id,
+    COALESCE(p_result, jsonb_build_object('kana', normalized_kana, 'romaji', normalized_romaji, 'sentence_id', current_sentence.id)),
+    p_raw_result,
+    p_input_tokens,
+    p_output_tokens,
+    p_cost_actual,
+    p_latency_ai_ms,
+    NULL
+  );
+
+  RETURN jsonb_build_object('kana', normalized_kana, 'romaji', normalized_romaji, 'status', next_status, 'sentence_id', current_sentence.id);
 END;
 $$;
 
@@ -648,8 +986,9 @@ DECLARE
   max_attempt_count INTEGER;
   next_retry TIMESTAMPTZ;
   terminal_status TEXT;
+  current_stage_id UUID;
 BEGIN
-  SELECT attempts, max_attempts INTO current_attempt, max_attempt_count
+  SELECT attempts, max_attempts, stage_id INTO current_attempt, max_attempt_count, current_stage_id
   FROM ai_jobs
   WHERE id = p_job_id AND worker_id = p_worker_id AND status = 'running'
   FOR UPDATE;
@@ -689,11 +1028,27 @@ BEGIN
   SET
     status = terminal_status,
     completed_at = NOW(),
-    duration_ms = EXTRACT(MILLISECONDS FROM (NOW() - started_at))::INTEGER,
+    duration_ms = (EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000)::INTEGER,
     error = p_error,
     error_code = p_error_code,
     error_kind = p_error_kind
   WHERE job_id = p_job_id AND attempt_number = current_attempt;
+
+  IF current_stage_id IS NOT NULL THEN
+    UPDATE processing_run_stages
+    SET
+      failed_jobs = failed_jobs + CASE WHEN terminal_status IN ('failed','needs_review') THEN 1 ELSE 0 END,
+      retry_jobs = retry_jobs + CASE WHEN terminal_status = 'retry_wait' THEN 1 ELSE 0 END,
+      status = CASE
+        WHEN terminal_status IN ('failed','needs_review') THEN 'needs_review'
+        ELSE status
+      END,
+      blocked_reason = CASE
+        WHEN terminal_status IN ('failed','needs_review') THEN p_error
+        ELSE blocked_reason
+      END
+    WHERE id = current_stage_id;
+  END IF;
 END;
 $$;
 
@@ -740,18 +1095,24 @@ $$;
 
 REVOKE ALL ON FUNCTION public.get_ai_queue_health() FROM public;
 REVOKE ALL ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID) FROM public;
+REVOKE ALL ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) FROM public;
 REVOKE ALL ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.complete_ai_job(UUID, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.apply_sentence_translation_result(UUID, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.apply_sentence_reading_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
 REVOKE ALL ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM public;
 REVOKE ALL ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) FROM public;
 GRANT EXECUTE ON FUNCTION public.get_ai_queue_health() TO service_role;
 GRANT EXECUTE ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.complete_ai_job(UUID, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.apply_sentence_translation_result(UUID, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.apply_sentence_reading_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
 GRANT EXECUTE ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) TO service_role;
 GRANT EXECUTE ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) TO service_role;
 
@@ -811,6 +1172,7 @@ CREATE INDEX idx_ai_jobs_queue ON ai_jobs(status, type, priority DESC, created_a
   WHERE status IN ('pending','retry_wait');
 CREATE INDEX idx_ai_jobs_user_status ON ai_jobs(user_id, status, type, created_at);
 CREATE INDEX idx_ai_jobs_run_status ON ai_jobs(run_id, status, type, created_at);
+CREATE INDEX idx_ai_jobs_stage_status ON ai_jobs(stage_id, status, type, created_at);
 CREATE INDEX idx_ai_jobs_expired_lease ON ai_jobs(status, lease_expires_at)
   WHERE status IN ('claimed','running') AND lease_expires_at IS NOT NULL;
 CREATE INDEX idx_ai_jobs_target ON ai_jobs(user_id, target_type, target_id, type, status);

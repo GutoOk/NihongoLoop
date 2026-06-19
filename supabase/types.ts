@@ -240,6 +240,7 @@ export interface AiJob {
   worker_id?: string | null;
   retry_at?: string | null;
   retry_count?: number;
+  cancel_requested?: boolean;
   last_heartbeat_at?: string | null;
 }
 

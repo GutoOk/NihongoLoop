@@ -28,12 +28,9 @@ jobs:
         run: npm ci
 
       - name: Secret scan
-        run: |
-          if grep -RInE "(VITE_MASTER_PASSWORD|SUPABASE_SERVICE_ROLE_KEY_PLACEHOLDER|GEMINI_API_KEY_PLACEHOLDER|@[0-9A-Za-z]{3,}|AIza[0-9A-Za-z_-]{20,})" \
-            --exclude-dir=.git --exclude-dir=node_modules --exclude=package-lock.json .; then
-            echo "Potential secret or placeholder found in tracked files."
-            exit 1
-          fi
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Lint
         run: npm run lint
@@ -116,6 +113,8 @@ jobs:
           exit 1
 
       - name: Verify worker health
+        env:
+          INTERNAL_HEALTH_TOKEN: ${{ secrets.INTERNAL_HEALTH_TOKEN }}
         run: |
           WORKER_URL="$(gcloud run services describe nihongo-loop-worker --region us-east1 --project ${{ secrets.GCP_PROJECT_ID }} --format='value(status.url)')"
-          curl -fsS "$WORKER_URL/api/health"
+          curl -fsS -H "x-internal-health-token: $INTERNAL_HEALTH_TOKEN" "$WORKER_URL/api/queue-health"
