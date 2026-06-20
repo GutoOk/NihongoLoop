@@ -47,6 +47,15 @@ jobs:
           VITE_E2E_DATA_MOCK: 'true'
         run: npm run test:e2e:mobile
 
+      - name: Validate frontend Supabase configuration
+        env:
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          test -n "$VITE_SUPABASE_ANON_KEY" || {
+            echo "Missing GitHub secret SUPABASE_ANON_KEY."
+            exit 1
+          }
+
       - name: Build application
         env:
           VITE_APP_VERSION: ${{ github.run_number }}-${{ github.sha }}
