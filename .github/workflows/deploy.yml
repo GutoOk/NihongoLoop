@@ -94,6 +94,12 @@ jobs:
           sed -i "s|APP_VERSION_PLACEHOLDER|$APP_VERSION|g" service.yaml clean_service.yaml
           gcloud run services replace service.yaml --region us-east1 --project ${{ secrets.GCP_PROJECT_ID }}
           gcloud run services replace clean_service.yaml --region us-east1 --project ${{ secrets.GCP_PROJECT_ID }}
+          DEPLOYER_SA="$(gcloud auth list --filter=status:ACTIVE --format='value(account)')"
+          gcloud run services add-iam-policy-binding nihongo-loop-worker \
+            --region us-east1 \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --member="serviceAccount:$DEPLOYER_SA" \
+            --role="roles/run.invoker"
 
       - name: Verify deployed web commit
         env:
@@ -118,7 +124,13 @@ jobs:
         run: |
           WORKER_URL="$(gcloud run services describe nihongo-loop-worker --region us-east1 --project ${{ secrets.GCP_PROJECT_ID }} --format='value(status.url)')"
           IDENTITY_TOKEN="$(gcloud auth print-identity-token --audiences="$WORKER_URL")"
-          curl -fsS \
+          RESPONSE_FILE="$(mktemp)"
+          HTTP_CODE="$(curl -sS -o "$RESPONSE_FILE" -w "%{http_code}" \
             -H "Authorization: Bearer $IDENTITY_TOKEN" \
             -H "x-internal-health-token: $INTERNAL_HEALTH_TOKEN" \
-            "$WORKER_URL/api/queue-health"
+            "$WORKER_URL/api/queue-health")"
+
+          echo "Worker health HTTP status: $HTTP_CODE"
+          cat "$RESPONSE_FILE"
+
+          test "$HTTP_CODE" = "200"
