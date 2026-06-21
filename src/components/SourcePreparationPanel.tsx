@@ -30,6 +30,7 @@ export default function SourcePreparationPanel({
   const [showGlobal, setShowGlobal] = useState(false);
   const [globalSummary, setGlobalSummary] = useState<AiQueueSummary | null>(null);
   const [lexicalSummary, setLexicalSummary] = useState<SourceLexicalIntegritySummary | null>(null);
+  const [lexicalWarning, setLexicalWarning] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -56,7 +57,19 @@ export default function SourcePreparationPanel({
           ? await AiJobRepository.getByRun(latestRun.id, 100)
           : await AiJobRepository.getBySource(sourceId);
       const latestGlobalSummary = showGlobal ? await AiJobRepository.getGlobalSummary() : null;
-      const latestLexicalSummary = showGlobal ? null : await ProcessingRunRepository.getSourceLexicalIntegritySummary(sourceId);
+      let latestLexicalSummary: SourceLexicalIntegritySummary | null = null;
+      let latestLexicalWarning: string | null = null;
+      if (!showGlobal) {
+        try {
+          latestLexicalSummary = await ProcessingRunRepository.getSourceLexicalIntegritySummary(sourceId);
+        } catch (error: any) {
+          if (String(error?.message || error).includes('42883')) {
+            latestLexicalWarning = 'Integridade lexical indisponivel. Aplique migration v26.';
+          } else {
+            throw error;
+          }
+        }
+      }
       const signature = JSON.stringify({
         run: latestRun ? {
           status: latestRun.status,
@@ -71,6 +84,7 @@ export default function SourcePreparationPanel({
       setRun(latestRun);
       setGlobalSummary(latestGlobalSummary);
       setLexicalSummary(latestLexicalSummary);
+      setLexicalWarning(latestLexicalWarning);
       setJobs(sourceJobs);
       setLoadError(null);
     } catch (error: any) {
@@ -256,6 +270,13 @@ export default function SourcePreparationPanel({
                 <Metric label="AI empty" value={lexicalSummary.ai_empty_sentences} />
               </div>
             </Panel>
+          )}
+
+          {lexicalWarning && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+              {lexicalWarning}
+            </div>
           )}
 
           <Panel

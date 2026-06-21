@@ -1,13 +1,31 @@
 BEGIN;
 
-CREATE OR REPLACE FUNCTION public.digest(data TEXT, type TEXT)
-RETURNS BYTEA
-LANGUAGE sql
-IMMUTABLE
-STRICT
-SET search_path = public, extensions
-AS $$
-  SELECT extensions.digest(data::bytea, type);
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+DO $$
+DECLARE
+  v_pgcrypto_schema TEXT;
+BEGIN
+  SELECT n.nspname
+    INTO v_pgcrypto_schema
+  FROM pg_extension e
+  JOIN pg_namespace n ON n.oid = e.extnamespace
+  WHERE e.extname = 'pgcrypto';
+
+  IF v_pgcrypto_schema IS NULL THEN
+    RAISE EXCEPTION 'Extensao pgcrypto nao encontrada.';
+  END IF;
+
+  EXECUTE format(
+    'CREATE OR REPLACE FUNCTION public.digest(data TEXT, type TEXT)
+     RETURNS BYTEA
+     LANGUAGE sql
+     IMMUTABLE
+     STRICT
+     AS %L',
+    format('SELECT %I.digest($1::bytea, $2)', v_pgcrypto_schema)
+  );
+END;
 $$;
 
 DO $$
@@ -80,7 +98,8 @@ BEGIN
       locked_until = NULL,
       lease_expires_at = NULL,
       worker_id = NULL,
-      completed_at = NOW()
+      completed_at = NOW(),
+      updated_at = NOW()
   WHERE id = p_job_id;
 
   UPDATE ai_job_attempts
@@ -90,11 +109,14 @@ BEGIN
       error = p_error,
       error_code = 'INVALID_LEXICAL_OFFSETS',
       error_kind = 'invalid_response'
-  WHERE job_id = p_job_id AND attempt_number = current_attempt;
+  WHERE job_id = p_job_id
+    AND attempt_number = current_attempt
+    AND completed_at IS NULL;
 
   IF current_stage_id IS NOT NULL THEN
     UPDATE processing_run_stages
-    SET failed_jobs = failed_jobs + 1,
+    SET needs_review_jobs = needs_review_jobs + 1,
+        review_jobs = review_jobs + 1,
         status = 'needs_review',
         blocked_reason = p_error
     WHERE id = current_stage_id;
@@ -158,19 +180,29 @@ AS $$
       AND SUBSTRING(s.japanese FROM st.start_index + 1 FOR st.end_index - st.start_index) = st.surface
     )
     GROUP BY st.sentence_id
+  ),
+  terminal_offset_jobs AS (
+    SELECT DISTINCT target_id::uuid AS sentence_id
+    FROM ai_jobs
+    WHERE user_id = auth.uid()::text
+      AND type = 'detect_sentence_terms'
+      AND target_type = 'sentence'
+      AND status = 'needs_review'
+      AND error_code = 'INVALID_LEXICAL_OFFSETS'
   )
   SELECT jsonb_build_object(
     'total_sentences', COUNT(*),
     'reviewed_sentences', COUNT(*) FILTER (WHERE s.status = 'reviewed'),
-    'invalid_offset_sentences', COUNT(*) FILTER (WHERE it.invalid_count > 0),
+    'invalid_offset_sentences', COUNT(*) FILTER (WHERE it.invalid_count > 0 OR toj.sentence_id IS NOT NULL),
     'invalid_offset_terms', COALESCE(SUM(it.invalid_count), 0),
     'without_terms_sentences', COUNT(*) FILTER (WHERE s.status <> 'reviewed' AND s.terms_source = 'ai' AND NOT EXISTS (SELECT 1 FROM sentence_terms st WHERE st.sentence_id = s.id)),
     'ai_empty_sentences', COUNT(*) FILTER (WHERE s.status <> 'reviewed' AND s.terms_source = 'ai_empty'),
-    'eligible_invalid_only', COUNT(*) FILTER (WHERE s.status <> 'reviewed' AND it.invalid_count > 0),
+    'eligible_invalid_only', COUNT(*) FILTER (WHERE s.status <> 'reviewed' AND (it.invalid_count > 0 OR toj.sentence_id IS NOT NULL)),
     'eligible_all_non_reviewed', COUNT(*) FILTER (WHERE s.status <> 'reviewed')
   )
   FROM scoped_sentences s
-  LEFT JOIN invalid_terms it ON it.sentence_id = s.id;
+  LEFT JOIN invalid_terms it ON it.sentence_id = s.id
+  LEFT JOIN terminal_offset_jobs toj ON toj.sentence_id = s.id;
 $$;
 
 CREATE OR REPLACE FUNCTION public.reset_source_lexical_analysis(p_source_id UUID, p_mode TEXT)
@@ -209,7 +241,72 @@ BEGIN
             AND SUBSTRING(s.japanese FROM st.start_index + 1 FOR st.end_index - st.start_index) = st.surface
           )
       )
+      OR EXISTS (
+        SELECT 1
+        FROM ai_jobs j
+        WHERE j.user_id = auth.uid()::text
+          AND j.type = 'detect_sentence_terms'
+          AND j.target_type = 'sentence'
+          AND j.target_id = s.id
+          AND j.status = 'needs_review'
+          AND j.error_code = 'INVALID_LEXICAL_OFFSETS'
+      )
     );
+
+  CREATE TEMP TABLE tmp_reset_runs ON COMMIT DROP AS
+  SELECT DISTINCT run_id
+  FROM ai_jobs j
+  JOIN tmp_reset_sentences trs ON trs.id = j.target_id
+  WHERE j.user_id = auth.uid()::text
+    AND j.type = 'detect_sentence_terms'
+    AND j.target_type = 'sentence'
+    AND j.run_id IS NOT NULL;
+
+  UPDATE ai_jobs j
+  SET status = 'cancelled',
+      error = 'MANUAL_LEXICAL_RESET',
+      error_code = 'MANUAL_LEXICAL_RESET',
+      retry_at = NULL,
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      updated_at = NOW()
+  FROM tmp_reset_sentences trs
+  WHERE j.user_id = auth.uid()::text
+    AND j.type = 'detect_sentence_terms'
+    AND j.target_type = 'sentence'
+    AND j.target_id = trs.id
+    AND j.status IN ('pending','claimed','retry_wait');
+
+  UPDATE ai_jobs j
+  SET cancel_requested = TRUE,
+      error = 'MANUAL_LEXICAL_RESET',
+      error_code = 'MANUAL_LEXICAL_RESET',
+      updated_at = NOW()
+  FROM tmp_reset_sentences trs
+  WHERE j.user_id = auth.uid()::text
+    AND j.type = 'detect_sentence_terms'
+    AND j.target_type = 'sentence'
+    AND j.target_id = trs.id
+    AND j.status = 'running';
+
+  UPDATE ai_jobs j
+  SET status = 'obsolete',
+      error = 'MANUAL_LEXICAL_RESET',
+      error_code = 'MANUAL_LEXICAL_RESET',
+      retry_at = NULL,
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      updated_at = NOW()
+  FROM tmp_reset_sentences trs
+  WHERE j.user_id = auth.uid()::text
+    AND j.type = 'detect_sentence_terms'
+    AND j.target_type = 'sentence'
+    AND j.target_id = trs.id
+    AND j.status IN ('needs_review','failed','error');
 
   DELETE FROM sentence_terms st
   USING tmp_reset_sentences trs
@@ -224,6 +321,38 @@ BEGIN
     AND s.status <> 'reviewed';
 
   GET DIAGNOSTICS reset_count = ROW_COUNT;
+
+  UPDATE processing_run_stages s
+  SET status = 'completed',
+      blocked_reason = NULL,
+      needs_review_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'needs_review'), 0),
+      failed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'failed'), 0),
+      retry_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'retry_wait'), 0),
+      updated_at = NOW()
+  WHERE s.run_id IN (SELECT run_id FROM tmp_reset_runs)
+    AND s.status = 'needs_review'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM ai_jobs j
+      WHERE j.stage_id = s.id
+        AND j.status IN ('needs_review','failed','error')
+    );
+
+  UPDATE processing_runs pr
+  SET status = 'running',
+      current_step = 'Analise lexical redefinida; prepare/retome a fonte.',
+      updated_at = NOW()
+  WHERE pr.id IN (SELECT run_id FROM tmp_reset_runs)
+    AND pr.status = 'needs_review'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM ai_jobs j
+      WHERE j.run_id = pr.id
+        AND j.status IN ('needs_review','failed','error')
+    );
+
+  PERFORM refresh_processing_run_snapshot(run_id)
+  FROM tmp_reset_runs;
 
   RETURN jsonb_build_object('reset_sentence_count', reset_count, 'mode', p_mode, 'source_id', p_source_id);
 END;

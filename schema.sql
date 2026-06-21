@@ -388,7 +388,6 @@ AS $$
     SELECT 1 FROM public.app_admins aa WHERE aa.user_id = auth.uid()
   );
 $$;
-
 REVOKE ALL ON FUNCTION public.is_app_admin() FROM public;
 GRANT EXECUTE ON FUNCTION public.is_app_admin() TO authenticated;
 
@@ -3160,149 +3159,35 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.get_ai_queue_health() FROM public;
-REVOKE ALL ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID, INTEGER, JSONB) FROM public;
-REVOKE ALL ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) FROM public;
-REVOKE ALL ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.enqueue_sentence_ai_job(UUID, TEXT, TEXT, TEXT, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.cancel_ai_jobs_by_run(UUID, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.cancel_ai_jobs_by_source(UUID, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.cancel_ai_job(UUID, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) FROM public;
-REVOKE ALL ON FUNCTION public.create_or_resume_source_run(UUID, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.advance_processing_run(UUID) FROM public;
-REVOKE ALL ON FUNCTION public.cancel_processing_run(UUID) FROM public;
-REVOKE ALL ON FUNCTION public.retry_failed_run_jobs(UUID) FROM public;
-REVOKE ALL ON FUNCTION public.mark_ai_job_obsolete(UUID, TEXT, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.build_ai_job_current_target_hash(ai_jobs) FROM public;
-REVOKE ALL ON FUNCTION public.validate_ai_job_for_execution(UUID, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.cancel_running_ai_job(UUID, TEXT, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) FROM public;
-REVOKE ALL ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) FROM public;
-REVOKE ALL ON FUNCTION public.refresh_processing_run_snapshot(UUID) FROM public;
-REVOKE ALL ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) FROM public;
-REVOKE ALL ON FUNCTION public.complete_ai_job(UUID, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER, INTEGER) FROM public;
-REVOKE ALL ON FUNCTION public.apply_sentence_translation_result(UUID, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
-REVOKE ALL ON FUNCTION public.apply_sentence_reading_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
-REVOKE ALL ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
-REVOKE ALL ON FUNCTION public.apply_dictionary_enrichment_result(UUID, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
-REVOKE ALL ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM public;
-REVOKE ALL ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) FROM public;
-REVOKE ALL ON FUNCTION public.verify_ai_queue_reset() FROM public;
-REVOKE ALL ON FUNCTION public.bootstrap_app_admin(TEXT) FROM public;
-GRANT EXECUTE ON FUNCTION public.get_ai_queue_health() TO service_role;
-GRANT EXECUTE ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID, INTEGER, JSONB) TO service_role;
-GRANT EXECUTE ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) TO service_role;
-GRANT EXECUTE ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) TO service_role;
-GRANT EXECUTE ON FUNCTION public.enqueue_sentence_ai_job(UUID, TEXT, TEXT, TEXT, TEXT) TO service_role;
-GRANT EXECUTE ON FUNCTION public.cancel_ai_jobs_by_run(UUID, TEXT) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.cancel_ai_jobs_by_source(UUID, TEXT) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.cancel_ai_job(UUID, TEXT) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.create_or_resume_source_run(UUID, TEXT) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.advance_processing_run(UUID) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.cancel_processing_run(UUID) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.retry_failed_run_jobs(UUID) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.mark_ai_job_obsolete(UUID, TEXT, TEXT) TO service_role;
-GRANT EXECUTE ON FUNCTION public.build_ai_job_current_target_hash(ai_jobs) TO service_role;
-GRANT EXECUTE ON FUNCTION public.validate_ai_job_for_execution(UUID, TEXT) TO service_role;
-GRANT EXECUTE ON FUNCTION public.cancel_running_ai_job(UUID, TEXT, TEXT) TO service_role;
-GRANT EXECUTE ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) TO service_role;
-GRANT EXECUTE ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) TO service_role;
-GRANT EXECUTE ON FUNCTION public.refresh_processing_run_snapshot(UUID) TO service_role;
-GRANT EXECUTE ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) TO service_role;
-GRANT EXECUTE ON FUNCTION public.complete_ai_job(UUID, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER, INTEGER) TO service_role;
-GRANT EXECUTE ON FUNCTION public.apply_sentence_translation_result(UUID, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
-GRANT EXECUTE ON FUNCTION public.apply_sentence_reading_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
-GRANT EXECUTE ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
-GRANT EXECUTE ON FUNCTION public.apply_dictionary_enrichment_result(UUID, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
-GRANT EXECUTE ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) TO service_role;
-GRANT EXECUTE ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) TO service_role;
-GRANT EXECUTE ON FUNCTION public.verify_ai_queue_reset() TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.bootstrap_app_admin(TEXT) TO service_role;
-
-ALTER TABLE app_admins ENABLE ROW LEVEL SECURITY;
-ALTER TABLE app_admins NO FORCE ROW LEVEL SECURITY;
-REVOKE ALL ON app_admins FROM anon;
-REVOKE ALL ON app_admins FROM authenticated;
-
-DO $$
-DECLARE
-  tbl TEXT;
-BEGIN
-  FOREACH tbl IN ARRAY ARRAY[
-    'sources', 'sentences', 'processing_runs', 'dictionary_entries',
-    'dictionary_forms', 'dictionary_senses', 'sentence_terms',
-    'processing_run_stages', 'sentence_progress', 'dictionary_progress', 'ai_jobs',
-    'ai_job_attempts', 'ai_model_prices', 'schema_versions',
-    'study_sessions', 'study_session_items'
-  ]
-  LOOP
-    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', tbl);
-    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', tbl);
-    EXECUTE format('REVOKE ALL ON %I FROM anon', tbl);
-    EXECUTE format('REVOKE ALL ON %I FROM authenticated', tbl);
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO authenticated', tbl);
-    EXECUTE format('CREATE POLICY "app admin select %1$I" ON %1$I FOR SELECT TO authenticated USING (public.is_app_admin())', tbl);
-    EXECUTE format('CREATE POLICY "app admin insert %1$I" ON %1$I FOR INSERT TO authenticated WITH CHECK (public.is_app_admin())', tbl);
-    EXECUTE format('CREATE POLICY "app admin update %1$I" ON %1$I FOR UPDATE TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin())', tbl);
-    EXECUTE format('CREATE POLICY "app admin delete %1$I" ON %1$I FOR DELETE TO authenticated USING (public.is_app_admin())', tbl);
-  END LOOP;
-END $$;
-
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
-
-CREATE INDEX idx_sources_user_id ON sources(user_id);
-CREATE INDEX idx_sentences_user_source ON sentences(user_id, source_id, order_index);
-CREATE INDEX idx_sentences_source_status ON sentences(source_id, status, order_index);
-CREATE INDEX idx_sentences_japanese_key ON sentences(user_id, japanese_key);
-CREATE INDEX idx_processing_runs_source ON processing_runs(user_id, source_id, status);
-CREATE INDEX idx_processing_run_stages_run ON processing_run_stages(run_id, stage, status);
-CREATE INDEX idx_dictionary_entries_user_key ON dictionary_entries(user_id, unique_key);
-CREATE INDEX idx_dictionary_entries_lemma ON dictionary_entries(user_id, lemma);
-CREATE INDEX idx_dictionary_forms_entry ON dictionary_forms(dictionary_entry_id);
-CREATE INDEX idx_dictionary_forms_form ON dictionary_forms(user_id, form);
-CREATE INDEX idx_dictionary_senses_entry ON dictionary_senses(dictionary_entry_id, sense_order);
-CREATE INDEX idx_sentence_terms_sentence ON sentence_terms(sentence_id, start_index);
-CREATE INDEX idx_sentence_terms_form ON sentence_terms(dictionary_form_id);
-CREATE INDEX idx_sentence_terms_sense ON sentence_terms(dictionary_sense_id);
-CREATE INDEX idx_sentence_progress_sentence ON sentence_progress(sentence_id);
-CREATE INDEX idx_dictionary_progress_entry ON dictionary_progress(dictionary_entry_id);
-CREATE UNIQUE INDEX uk_ai_jobs_active_input ON ai_jobs(user_id, type, target_type, target_id, input_hash)
-  WHERE status IN ('pending','claimed','running','retry_wait');
-CREATE INDEX idx_ai_jobs_queue ON ai_jobs(status, type, priority DESC, created_at)
-  WHERE status IN ('pending','retry_wait');
-CREATE INDEX idx_ai_jobs_user_status ON ai_jobs(user_id, status, type, created_at);
-CREATE INDEX idx_ai_jobs_run_status ON ai_jobs(run_id, status, type, created_at);
-CREATE INDEX idx_ai_jobs_stage_status ON ai_jobs(stage_id, status, type, created_at);
-CREATE INDEX idx_ai_jobs_expired_lease ON ai_jobs(status, lease_expires_at)
-  WHERE status IN ('claimed','running') AND lease_expires_at IS NOT NULL;
-CREATE INDEX idx_ai_jobs_target ON ai_jobs(user_id, target_type, target_id, type, status);
-CREATE UNIQUE INDEX idx_ai_jobs_active_input_unique
-  ON ai_jobs(user_id, type, target_type, target_id, input_hash)
-  WHERE status IN ('pending','claimed','running','retry_wait','needs_review');
-CREATE INDEX idx_ai_job_attempts_job ON ai_job_attempts(job_id, attempt_number);
-CREATE INDEX idx_study_session_items_session ON study_session_items(study_session_id, order_index);
-
-COMMIT;
 
 -- Canonical lexical integrity and unicode RPCs from migration v26.
 
-CREATE OR REPLACE FUNCTION public.digest(data TEXT, type TEXT)
-RETURNS BYTEA
-LANGUAGE sql
-IMMUTABLE
-STRICT
-SET search_path = public, extensions
-AS $$
-  SELECT extensions.digest(data::bytea, type);
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+DO $$
+DECLARE
+  v_pgcrypto_schema TEXT;
+BEGIN
+  SELECT n.nspname
+    INTO v_pgcrypto_schema
+  FROM pg_extension e
+  JOIN pg_namespace n ON n.oid = e.extnamespace
+  WHERE e.extname = 'pgcrypto';
+
+  IF v_pgcrypto_schema IS NULL THEN
+    RAISE EXCEPTION 'Extensao pgcrypto nao encontrada.';
+  END IF;
+
+  EXECUTE format(
+    'CREATE OR REPLACE FUNCTION public.digest(data TEXT, type TEXT)
+     RETURNS BYTEA
+     LANGUAGE sql
+     IMMUTABLE
+     STRICT
+     AS %L',
+    format('SELECT %I.digest($1::bytea, $2)', v_pgcrypto_schema)
+  );
+END;
 $$;
 
 DO $$
@@ -3375,7 +3260,8 @@ BEGIN
       locked_until = NULL,
       lease_expires_at = NULL,
       worker_id = NULL,
-      completed_at = NOW()
+      completed_at = NOW(),
+      updated_at = NOW()
   WHERE id = p_job_id;
 
   UPDATE ai_job_attempts
@@ -3385,11 +3271,14 @@ BEGIN
       error = p_error,
       error_code = 'INVALID_LEXICAL_OFFSETS',
       error_kind = 'invalid_response'
-  WHERE job_id = p_job_id AND attempt_number = current_attempt;
+  WHERE job_id = p_job_id
+    AND attempt_number = current_attempt
+    AND completed_at IS NULL;
 
   IF current_stage_id IS NOT NULL THEN
     UPDATE processing_run_stages
-    SET failed_jobs = failed_jobs + 1,
+    SET needs_review_jobs = needs_review_jobs + 1,
+        review_jobs = review_jobs + 1,
         status = 'needs_review',
         blocked_reason = p_error
     WHERE id = current_stage_id;
@@ -3453,19 +3342,29 @@ AS $$
       AND SUBSTRING(s.japanese FROM st.start_index + 1 FOR st.end_index - st.start_index) = st.surface
     )
     GROUP BY st.sentence_id
+  ),
+  terminal_offset_jobs AS (
+    SELECT DISTINCT target_id::uuid AS sentence_id
+    FROM ai_jobs
+    WHERE user_id = auth.uid()::text
+      AND type = 'detect_sentence_terms'
+      AND target_type = 'sentence'
+      AND status = 'needs_review'
+      AND error_code = 'INVALID_LEXICAL_OFFSETS'
   )
   SELECT jsonb_build_object(
     'total_sentences', COUNT(*),
     'reviewed_sentences', COUNT(*) FILTER (WHERE s.status = 'reviewed'),
-    'invalid_offset_sentences', COUNT(*) FILTER (WHERE it.invalid_count > 0),
+    'invalid_offset_sentences', COUNT(*) FILTER (WHERE it.invalid_count > 0 OR toj.sentence_id IS NOT NULL),
     'invalid_offset_terms', COALESCE(SUM(it.invalid_count), 0),
     'without_terms_sentences', COUNT(*) FILTER (WHERE s.status <> 'reviewed' AND s.terms_source = 'ai' AND NOT EXISTS (SELECT 1 FROM sentence_terms st WHERE st.sentence_id = s.id)),
     'ai_empty_sentences', COUNT(*) FILTER (WHERE s.status <> 'reviewed' AND s.terms_source = 'ai_empty'),
-    'eligible_invalid_only', COUNT(*) FILTER (WHERE s.status <> 'reviewed' AND it.invalid_count > 0),
+    'eligible_invalid_only', COUNT(*) FILTER (WHERE s.status <> 'reviewed' AND (it.invalid_count > 0 OR toj.sentence_id IS NOT NULL)),
     'eligible_all_non_reviewed', COUNT(*) FILTER (WHERE s.status <> 'reviewed')
   )
   FROM scoped_sentences s
-  LEFT JOIN invalid_terms it ON it.sentence_id = s.id;
+  LEFT JOIN invalid_terms it ON it.sentence_id = s.id
+  LEFT JOIN terminal_offset_jobs toj ON toj.sentence_id = s.id;
 $$;
 
 CREATE OR REPLACE FUNCTION public.reset_source_lexical_analysis(p_source_id UUID, p_mode TEXT)
@@ -3504,7 +3403,72 @@ BEGIN
             AND SUBSTRING(s.japanese FROM st.start_index + 1 FOR st.end_index - st.start_index) = st.surface
           )
       )
+      OR EXISTS (
+        SELECT 1
+        FROM ai_jobs j
+        WHERE j.user_id = auth.uid()::text
+          AND j.type = 'detect_sentence_terms'
+          AND j.target_type = 'sentence'
+          AND j.target_id = s.id
+          AND j.status = 'needs_review'
+          AND j.error_code = 'INVALID_LEXICAL_OFFSETS'
+      )
     );
+
+  CREATE TEMP TABLE tmp_reset_runs ON COMMIT DROP AS
+  SELECT DISTINCT run_id
+  FROM ai_jobs j
+  JOIN tmp_reset_sentences trs ON trs.id = j.target_id
+  WHERE j.user_id = auth.uid()::text
+    AND j.type = 'detect_sentence_terms'
+    AND j.target_type = 'sentence'
+    AND j.run_id IS NOT NULL;
+
+  UPDATE ai_jobs j
+  SET status = 'cancelled',
+      error = 'MANUAL_LEXICAL_RESET',
+      error_code = 'MANUAL_LEXICAL_RESET',
+      retry_at = NULL,
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      updated_at = NOW()
+  FROM tmp_reset_sentences trs
+  WHERE j.user_id = auth.uid()::text
+    AND j.type = 'detect_sentence_terms'
+    AND j.target_type = 'sentence'
+    AND j.target_id = trs.id
+    AND j.status IN ('pending','claimed','retry_wait');
+
+  UPDATE ai_jobs j
+  SET cancel_requested = TRUE,
+      error = 'MANUAL_LEXICAL_RESET',
+      error_code = 'MANUAL_LEXICAL_RESET',
+      updated_at = NOW()
+  FROM tmp_reset_sentences trs
+  WHERE j.user_id = auth.uid()::text
+    AND j.type = 'detect_sentence_terms'
+    AND j.target_type = 'sentence'
+    AND j.target_id = trs.id
+    AND j.status = 'running';
+
+  UPDATE ai_jobs j
+  SET status = 'obsolete',
+      error = 'MANUAL_LEXICAL_RESET',
+      error_code = 'MANUAL_LEXICAL_RESET',
+      retry_at = NULL,
+      locked_by = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      worker_id = NULL,
+      updated_at = NOW()
+  FROM tmp_reset_sentences trs
+  WHERE j.user_id = auth.uid()::text
+    AND j.type = 'detect_sentence_terms'
+    AND j.target_type = 'sentence'
+    AND j.target_id = trs.id
+    AND j.status IN ('needs_review','failed','error');
 
   DELETE FROM sentence_terms st
   USING tmp_reset_sentences trs
@@ -3519,6 +3483,38 @@ BEGIN
     AND s.status <> 'reviewed';
 
   GET DIAGNOSTICS reset_count = ROW_COUNT;
+
+  UPDATE processing_run_stages s
+  SET status = 'completed',
+      blocked_reason = NULL,
+      needs_review_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'needs_review'), 0),
+      failed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'failed'), 0),
+      retry_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'retry_wait'), 0),
+      updated_at = NOW()
+  WHERE s.run_id IN (SELECT run_id FROM tmp_reset_runs)
+    AND s.status = 'needs_review'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM ai_jobs j
+      WHERE j.stage_id = s.id
+        AND j.status IN ('needs_review','failed','error')
+    );
+
+  UPDATE processing_runs pr
+  SET status = 'running',
+      current_step = 'Analise lexical redefinida; prepare/retome a fonte.',
+      updated_at = NOW()
+  WHERE pr.id IN (SELECT run_id FROM tmp_reset_runs)
+    AND pr.status = 'needs_review'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM ai_jobs j
+      WHERE j.run_id = pr.id
+        AND j.status IN ('needs_review','failed','error')
+    );
+
+  PERFORM refresh_processing_run_snapshot(run_id)
+  FROM tmp_reset_runs;
 
   RETURN jsonb_build_object('reset_sentence_count', reset_count, 'mode', p_mode, 'source_id', p_source_id);
 END;
@@ -3756,3 +3752,138 @@ GRANT EXECUTE ON FUNCTION public.get_ai_queue_summary() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_source_lexical_integrity_summary(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.reset_source_lexical_analysis(UUID, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
+
+
+REVOKE ALL ON FUNCTION public.get_ai_queue_health() FROM public;
+REVOKE ALL ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID, INTEGER, JSONB) FROM public;
+REVOKE ALL ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) FROM public;
+REVOKE ALL ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.enqueue_sentence_ai_job(UUID, TEXT, TEXT, TEXT, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_ai_jobs_by_run(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_ai_jobs_by_source(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_ai_job(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) FROM public;
+REVOKE ALL ON FUNCTION public.create_or_resume_source_run(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.advance_processing_run(UUID) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_processing_run(UUID) FROM public;
+REVOKE ALL ON FUNCTION public.retry_failed_run_jobs(UUID) FROM public;
+REVOKE ALL ON FUNCTION public.mark_ai_job_obsolete(UUID, TEXT, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.build_ai_job_current_target_hash(ai_jobs) FROM public;
+REVOKE ALL ON FUNCTION public.validate_ai_job_for_execution(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.cancel_running_ai_job(UUID, TEXT, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.refresh_processing_run_snapshot(UUID) FROM public;
+REVOKE ALL ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.complete_ai_job(UUID, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.apply_sentence_translation_result(UUID, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.apply_sentence_reading_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.apply_dictionary_enrichment_result(UUID, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) FROM public;
+REVOKE ALL ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.verify_ai_queue_reset() FROM public;
+REVOKE ALL ON FUNCTION public.bootstrap_app_admin(TEXT) FROM public;
+GRANT EXECUTE ON FUNCTION public.get_ai_queue_health() TO service_role;
+GRANT EXECUTE ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID, INTEGER, JSONB) TO service_role;
+GRANT EXECUTE ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) TO service_role;
+GRANT EXECUTE ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.enqueue_dictionary_enrichment_jobs(UUID[], TEXT, TEXT, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.enqueue_sentence_ai_job(UUID, TEXT, TEXT, TEXT, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_ai_jobs_by_run(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_ai_jobs_by_source(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_ai_job(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.create_or_resume_source_run(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.advance_processing_run(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_processing_run(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.retry_failed_run_jobs(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.mark_ai_job_obsolete(UUID, TEXT, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.build_ai_job_current_target_hash(ai_jobs) TO service_role;
+GRANT EXECUTE ON FUNCTION public.validate_ai_job_for_execution(UUID, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.cancel_running_ai_job(UUID, TEXT, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.release_claimed_ai_job(UUID, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION public.heartbeat_ai_job(UUID, TEXT, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.refresh_processing_run_snapshot(UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION public.start_claimed_ai_job(UUID, TEXT, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.complete_ai_job(UUID, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.apply_sentence_translation_result(UUID, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.apply_sentence_reading_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TEXT, TEXT, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.apply_dictionary_enrichment_result(UUID, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.fail_ai_job_for_retry(UUID, TEXT, TEXT, TEXT, TEXT, TIMESTAMPTZ) TO service_role;
+GRANT EXECUTE ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION public.verify_ai_queue_reset() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.bootstrap_app_admin(TEXT) TO service_role;
+
+ALTER TABLE app_admins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_admins NO FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON app_admins FROM anon;
+REVOKE ALL ON app_admins FROM authenticated;
+
+DO $$
+DECLARE
+  tbl TEXT;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY[
+    'sources', 'sentences', 'processing_runs', 'dictionary_entries',
+    'dictionary_forms', 'dictionary_senses', 'sentence_terms',
+    'processing_run_stages', 'sentence_progress', 'dictionary_progress', 'ai_jobs',
+    'ai_job_attempts', 'ai_model_prices', 'schema_versions',
+    'study_sessions', 'study_session_items'
+  ]
+  LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', tbl);
+    EXECUTE format('REVOKE ALL ON %I FROM anon', tbl);
+    EXECUTE format('REVOKE ALL ON %I FROM authenticated', tbl);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO authenticated', tbl);
+    EXECUTE format('CREATE POLICY "app admin select %1$I" ON %1$I FOR SELECT TO authenticated USING (public.is_app_admin())', tbl);
+    EXECUTE format('CREATE POLICY "app admin insert %1$I" ON %1$I FOR INSERT TO authenticated WITH CHECK (public.is_app_admin())', tbl);
+    EXECUTE format('CREATE POLICY "app admin update %1$I" ON %1$I FOR UPDATE TO authenticated USING (public.is_app_admin()) WITH CHECK (public.is_app_admin())', tbl);
+    EXECUTE format('CREATE POLICY "app admin delete %1$I" ON %1$I FOR DELETE TO authenticated USING (public.is_app_admin())', tbl);
+  END LOOP;
+END $$;
+
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
+
+CREATE INDEX idx_sources_user_id ON sources(user_id);
+CREATE INDEX idx_sentences_user_source ON sentences(user_id, source_id, order_index);
+CREATE INDEX idx_sentences_source_status ON sentences(source_id, status, order_index);
+CREATE INDEX idx_sentences_japanese_key ON sentences(user_id, japanese_key);
+CREATE INDEX idx_processing_runs_source ON processing_runs(user_id, source_id, status);
+CREATE INDEX idx_processing_run_stages_run ON processing_run_stages(run_id, stage, status);
+CREATE INDEX idx_dictionary_entries_user_key ON dictionary_entries(user_id, unique_key);
+CREATE INDEX idx_dictionary_entries_lemma ON dictionary_entries(user_id, lemma);
+CREATE INDEX idx_dictionary_forms_entry ON dictionary_forms(dictionary_entry_id);
+CREATE INDEX idx_dictionary_forms_form ON dictionary_forms(user_id, form);
+CREATE INDEX idx_dictionary_senses_entry ON dictionary_senses(dictionary_entry_id, sense_order);
+CREATE INDEX idx_sentence_terms_sentence ON sentence_terms(sentence_id, start_index);
+CREATE INDEX idx_sentence_terms_form ON sentence_terms(dictionary_form_id);
+CREATE INDEX idx_sentence_terms_sense ON sentence_terms(dictionary_sense_id);
+CREATE INDEX idx_sentence_progress_sentence ON sentence_progress(sentence_id);
+CREATE INDEX idx_dictionary_progress_entry ON dictionary_progress(dictionary_entry_id);
+CREATE UNIQUE INDEX uk_ai_jobs_active_input ON ai_jobs(user_id, type, target_type, target_id, input_hash)
+  WHERE status IN ('pending','claimed','running','retry_wait');
+CREATE INDEX idx_ai_jobs_queue ON ai_jobs(status, type, priority DESC, created_at)
+  WHERE status IN ('pending','retry_wait');
+CREATE INDEX idx_ai_jobs_user_status ON ai_jobs(user_id, status, type, created_at);
+CREATE INDEX idx_ai_jobs_run_status ON ai_jobs(run_id, status, type, created_at);
+CREATE INDEX idx_ai_jobs_stage_status ON ai_jobs(stage_id, status, type, created_at);
+CREATE INDEX idx_ai_jobs_expired_lease ON ai_jobs(status, lease_expires_at)
+  WHERE status IN ('claimed','running') AND lease_expires_at IS NOT NULL;
+CREATE INDEX idx_ai_jobs_target ON ai_jobs(user_id, target_type, target_id, type, status);
+CREATE UNIQUE INDEX idx_ai_jobs_active_input_unique
+  ON ai_jobs(user_id, type, target_type, target_id, input_hash)
+  WHERE status IN ('pending','claimed','running','retry_wait','needs_review');
+CREATE INDEX idx_ai_job_attempts_job ON ai_job_attempts(job_id, attempt_number);
+CREATE INDEX idx_study_session_items_session ON study_session_items(study_session_id, order_index);
+
+
+COMMIT;

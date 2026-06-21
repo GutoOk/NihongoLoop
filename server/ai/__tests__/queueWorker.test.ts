@@ -147,6 +147,23 @@ describe('queueWorker persisted execution contract', () => {
     expect(lexicalIntegrityMigration).not.toContain('DELETE FROM dictionary_senses');
   });
 
+  it('lexical reset invalidates selected lexical jobs without deleting history', () => {
+    expect(lexicalIntegrityMigration).toContain("j.status IN ('pending','claimed','retry_wait')");
+    expect(lexicalIntegrityMigration).toContain("SET status = 'cancelled'");
+    expect(lexicalIntegrityMigration).toContain("j.status = 'running'");
+    expect(lexicalIntegrityMigration).toContain("SET cancel_requested = TRUE");
+    expect(lexicalIntegrityMigration).toContain("j.status IN ('needs_review','failed','error')");
+    expect(lexicalIntegrityMigration).toContain("SET status = 'obsolete'");
+    expect(lexicalIntegrityMigration).toContain('MANUAL_LEXICAL_RESET');
+    expect(lexicalIntegrityMigration).toContain('PERFORM refresh_processing_run_snapshot(run_id)');
+  });
+
+  it('lexical summary includes terminal invalid offset jobs', () => {
+    expect(lexicalIntegrityMigration).toContain('terminal_offset_jobs AS');
+    expect(lexicalIntegrityMigration).toContain("AND error_code = 'INVALID_LEXICAL_OFFSETS'");
+    expect(lexicalIntegrityMigration).toContain('it.invalid_count > 0 OR toj.sentence_id IS NOT NULL');
+  });
+
   it('normalizes lexical types and keeps form_type-specific form joins', () => {
     expect(lexicalIntegrityMigration).toContain('CREATE OR REPLACE FUNCTION public.normalize_lexical_type');
     expect(lexicalIntegrityMigration).toContain("WHEN value IN ('particula','particle') THEN 'particula'");
@@ -158,7 +175,26 @@ describe('queueWorker persisted execution contract', () => {
     expect(normalizedLexicalIntegrityMigration.startsWith('BEGIN;\n')).toBe(true);
     expect(normalizedLexicalIntegrityMigration.trim().endsWith('COMMIT;')).toBe(true);
     expect(normalizedLexicalIntegrityMigration).toContain('END;\n$$;');
-    expect(lexicalIntegrityMigration).toContain("public.digest(text,text)");
+    expect(lexicalIntegrityMigration).toContain('CREATE EXTENSION IF NOT EXISTS pgcrypto');
+    expect(lexicalIntegrityMigration).toContain('v_pgcrypto_schema');
+    expect(lexicalIntegrityMigration).toContain("format('SELECT %I.digest($1::bytea, $2)', v_pgcrypto_schema)");
+    expect(lexicalIntegrityMigration).not.toContain('extensions.digest');
     expect(lexicalIntegrityMigration).toContain("public.digest(jsonb_build_object");
+  });
+
+  it('schema has one final commit after v26 functions', () => {
+    const normalizedSchema = schema.replace(/\r\n/g, '\n').trim();
+    expect((normalizedSchema.match(/\nCOMMIT;/g) || []).length).toBe(1);
+    expect(normalizedSchema.endsWith('COMMIT;')).toBe(true);
+    expect(normalizedSchema.indexOf('CREATE OR REPLACE FUNCTION public.mark_ai_job_needs_review')).toBeGreaterThan(normalizedSchema.indexOf('BEGIN;'));
+    expect(normalizedSchema.indexOf('CREATE OR REPLACE FUNCTION public.mark_ai_job_needs_review')).toBeLessThan(normalizedSchema.lastIndexOf('COMMIT;'));
+  });
+
+  it('needs_review transition records review metrics instead of failed metrics', () => {
+    const body = sqlFunctionBody(lexicalIntegrityMigration, 'mark_ai_job_needs_review');
+    expect(body).toContain('updated_at = NOW()');
+    expect(body).toContain('needs_review_jobs = needs_review_jobs + 1');
+    expect(body).not.toContain('failed_jobs = failed_jobs + 1');
+    expect(body).toContain('AND completed_at IS NULL');
   });
 });

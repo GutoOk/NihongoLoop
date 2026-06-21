@@ -143,6 +143,16 @@ describe('SourcePreparationPanel audit controls', () => {
     expect(screen.getByRole('button', { name: /cancelar nao concluidos/i })).toBeEnabled();
   });
 
+  it('keeps run and jobs visible when lexical integrity RPC is missing', async () => {
+    vi.mocked(ProcessingRunRepository.getSourceLexicalIntegritySummary).mockRejectedValueOnce(new Error('42883 function does not exist'));
+
+    render(<SourcePreparationPanel sourceId="source-1" onPreparationComplete={vi.fn()} />);
+
+    expect(await screen.findByText('Integridade lexical indisponivel. Aplique migration v26.')).toBeInTheDocument();
+    expect(screen.getByText('Consumindo fila')).toBeInTheDocument();
+    expect(AiJobRepository.getByRun).toHaveBeenCalledWith('run-1', 100);
+  });
+
   it('shows when only the latest 100 of 225 jobs are displayed', async () => {
     render(<SourcePreparationPanel sourceId="source-1" onPreparationComplete={vi.fn()} />);
 
