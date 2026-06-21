@@ -132,8 +132,8 @@ export default function SourcePreparationPanel({
   const sampledQueueCounts = useMemo(() => summarizeJobs(jobs), [jobs]);
   const queueCounts = useMemo(() => showGlobal ? (globalSummary || sampledQueueCounts) : summarizeRun(run), [globalSummary, run, sampledQueueCounts, showGlobal]);
   const visibleJobs = useMemo(() => jobs.filter(isVisibleQueueJob), [jobs]);
-  const visibleJobTotal = showGlobal ? jobs.length : (run?.created_jobs || run?.planned_jobs || jobs.length);
-  const isJobListLimited = !showGlobal && visibleJobTotal > jobs.length && jobs.length >= 100;
+  const visibleJobTotal = showGlobal ? (globalSummary?.total || jobs.length) : (run?.created_jobs || run?.planned_jobs || jobs.length);
+  const isJobListLimited = visibleJobTotal > jobs.length && jobs.length >= (showGlobal ? 500 : 100);
   const activeRunCount = queueCounts.pending + queueCounts.running + queueCounts.retry + queueCounts.review;
   const problemRunCount = queueCounts.error + queueCounts.retry + queueCounts.review;
   const hasRun = showGlobal || Boolean(run);

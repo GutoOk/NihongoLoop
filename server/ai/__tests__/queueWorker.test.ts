@@ -10,6 +10,7 @@ vi.mock('../../geminiJson', () => ({
 
 const schema = readFileSync(resolve(process.cwd(), 'schema.sql'), 'utf8');
 const lexicalOffsetMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v25_lexical_offset_validation.sql'), 'utf8');
+const normalizedLexicalOffsetMigration = lexicalOffsetMigration.replace(/\r\n/g, '\n');
 
 function functionBody(name: string) {
   const start = schema.indexOf(`CREATE OR REPLACE FUNCTION public.${name}`);
@@ -108,7 +109,14 @@ describe('queueWorker persisted execution contract', () => {
   it('lexical offset migration applies the corrected RPC without realignment', () => {
     expect(lexicalOffsetMigration).toContain('CREATE OR REPLACE FUNCTION public.apply_sentence_lexical_analysis_result');
     expect(lexicalOffsetMigration).toContain('SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface');
+    expect(lexicalOffsetMigration).toContain('BEGIN;');
+    expect(normalizedLexicalOffsetMigration).toContain('END;\n$$;\n\nCOMMIT;');
+    expect(lexicalOffsetMigration).toContain('public.digest');
+    expect(lexicalOffsetMigration).toContain('r.start_index >= 0');
+    expect(lexicalOffsetMigration).toContain('ORDER BY surface, lemma, start_index, end_index, confidence DESC');
+    expect(lexicalOffsetMigration).toContain("JOIN tmp_forms f ON f.unique_key = e.id::TEXT || '|'");
     expect(lexicalOffsetMigration).not.toContain('generate_series');
     expect(lexicalOffsetMigration).not.toContain('ORDER BY ABS');
+    expect(lexicalOffsetMigration).not.toContain('position(');
   });
 });

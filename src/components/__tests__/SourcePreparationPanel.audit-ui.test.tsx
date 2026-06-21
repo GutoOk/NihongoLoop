@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -61,12 +63,16 @@ function job(id: number) {
 }
 
 describe('SourcePreparationPanel audit controls', () => {
+  const aiJobRepositorySource = readFileSync(resolve(process.cwd(), 'src/repositories/aiJobRepository.ts'), 'utf8');
+  const sourcePreparationPanelSource = readFileSync(resolve(process.cwd(), 'src/components/SourcePreparationPanel.tsx'), 'utf8');
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(ProcessingRunRepository.getLatestRunBySource).mockResolvedValue(baseRun);
     vi.mocked(AiJobRepository.getByRun).mockResolvedValue(Array.from({ length: 100 }, (_, i) => job(i)));
     vi.mocked(AiJobRepository.getAll).mockResolvedValue([]);
     vi.mocked(AiJobRepository.getGlobalSummary).mockResolvedValue({
+      total: 0,
       pending: 0,
       running: 0,
       retry: 0,
@@ -141,6 +147,7 @@ describe('SourcePreparationPanel audit controls', () => {
   it('uses global summary totals for global queue actions', async () => {
     const user = userEvent.setup();
     vi.mocked(AiJobRepository.getGlobalSummary).mockResolvedValue({
+      total: 4,
       pending: 3,
       running: 1,
       retry: 2,
@@ -157,6 +164,18 @@ describe('SourcePreparationPanel audit controls', () => {
 
     expect(await screen.findByRole('button', { name: /retentar problemas/i })).toBeEnabled();
     expect(screen.getByRole('button', { name: /cancelar fila global ativa/i })).toBeEnabled();
-    expect(AiJobRepository.getGlobalSummary).toHaveBeenCalled();
+    expect(AiJobRepository.getGlobalSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('gets global queue summary through one RPC instead of browser-side counts', () => {
+    expect(aiJobRepositorySource).toContain("rpc('get_ai_queue_summary')");
+    expect(aiJobRepositorySource).not.toContain("count(['pending']");
+    expect(aiJobRepositorySource).not.toContain("{ count: 'exact', head: true }");
+  });
+
+  it('shows a limited-list notice for global queue totals', () => {
+    expect(sourcePreparationPanelSource).toContain('globalSummary?.total || jobs.length');
+    expect(sourcePreparationPanelSource).toContain('jobs.length >= (showGlobal ? 500 : 100)');
+    expect(sourcePreparationPanelSource).toContain('Exibindo os últimos');
   });
 });

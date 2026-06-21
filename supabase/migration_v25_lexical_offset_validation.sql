@@ -1,5 +1,38 @@
 -- Incremental, non-destructive update for lexical offset validation.
 -- Keeps existing data and replaces only the lexical analysis RPC.
+-- Protects future analyses only; terms already saved with wrong offsets need manual reprocessing.
+
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.get_ai_queue_summary()
+RETURNS JSONB
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT jsonb_build_object(
+    'total', COUNT(*),
+    'pending', COUNT(*) FILTER (WHERE status = 'pending'),
+    'running', COUNT(*) FILTER (WHERE status IN ('running','claimed')),
+    'retry', COUNT(*) FILTER (WHERE status = 'retry_wait'),
+    'review', COUNT(*) FILTER (WHERE status = 'needs_review'),
+    'completed', COUNT(*) FILTER (WHERE status IN ('completed','applied')),
+    'cancelled', COUNT(*) FILTER (WHERE status = 'cancelled'),
+    'error', COUNT(*) FILTER (WHERE status IN ('error','failed')),
+    'stuck', COUNT(*) FILTER (
+      WHERE status IN ('claimed','running')
+        AND (
+          (lease_expires_at IS NOT NULL AND lease_expires_at < NOW())
+          OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - INTERVAL '5 minutes')
+        )
+    ),
+    'clearable', COUNT(*) FILTER (WHERE status IN ('pending','error','completed','applied','cancelled'))
+  )
+  FROM ai_jobs
+  WHERE user_id = auth.uid();
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_ai_queue_summary() TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.apply_sentence_lexical_analysis_result(
   p_job_id UUID,
@@ -54,13 +87,13 @@ BEGIN
   IF current_sentence.id IS NULL THEN
     RAISE EXCEPTION 'Frase nao encontrada para analise lexical.';
   END IF;
-  expected_target_hash := encode(digest(jsonb_build_object(
+  expected_target_hash := encode(public.digest(jsonb_build_object(
     'targetType', 'sentence',
     'targetId', current_sentence.id,
     'payload', jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'portuguese', current_sentence.portuguese, 'kana', current_sentence.kana, 'romaji', current_sentence.romaji, 'sourceId', current_sentence.source_id),
     'promptVersion', current_job.prompt_version,
     'model', COALESCE(current_job.model, current_job.model_version)
-  )::text, 'sha256'), 'hex');
+  )::text, 'sha256'::text), 'hex');
   IF current_job.target_hash IS NOT NULL AND current_job.target_hash <> expected_target_hash THEN
     PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
     RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
@@ -143,7 +176,8 @@ BEGIN
     SELECT
       r.*
     FROM raw_terms r
-    WHERE r.end_index <= CHAR_LENGTH(current_sentence.japanese)
+    WHERE r.start_index >= 0
+      AND r.end_index <= CHAR_LENGTH(current_sentence.japanese)
       AND SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface
   )
   SELECT DISTINCT ON (surface, lemma, start_index, end_index)
@@ -163,7 +197,8 @@ BEGIN
     LOWER(REGEXP_REPLACE(lemma, '[[:space:]]+', '', 'g')) || '|' ||
       LOWER(REGEXP_REPLACE(COALESCE(entry_kana, ''), '[[:space:]]+', '', 'g')) || '|' ||
       LOWER(REGEXP_REPLACE(term_type, '[[:space:]]+', '', 'g')) AS entry_key
-  FROM valid_terms;
+  FROM valid_terms
+  ORDER BY surface, lemma, start_index, end_index, confidence DESC;
 
   WITH raw_terms AS (
     SELECT
@@ -184,7 +219,8 @@ BEGIN
   SELECT COUNT(*) INTO invalid_offset_count
   FROM raw_terms r
   WHERE NOT (
-    r.end_index <= CHAR_LENGTH(current_sentence.japanese)
+    r.start_index >= 0
+    AND r.end_index <= CHAR_LENGTH(current_sentence.japanese)
     AND SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface
   );
 
@@ -303,7 +339,7 @@ BEGIN
       NOW() AS updated_at
     FROM tmp_lexical_terms t
     JOIN tmp_entries e ON e.unique_key = t.entry_key
-    JOIN tmp_forms f ON f.dictionary_entry_id = e.id AND f.form = t.surface
+    JOIN tmp_forms f ON f.unique_key = e.id::TEXT || '|' || LOWER(REGEXP_REPLACE(t.surface, '[[:space:]]+', '', 'g')) || '|' || LOWER(REGEXP_REPLACE(t.form_type, '[[:space:]]+', '', 'g'))
     LEFT JOIN dictionary_senses ds
       ON ds.user_id = current_sentence.user_id
       AND ds.dictionary_entry_id = e.id
@@ -355,3 +391,6 @@ BEGIN
     'invalid_offset_count', invalid_offset_count
   );
 END;
+$$;
+
+COMMIT;

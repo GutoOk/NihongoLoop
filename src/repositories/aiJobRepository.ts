@@ -3,6 +3,7 @@ import { AiJob } from '../types';
 import { getUserId } from './utils';
 
 export type AiQueueSummary = {
+  total: number;
   pending: number;
   running: number;
   retry: number;
@@ -86,43 +87,21 @@ export class AiJobRepository {
 
   static async getGlobalSummary(): Promise<AiQueueSummary> {
     if (!isSupabaseConfigured) return emptySummary();
-    const userId = getUserId();
-    const count = async (statuses: string[], extra?: (query: any) => any) => {
-      let query = supabase!
-        .from('ai_jobs')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .in('status', statuses);
-      if (extra) query = extra(query);
-      const { count: total, error } = await query;
-      if (error) throw new Error(`Erro do Supabase ao contar fila global: ${error.message}`);
-      return total || 0;
+    const { data, error } = await supabase!.rpc('get_ai_queue_summary');
+    if (error) throw new Error(`Erro do Supabase ao contar fila global: ${error.message}`);
+    const summary = data || {};
+    return {
+      total: Number(summary.total || 0),
+      pending: Number(summary.pending || 0),
+      running: Number(summary.running || 0),
+      retry: Number(summary.retry || 0),
+      review: Number(summary.review || 0),
+      completed: Number(summary.completed || 0),
+      cancelled: Number(summary.cancelled || 0),
+      error: Number(summary.error || 0),
+      stuck: Number(summary.stuck || 0),
+      clearable: Number(summary.clearable || 0),
     };
-    const now = new Date().toISOString();
-    const [
-      pending,
-      running,
-      retry,
-      review,
-      completed,
-      cancelled,
-      error,
-      expiredLeases,
-      heartbeatStuck,
-      clearable,
-    ] = await Promise.all([
-      count(['pending']),
-      count(['running', 'claimed']),
-      count(['retry_wait']),
-      count(['needs_review']),
-      count(['completed', 'applied']),
-      count(['cancelled']),
-      count(['error', 'failed']),
-      count(['running', 'claimed'], (query) => query.not('lease_expires_at', 'is', null).lt('lease_expires_at', now)),
-      count(['running', 'claimed'], (query) => query.is('locked_until', null).not('last_heartbeat_at', 'is', null).lt('last_heartbeat_at', new Date(Date.now() - 5 * 60_000).toISOString())),
-      count(['pending', 'error', 'completed', 'applied', 'cancelled']),
-    ]);
-    return { pending, running, retry, review, completed, cancelled, error, stuck: expiredLeases + heartbeatStuck, clearable };
   }
 
   static async cancelActiveJobsByRun(runId: string): Promise<boolean> {
@@ -231,5 +210,5 @@ export class AiJobRepository {
 }
 
 function emptySummary(): AiQueueSummary {
-  return { pending: 0, running: 0, retry: 0, review: 0, completed: 0, cancelled: 0, error: 0, stuck: 0, clearable: 0 };
+  return { total: 0, pending: 0, running: 0, retry: 0, review: 0, completed: 0, cancelled: 0, error: 0, stuck: 0, clearable: 0 };
 }
