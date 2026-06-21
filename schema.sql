@@ -703,7 +703,6 @@ DECLARE
   job_rows JSONB;
   created_count INTEGER := 0;
   active_count INTEGER := 0;
-  terminal_failure_exists BOOLEAN := FALSE;
 BEGIN
   p_user_id := public.request_user_id(p_user_id);
 
@@ -763,16 +762,37 @@ BEGIN
   IF p_run_mode IN ('all','translate') AND EXISTS (
     SELECT 1 FROM sentences
     WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM ai_jobs old
+        WHERE old.run_id = selected_run.id
+          AND old.type = 'translate_sentence'
+          AND old.target_id = sentences.id
+          AND old.status IN ('failed','needs_review')
+      )
   ) THEN
     selected_stage := 'translation';
   ELSIF p_run_mode IN ('all','analyze') AND EXISTS (
     SELECT 1 FROM sentences
     WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NOT NULL AND (kana IS NULL OR romaji IS NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM ai_jobs old
+        WHERE old.run_id = selected_run.id
+          AND old.type = 'generate_sentence_reading'
+          AND old.target_id = sentences.id
+          AND old.status IN ('failed','needs_review')
+      )
   ) THEN
     selected_stage := 'reading';
   ELSIF p_run_mode IN ('all','analyze') AND EXISTS (
     SELECT 1 FROM sentences
     WHERE source_id = p_source_id AND user_id = p_user_id AND status <> 'reviewed' AND portuguese IS NOT NULL AND kana IS NOT NULL AND romaji IS NOT NULL AND terms_source IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM ai_jobs old
+        WHERE old.run_id = selected_run.id
+          AND old.type = 'detect_sentence_terms'
+          AND old.target_id = sentences.id
+          AND old.status IN ('failed','needs_review')
+      )
   ) THEN
     selected_stage := 'lexical_analysis';
   ELSIF p_run_mode IN ('all','dictionary') AND EXISTS (
@@ -786,6 +806,13 @@ BEGIN
       AND de.user_id = p_user_id
       AND de.status <> 'reviewed'
       AND (de.main_meaning IS NULL OR de.kana IS NULL OR de.romaji IS NULL OR de.status = 'pending')
+      AND NOT EXISTS (
+        SELECT 1 FROM ai_jobs old
+        WHERE old.run_id = selected_run.id
+          AND old.type = 'enrich_dictionary_entry'
+          AND old.target_id = de.id
+          AND old.status IN ('failed','needs_review')
+      )
   ) THEN
     selected_stage := 'dictionary_enrichment';
   ELSE
@@ -803,31 +830,6 @@ BEGIN
   ON CONFLICT (run_id, stage)
   DO UPDATE SET status = 'running', blocked_reason = NULL, updated_at = NOW()
   RETURNING id INTO selected_stage_id;
-
-  SELECT EXISTS (
-    SELECT 1
-    FROM ai_jobs
-    WHERE run_id = selected_run.id
-      AND stage_id = selected_stage_id
-      AND status IN ('failed','needs_review')
-  ) INTO terminal_failure_exists;
-
-  IF terminal_failure_exists THEN
-    UPDATE processing_run_stages
-    SET status = 'needs_review',
-        blocked_reason = 'Falha terminal exige retry manual.',
-        updated_at = NOW()
-    WHERE id = selected_stage_id;
-
-    UPDATE processing_runs
-    SET status = 'needs_review',
-        current_step = 'Falha terminal exige retry manual.',
-        updated_at = NOW()
-    WHERE id = selected_run.id;
-
-    PERFORM refresh_processing_run_snapshot(selected_run.id);
-    RETURN jsonb_build_object('run_id', selected_run.id, 'stage_id', selected_stage_id, 'stage', selected_stage, 'created_jobs', 0, 'status', 'needs_review');
-  END IF;
 
   IF selected_stage = 'translation' THEN
     SELECT COALESCE(jsonb_agg(row_to_json(job_payload)::jsonb), '[]'::jsonb) INTO job_rows

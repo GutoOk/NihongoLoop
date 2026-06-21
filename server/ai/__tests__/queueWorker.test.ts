@@ -87,11 +87,13 @@ describe('queueWorker persisted execution contract', () => {
     expect(body.indexOf("IF p_error_kind = 'permanent' THEN")).toBeLessThan(body.indexOf("terminal_status := 'retry_wait'"));
   });
 
-  it('does not auto-enqueue when a stage has terminal failures', () => {
+  it('continues orchestration around terminal failures for other targets', () => {
     const body = functionBody('create_or_resume_source_processing_run');
     expect(body).toContain("status IN ('failed','needs_review')");
-    expect(body).toContain("status = 'needs_review'");
-    expect(body).toContain("'Falha terminal exige retry manual.'");
+    expect(body).toContain("old.type = 'translate_sentence'");
+    expect(body).toContain("old.type = 'detect_sentence_terms'");
+    expect(body).toContain("old.type = 'enrich_dictionary_entry'");
+    expect(body).not.toContain("'Falha terminal exige retry manual.'");
   });
 
   it('manual retry creates a new job preserving the previous one', () => {
