@@ -10,6 +10,7 @@ import {
 import { AiJob, ProcessingRun } from '../types';
 import { AiJobRepository, ProcessingRunRepository } from '../repositories';
 import { AiQueueSummary } from '../repositories/aiJobRepository';
+import { SourceLexicalIntegritySummary } from '../repositories/processingRunRepository';
 import { useModal } from './ModalProvider';
 import { getJobHumanName } from './sourcePreparation/jobDisplay';
 
@@ -28,12 +29,13 @@ export default function SourcePreparationPanel({
   const [run, setRun] = useState<ProcessingRun | null>(null);
   const [showGlobal, setShowGlobal] = useState(false);
   const [globalSummary, setGlobalSummary] = useState<AiQueueSummary | null>(null);
+  const [lexicalSummary, setLexicalSummary] = useState<SourceLexicalIntegritySummary | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const signatureRef = useRef<string | null>(null);
   const loadingRef = useRef(false);
-  const { showConfirm } = useModal();
+  const { showAlert, showConfirm } = useModal();
 
   useEffect(() => {
     signatureRef.current = null;
@@ -54,6 +56,7 @@ export default function SourcePreparationPanel({
           ? await AiJobRepository.getByRun(latestRun.id, 100)
           : await AiJobRepository.getBySource(sourceId);
       const latestGlobalSummary = showGlobal ? await AiJobRepository.getGlobalSummary() : null;
+      const latestLexicalSummary = showGlobal ? null : await ProcessingRunRepository.getSourceLexicalIntegritySummary(sourceId);
       const signature = JSON.stringify({
         run: latestRun ? {
           status: latestRun.status,
@@ -67,6 +70,7 @@ export default function SourcePreparationPanel({
       signatureRef.current = signature;
       setRun(latestRun);
       setGlobalSummary(latestGlobalSummary);
+      setLexicalSummary(latestLexicalSummary);
       setJobs(sourceJobs);
       setLoadError(null);
     } catch (error: any) {
@@ -124,6 +128,26 @@ export default function SourcePreparationPanel({
         await AiJobRepository.cancelActiveJobsBySource(sourceId);
       }
       await refresh();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const resetLexicalAnalysis = async (mode: 'invalid_only' | 'all_non_reviewed') => {
+    const count = mode === 'invalid_only'
+      ? lexicalSummary?.eligible_invalid_only || 0
+      : lexicalSummary?.eligible_all_non_reviewed || 0;
+    if (count === 0) return;
+    if (!(await showConfirm('Redefinir analise lexical', `Esta acao redefinira ${count} frases para analise lexical. Nenhuma chamada de IA sera feita agora. Depois clique em Preparar/retomar fonte.`))) {
+      return;
+    }
+    setIsBusy(true);
+    try {
+      const result = await ProcessingRunRepository.resetSourceLexicalAnalysis(sourceId, mode);
+      await refresh();
+      showAlert('Analise lexical redefinida', `${result?.reset_sentence_count || 0} frases foram redefinidas.`);
+    } catch (error: any) {
+      setLoadError(error?.message || 'Nao foi possivel redefinir a analise lexical.');
     } finally {
       setIsBusy(false);
     }
@@ -198,6 +222,41 @@ export default function SourcePreparationPanel({
               <EmptyState text="Nenhuma execucao persistida encontrada para esta fonte." />
             )}
           </Panel>
+
+          {!showGlobal && lexicalSummary && (
+            <Panel
+              title="Integridade lexical"
+              actions={
+                <div className="flex flex-wrap gap-2">
+                  {lexicalSummary.eligible_invalid_only > 0 && (
+                    <ToolbarButton
+                      small
+                      onClick={() => resetLexicalAnalysis('invalid_only')}
+                      disabled={isBusy || isRefreshing}
+                      title={busyTitle || 'Redefinir apenas spans invalidos.'}
+                      label={`Corrigir termos invalidos (${lexicalSummary.eligible_invalid_only} frases)`}
+                    />
+                  )}
+                  {lexicalSummary.eligible_all_non_reviewed > 0 && (
+                    <ToolbarButton
+                      small
+                      onClick={() => resetLexicalAnalysis('all_non_reviewed')}
+                      disabled={isBusy || isRefreshing}
+                      title={busyTitle || 'Redefinir termos nao revisados.'}
+                      label="Reanalisar termos desta fonte"
+                    />
+                  )}
+                </div>
+              }
+            >
+              <div className="grid gap-2 sm:grid-cols-4">
+                <Metric label="Offsets invalidos" value={lexicalSummary.invalid_offset_sentences} />
+                <Metric label="Termos invalidos" value={lexicalSummary.invalid_offset_terms} />
+                <Metric label="Sem termos" value={lexicalSummary.without_terms_sentences} />
+                <Metric label="AI empty" value={lexicalSummary.ai_empty_sentences} />
+              </div>
+            </Panel>
+          )}
 
           <Panel
             title={showGlobal ? 'Fila global' : 'Fila da fonte'}

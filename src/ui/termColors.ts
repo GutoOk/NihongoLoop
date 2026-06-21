@@ -50,9 +50,9 @@ export const TERM_COLORS: Record<string, TermColor> = {
   },
   conector: {
     name: "Conector",
-    text: "text-cyan-700",
-    bg: "bg-cyan-50 border border-cyan-200 hover:bg-cyan-100",
-    border: "border-cyan-200",
+    text: "text-slate-600",
+    bg: "bg-transparent border border-cyan-100 hover:bg-cyan-50",
+    border: "border-cyan-100",
   },
   auxiliar: {
     name: "Auxiliar",
@@ -80,12 +80,23 @@ export const TERM_COLORS: Record<string, TermColor> = {
   },
 };
 
-function normalizeTypeKey(type?: string | null): string {
-  return (type || "outro")
+export function normalizeTypeKey(type?: string | null): string {
+  const value = (type || "outro")
     .toLowerCase()
     .trim()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+  const aliases: Record<string, string> = {
+    particle: "particula",
+    adverb: "adverbio",
+    expression: "expressao",
+    auxiliary: "auxiliar",
+  };
+  return aliases[value] || value;
+}
+
+export function isLowEmphasisTerm(type?: string | null): boolean {
+  return ["particula", "auxiliar", "conector"].includes(normalizeTypeKey(type));
 }
 
 export function getTermColor(type?: string | null): TermColor {

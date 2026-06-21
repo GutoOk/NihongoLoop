@@ -23,8 +23,8 @@ import {
 import { Sentence, DictionaryEntry } from "../types";
 import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // for TTS settings
-import { TERM_COLORS, getTermColor } from "../ui/termColors";
-import { normalizeTermOffsets } from "../ui/termOffsets";
+import { TERM_COLORS, getTermColor, isLowEmphasisTerm } from "../ui/termColors";
+import { normalizeTermOffsets, sliceCodePoints, toCodePoints } from "../ui/termOffsets";
 import { AppNavigate } from "../navigation";
 import { drawStudyPipCanvas } from "./studyPlayer/pipCanvas";
 
@@ -724,7 +724,7 @@ export default function StudyPlayerScreen({
       if (term.start_index > lastIdx) {
         elements.push(
           <span key={`text-${lastIdx}`}>
-            {txt.substring(lastIdx, term.start_index)}
+            {sliceCodePoints(txt, lastIdx, term.start_index)}
           </span>,
         );
       }
@@ -734,6 +734,10 @@ export default function StudyPlayerScreen({
         .split(" ")
         .filter((c) => !c.startsWith("hover:"))
         .join(" ");
+      const lowEmphasis = isLowEmphasisTerm(term.type);
+      const termClassName = lowEmphasis
+        ? `${termColor.text} border-b border-dotted border-current rounded-none px-0 py-0 font-normal text-2xl md:text-3xl cursor-pointer active:scale-95 transition-transform outline-none`
+        : `${termColor.text} ${cleanBg} border-b-2 border-dotted border-current rounded px-1.5 py-0.5 mx-[2px] font-black text-2xl md:text-3xl inline-block cursor-pointer active:scale-95 transition-transform outline-none`;
 
       elements.push(
         <button
@@ -752,16 +756,16 @@ export default function StudyPlayerScreen({
               setActiveDictionaryPopup({ term, entry: entry || null });
             }
           }}
-          className={`${termColor.text} ${cleanBg} border-b-2 border-dotted border-current rounded px-1.5 py-0.5 mx-[2px] font-black text-2xl md:text-3xl inline-block cursor-pointer active:scale-95 transition-transform outline-none`}
+          className={termClassName}
         >
-          {itm.japanese.substring(term.start_index, term.end_index)}
+          {sliceCodePoints(txt, term.start_index, term.end_index)}
         </button>,
       );
       lastIdx = term.end_index;
     });
 
-    if (lastIdx < txt.length) {
-      elements.push(<span key={`text-end`}>{txt.substring(lastIdx)}</span>);
+    if (lastIdx < toCodePoints(txt).length) {
+      elements.push(<span key={`text-end`}>{sliceCodePoints(txt, lastIdx, toCodePoints(txt).length)}</span>);
     }
 
     return <>{elements}</>;

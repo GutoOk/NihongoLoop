@@ -35,8 +35,8 @@ import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // Assuming we still get settings config from there for general TTS settings if not extracted
 import { TermDetectionService } from "../services/termDetectionService";
 import { useModal } from "./ModalProvider";
-import { TERM_COLORS, getTermColor } from "../ui/termColors";
-import { normalizeTermOffsets } from "../ui/termOffsets";
+import { TERM_COLORS, getTermColor, isLowEmphasisTerm } from "../ui/termColors";
+import { normalizeTermOffsets, sliceCodePoints, toCodePoints } from "../ui/termOffsets";
 import SourcePreparationPanel from "./SourcePreparationPanel";
 import { AppNavigate } from "../navigation";
 
@@ -365,7 +365,7 @@ export default function ReadingScreen({
       if (term.start_index > currentIndex) {
         elements.push(
           <span key={`text-${idx}`}>
-            {sent.japanese.substring(currentIndex, term.start_index)}
+            {sliceCodePoints(sent.japanese, currentIndex, term.start_index)}
           </span>,
         );
       }
@@ -373,22 +373,26 @@ export default function ReadingScreen({
       const entry = term.dictionary_entry_id
         ? dictMap[term.dictionary_entry_id]
         : null;
+      const lowEmphasis = isLowEmphasisTerm(term.type);
+      const termStyle = lowEmphasis
+        ? `${getTermColor(term.type).text} border-b border-dotted border-current rounded-none px-0 py-0 font-normal text-lg hover:brightness-95 active:scale-95 transition-all`
+        : `${getTermColor(term.type).text} ${getTermColor(term.type).bg} border-b-2 border-dotted border-current rounded px-1.5 py-0.5 font-bold text-lg hover:brightness-95 active:scale-95 transition-all mx-[2px]`;
 
       elements.push(
         <button
           key={`term-${idx}`}
           onClick={() => setActiveTermHover({ term, entry: entry || null })}
-          className={`${getTermColor(term.type).text} ${getTermColor(term.type).bg} border-b-2 border-dotted border-current rounded px-1.5 py-0.5 font-bold text-lg hover:brightness-95 active:scale-95 transition-all mx-[2px]`}
+          className={termStyle}
         >
-          {sent.japanese.substring(term.start_index, term.end_index)}
+          {sliceCodePoints(sent.japanese, term.start_index, term.end_index)}
         </button>,
       );
       currentIndex = term.end_index;
     });
 
-    if (currentIndex < sent.japanese.length) {
+    if (currentIndex < toCodePoints(sent.japanese).length) {
       elements.push(
-        <span key={`text-end`}>{sent.japanese.substring(currentIndex)}</span>,
+        <span key={`text-end`}>{sliceCodePoints(sent.japanese, currentIndex, toCodePoints(sent.japanese).length)}</span>,
       );
     }
 

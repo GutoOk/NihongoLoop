@@ -2,6 +2,17 @@ import { supabase, isSupabaseConfigured } from '../core/supabaseClient';
 import { ProcessingRun } from '../types';
 import { getUserId } from './utils';
 
+export type SourceLexicalIntegritySummary = {
+  total_sentences: number;
+  reviewed_sentences: number;
+  invalid_offset_sentences: number;
+  invalid_offset_terms: number;
+  without_terms_sentences: number;
+  ai_empty_sentences: number;
+  eligible_invalid_only: number;
+  eligible_all_non_reviewed: number;
+};
+
 const PROCESSING_RUN_SELECT = [
   'id',
   'user_id',
@@ -131,6 +142,20 @@ export class ProcessingRunRepository {
     if (!isSupabaseConfigured) return;
     const { error } = await supabase!.rpc('advance_processing_run', { p_run_id: id });
     if (error) throw new Error(`Erro do Supabase ao retomar processamento: ${error.message}`);
+  }
+
+  static async getSourceLexicalIntegritySummary(sourceId: string): Promise<SourceLexicalIntegritySummary | null> {
+    if (!isSupabaseConfigured) return null;
+    const { data, error } = await supabase!.rpc('get_source_lexical_integrity_summary', { p_source_id: sourceId });
+    if (error) throw new Error(`Erro do Supabase ao carregar integridade lexical: ${error.message}`);
+    return data as SourceLexicalIntegritySummary;
+  }
+
+  static async resetSourceLexicalAnalysis(sourceId: string, mode: 'invalid_only' | 'all_non_reviewed'): Promise<{ reset_sentence_count: number; mode: string; source_id: string } | null> {
+    if (!isSupabaseConfigured) return null;
+    const { data, error } = await supabase!.rpc('reset_source_lexical_analysis', { p_source_id: sourceId, p_mode: mode });
+    if (error) throw new Error(`Erro do Supabase ao redefinir analise lexical: ${error.message}`);
+    return data as { reset_sentence_count: number; mode: string; source_id: string };
   }
 
 }

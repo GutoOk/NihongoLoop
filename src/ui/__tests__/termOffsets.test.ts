@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { normalizeTermOffsets } from "../termOffsets";
 import { SentenceTerm } from "../../types";
+import { isLowEmphasisTerm } from "../termColors";
+import { normalizeTermOffsets, sliceCodePoints } from "../termOffsets";
 
 function term(surface: string, start_index: number, end_index: number): SentenceTerm {
   return {
@@ -45,5 +46,19 @@ describe("normalizeTermOffsets", () => {
     ]);
 
     expect(terms.map((t) => t.surface)).toEqual(["パーティー", "再開"]);
+  });
+
+  it("uses code point offsets when emoji precedes Japanese text", () => {
+    const text = "😀猫と犬";
+    const terms = normalizeTermOffsets(text, [term("猫", 1, 2)]);
+
+    expect(terms.map((t) => sliceCodePoints(text, t.start_index, t.end_index))).toEqual(["猫"]);
+  });
+
+  it("marks particles and auxiliaries as low-emphasis terms", () => {
+    expect(isLowEmphasisTerm("partícula")).toBe(true);
+    expect(isLowEmphasisTerm("particle")).toBe(true);
+    expect(isLowEmphasisTerm("auxiliar")).toBe(true);
+    expect(isLowEmphasisTerm("substantivo")).toBe(false);
   });
 });

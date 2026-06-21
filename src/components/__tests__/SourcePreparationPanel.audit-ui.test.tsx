@@ -9,6 +9,8 @@ import { AiJobRepository, ProcessingRunRepository } from '../../repositories';
 vi.mock('../../repositories', () => ({
   ProcessingRunRepository: {
     getLatestRunBySource: vi.fn(),
+    getSourceLexicalIntegritySummary: vi.fn(),
+    resetSourceLexicalAnalysis: vi.fn(),
     startSourceProcessingRun: vi.fn(),
     getRun: vi.fn(),
   },
@@ -28,6 +30,7 @@ vi.mock('../../repositories', () => ({
 
 vi.mock('../ModalProvider', () => ({
   useModal: () => ({
+    showAlert: vi.fn(),
     showConfirm: vi.fn().mockResolvedValue(true),
   }),
 }));
@@ -50,6 +53,17 @@ const baseRun = {
   failed_items: 4,
 } as any;
 
+const baseLexicalSummary = {
+  total_sentences: 10,
+  reviewed_sentences: 1,
+  invalid_offset_sentences: 2,
+  invalid_offset_terms: 3,
+  without_terms_sentences: 1,
+  ai_empty_sentences: 1,
+  eligible_invalid_only: 2,
+  eligible_all_non_reviewed: 9,
+};
+
 function job(id: number) {
   return {
     id: `job-${id}`,
@@ -69,6 +83,8 @@ describe('SourcePreparationPanel audit controls', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(ProcessingRunRepository.getLatestRunBySource).mockResolvedValue(baseRun);
+    vi.mocked(ProcessingRunRepository.getSourceLexicalIntegritySummary).mockResolvedValue(baseLexicalSummary);
+    vi.mocked(ProcessingRunRepository.resetSourceLexicalAnalysis).mockResolvedValue({ reset_sentence_count: 2, mode: 'invalid_only', source_id: 'source-1' });
     vi.mocked(AiJobRepository.getByRun).mockResolvedValue(Array.from({ length: 100 }, (_, i) => job(i)));
     vi.mocked(AiJobRepository.getAll).mockResolvedValue([]);
     vi.mocked(AiJobRepository.getGlobalSummary).mockResolvedValue({

@@ -10,12 +10,20 @@ vi.mock('../../geminiJson', () => ({
 
 const schema = readFileSync(resolve(process.cwd(), 'schema.sql'), 'utf8');
 const lexicalOffsetMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v25_lexical_offset_validation.sql'), 'utf8');
+const lexicalIntegrityMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v26_lexical_integrity_and_unicode.sql'), 'utf8');
 const normalizedLexicalOffsetMigration = lexicalOffsetMigration.replace(/\r\n/g, '\n');
+const normalizedLexicalIntegrityMigration = lexicalIntegrityMigration.replace(/\r\n/g, '\n');
 
 function functionBody(name: string) {
   const start = schema.indexOf(`CREATE OR REPLACE FUNCTION public.${name}`);
   const end = schema.indexOf('\n$$;', start);
   return schema.slice(start, end);
+}
+
+function sqlFunctionBody(source: string, name: string) {
+  const start = source.indexOf(`CREATE OR REPLACE FUNCTION public.${name}`);
+  const end = source.indexOf('\n$$;', start);
+  return source.slice(start, end);
 }
 
 function makeClient(canExecute: boolean) {
@@ -83,7 +91,7 @@ describe('queueWorker persisted execution contract', () => {
   });
 
   it('dictionary enrichment replaces preliminary fields with AI values', () => {
-    const body = functionBody('apply_dictionary_enrichment_result');
+    const body = functionBody('apply_dictionary_enrichment_result').replace(/\r\n/g, '\n');
     expect(body).toContain("v_main_meaning := COALESCE(\n    NULLIF(p_enrichment->>'main_meaning', '')");
     expect(body).toContain("jlpt_level = COALESCE(NULLIF(p_enrichment->>'jlpt_level', ''), dictionary_entries.jlpt_level)");
     expect(body).not.toContain("COALESCE(dictionary_entries.jlpt_level, NULLIF(p_enrichment->>'jlpt_level'");
@@ -119,5 +127,38 @@ describe('queueWorker persisted execution contract', () => {
     expect(lexicalOffsetMigration).not.toContain('generate_series');
     expect(lexicalOffsetMigration).not.toContain('ORDER BY ABS');
     expect(lexicalOffsetMigration).not.toContain('position(');
+  });
+
+  it('lexical integrity migration prevents partial invalid writes', () => {
+    const body = sqlFunctionBody(lexicalIntegrityMigration, 'apply_sentence_lexical_analysis_result');
+    expect(body).toContain('invalid_offset_count > 0');
+    expect(body).toContain('mark_ai_job_needs_review');
+    expect(body).toContain('Offsets lexicais invalidos; reanalise manual necessaria.');
+    expect(body.indexOf('invalid_offset_count > 0')).toBeLessThan(body.indexOf('UPDATE sentences'));
+    expect(body.indexOf('invalid_offset_count > 0')).toBeLessThan(body.indexOf('DELETE FROM sentence_terms'));
+    expect(body).toContain("SET terms_source = CASE WHEN inserted_terms > 0 THEN 'ai' ELSE 'ai_empty' END");
+  });
+
+  it('lexical reset excludes reviewed sentences and preserves dictionary data', () => {
+    expect(lexicalIntegrityMigration).toContain("s.status <> 'reviewed'");
+    expect(lexicalIntegrityMigration).toContain('DELETE FROM sentence_terms');
+    expect(lexicalIntegrityMigration).not.toContain('DELETE FROM dictionary_entries');
+    expect(lexicalIntegrityMigration).not.toContain('DELETE FROM dictionary_forms');
+    expect(lexicalIntegrityMigration).not.toContain('DELETE FROM dictionary_senses');
+  });
+
+  it('normalizes lexical types and keeps form_type-specific form joins', () => {
+    expect(lexicalIntegrityMigration).toContain('CREATE OR REPLACE FUNCTION public.normalize_lexical_type');
+    expect(lexicalIntegrityMigration).toContain("WHEN value IN ('particula','particle') THEN 'particula'");
+    expect(lexicalIntegrityMigration).toContain('public.normalize_lexical_type');
+    expect(lexicalIntegrityMigration).toContain('JOIN tmp_forms f ON f.unique_key');
+  });
+
+  it('migration v26 is transactional and closes functions', () => {
+    expect(normalizedLexicalIntegrityMigration.startsWith('BEGIN;\n')).toBe(true);
+    expect(normalizedLexicalIntegrityMigration.trim().endsWith('COMMIT;')).toBe(true);
+    expect(normalizedLexicalIntegrityMigration).toContain('END;\n$$;');
+    expect(lexicalIntegrityMigration).toContain("public.digest(text,text)");
+    expect(lexicalIntegrityMigration).toContain("public.digest(jsonb_build_object");
   });
 });

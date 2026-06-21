@@ -2,15 +2,35 @@ import { SentenceTerm } from "../types";
 
 const JAPANESE_TEXT_RE = /[\u3040-\u30ff\u3400-\u9fff々〆ヵヶ]/;
 
+export function toCodePoints(text: string): string[] {
+  return Array.from(text);
+}
+
+export function sliceCodePoints(text: string, startIndex: number, endIndex: number): string {
+  return toCodePoints(text).slice(startIndex, endIndex).join("");
+}
+
+export function hasExactCodePointSpan(
+  text: string,
+  startIndex: number,
+  endIndex: number,
+  surface: string,
+): boolean {
+  const chars = toCodePoints(text);
+  return (
+    startIndex >= 0 &&
+    endIndex > startIndex &&
+    endIndex <= chars.length &&
+    chars.slice(startIndex, endIndex).join("") === surface
+  );
+}
+
 function hasExactSpan(text: string, term: SentenceTerm): boolean {
   const surface = term.surface?.trim();
   return Boolean(
     surface &&
       JAPANESE_TEXT_RE.test(surface) &&
-      term.start_index >= 0 &&
-      term.end_index > term.start_index &&
-      term.end_index <= text.length &&
-      text.substring(term.start_index, term.end_index) === surface,
+      hasExactCodePointSpan(text, term.start_index, term.end_index, surface),
   );
 }
 
