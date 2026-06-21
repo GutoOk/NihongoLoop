@@ -841,29 +841,29 @@ BEGIN
         'sentence' AS target_type,
         s.id AS target_id,
         300 AS priority,
-        encode(digest(jsonb_build_object(
+        encode(public.digest(jsonb_build_object(
           'targetType', 'sentence',
           'targetId', s.id,
           'payload', jsonb_build_object('id', s.id, 'sentence', s.japanese, 'japanese', s.japanese, 'sourceId', p_source_id),
           'promptVersion', p_prompt_version,
           'model', p_model
-        )::text, 'sha256'), 'hex') AS target_hash,
-        encode(digest(jsonb_build_object(
+        )::text, 'sha256'::text), 'hex') AS target_hash,
+        encode(public.digest(jsonb_build_object(
           'type', 'translate_sentence',
           'targetType', 'sentence',
           'targetId', s.id,
           'japanese', s.japanese,
           'promptVersion', p_prompt_version,
           'model', p_model
-        )::text, 'sha256'), 'hex') AS input_hash,
-        'translate_sentence:sentence:' || s.id || ':' || encode(digest(jsonb_build_object(
+        )::text, 'sha256'::text), 'hex') AS input_hash,
+        'translate_sentence:sentence:' || s.id || ':' || encode(public.digest(jsonb_build_object(
           'type', 'translate_sentence',
           'targetType', 'sentence',
           'targetId', s.id,
           'japanese', s.japanese,
           'promptVersion', p_prompt_version,
           'model', p_model
-        )::text, 'sha256'), 'hex') AS job_key,
+        )::text, 'sha256'::text), 'hex') AS job_key,
         p_prompt_version AS prompt_version,
         p_model AS model_version,
         p_model AS model,
@@ -893,9 +893,9 @@ BEGIN
         'sentence' AS target_type,
         s.id AS target_id,
         200 AS priority,
-        encode(digest(jsonb_build_object('targetType','sentence','targetId',s.id,'payload',jsonb_build_object('id',s.id,'sentence',s.japanese,'japanese',s.japanese,'portuguese',s.portuguese,'sourceId',p_source_id),'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS target_hash,
-        encode(digest(jsonb_build_object('type','generate_sentence_reading','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS input_hash,
-        'generate_sentence_reading:sentence:' || s.id || ':' || encode(digest(jsonb_build_object('type','generate_sentence_reading','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS job_key,
+        encode(public.digest(jsonb_build_object('targetType','sentence','targetId',s.id,'payload',jsonb_build_object('id',s.id,'sentence',s.japanese,'japanese',s.japanese,'portuguese',s.portuguese,'sourceId',p_source_id),'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'::text), 'hex') AS target_hash,
+        encode(public.digest(jsonb_build_object('type','generate_sentence_reading','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'::text), 'hex') AS input_hash,
+        'generate_sentence_reading:sentence:' || s.id || ':' || encode(public.digest(jsonb_build_object('type','generate_sentence_reading','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'::text), 'hex') AS job_key,
         p_prompt_version AS prompt_version,
         p_model AS model_version,
         p_model AS model,
@@ -925,9 +925,9 @@ BEGIN
         'sentence' AS target_type,
         s.id AS target_id,
         150 AS priority,
-        encode(digest(jsonb_build_object('targetType','sentence','targetId',s.id,'payload',jsonb_build_object('id',s.id,'sentence',s.japanese,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'sourceId',p_source_id),'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS target_hash,
-        encode(digest(jsonb_build_object('type','detect_sentence_terms','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS input_hash,
-        'detect_sentence_terms:sentence:' || s.id || ':' || encode(digest(jsonb_build_object('type','detect_sentence_terms','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS job_key,
+        encode(public.digest(jsonb_build_object('targetType','sentence','targetId',s.id,'payload',jsonb_build_object('id',s.id,'sentence',s.japanese,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'sourceId',p_source_id),'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'::text), 'hex') AS target_hash,
+        encode(public.digest(jsonb_build_object('type','detect_sentence_terms','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'::text), 'hex') AS input_hash,
+        'detect_sentence_terms:sentence:' || s.id || ':' || encode(public.digest(jsonb_build_object('type','detect_sentence_terms','targetType','sentence','targetId',s.id,'japanese',s.japanese,'portuguese',s.portuguese,'kana',s.kana,'romaji',s.romaji,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'::text), 'hex') AS job_key,
         p_prompt_version AS prompt_version,
         p_model AS model_version,
         p_model AS model,
@@ -979,8 +979,8 @@ BEGIN
       hashed AS (
         SELECT
           *,
-          encode(digest(jsonb_build_object('targetType','dictionary_entry','targetId',id,'payload',payload,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS target_hash,
-          encode(digest(jsonb_build_object('type','enrich_dictionary_entry','targetType','dictionary_entry','targetId',id,'lemma',lemma,'kana',kana,'romaji',romaji,'entryType',type,'mainMeaning',main_meaning,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'), 'hex') AS input_hash
+          encode(public.digest(jsonb_build_object('targetType','dictionary_entry','targetId',id,'payload',payload,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'::text), 'hex') AS target_hash,
+          encode(public.digest(jsonb_build_object('type','enrich_dictionary_entry','targetType','dictionary_entry','targetId',id,'lemma',lemma,'kana',kana,'romaji',romaji,'entryType',type,'mainMeaning',main_meaning,'promptVersion',p_prompt_version,'model',p_model)::text, 'sha256'::text), 'hex') AS input_hash
         FROM eligible
       )
       SELECT
@@ -1068,13 +1068,13 @@ BEGIN
     hashed AS (
       SELECT
         *,
-        encode(digest(jsonb_build_object(
+        encode(public.digest(jsonb_build_object(
           'targetType', 'dictionary_entry',
           'targetId', id,
           'payload', payload,
           'promptVersion', p_prompt_version,
           'model', p_model
-        )::text, 'sha256'), 'hex') AS target_hash
+        )::text, 'sha256'::text), 'hex') AS target_hash
       FROM eligible
     ),
     final_rows AS (
@@ -1088,7 +1088,7 @@ BEGIN
         id AS target_id,
         100 AS priority,
         target_hash,
-        encode(digest(jsonb_build_object(
+        encode(public.digest(jsonb_build_object(
           'type', 'enrich_dictionary_entry',
           'targetType', 'dictionary_entry',
           'targetId', id,
@@ -1099,7 +1099,7 @@ BEGIN
           'mainMeaning', main_meaning,
           'promptVersion', p_prompt_version,
           'model', p_model
-        )::text, 'sha256'), 'hex') AS input_hash,
+        )::text, 'sha256'::text), 'hex') AS input_hash,
         payload
       FROM hashed
     )
@@ -1180,21 +1180,21 @@ BEGIN
       'japanese', selected_sentence.japanese,
       'sourceId', selected_sentence.source_id
     );
-    target_hash_value := encode(digest(jsonb_build_object(
+    target_hash_value := encode(public.digest(jsonb_build_object(
       'targetType', 'sentence',
       'targetId', selected_sentence.id,
       'payload', payload,
       'promptVersion', p_prompt_version,
       'model', p_model
-    )::text, 'sha256'), 'hex');
-    input_hash_value := encode(digest(jsonb_build_object(
+    )::text, 'sha256'::text), 'hex');
+    input_hash_value := encode(public.digest(jsonb_build_object(
       'type', p_type,
       'targetType', 'sentence',
       'targetId', selected_sentence.id,
       'japanese', selected_sentence.japanese,
       'promptVersion', p_prompt_version,
       'model', p_model
-    )::text, 'sha256'), 'hex');
+    )::text, 'sha256'::text), 'hex');
   ELSE
     stage_value := 'reading';
     priority_value := 200;
@@ -1205,14 +1205,14 @@ BEGIN
       'portuguese', selected_sentence.portuguese,
       'sourceId', selected_sentence.source_id
     );
-    target_hash_value := encode(digest(jsonb_build_object(
+    target_hash_value := encode(public.digest(jsonb_build_object(
       'targetType', 'sentence',
       'targetId', selected_sentence.id,
       'payload', payload,
       'promptVersion', p_prompt_version,
       'model', p_model
-    )::text, 'sha256'), 'hex');
-    input_hash_value := encode(digest(jsonb_build_object(
+    )::text, 'sha256'::text), 'hex');
+    input_hash_value := encode(public.digest(jsonb_build_object(
       'type', p_type,
       'targetType', 'sentence',
       'targetId', selected_sentence.id,
@@ -1220,7 +1220,7 @@ BEGIN
       'portuguese', selected_sentence.portuguese,
       'promptVersion', p_prompt_version,
       'model', p_model
-    )::text, 'sha256'), 'hex');
+    )::text, 'sha256'::text), 'hex');
   END IF;
 
   job_rows := jsonb_build_array(jsonb_build_object(
@@ -1895,13 +1895,13 @@ BEGIN
     RETURN NULL;
   END IF;
 
-  RETURN encode(digest(jsonb_build_object(
+  RETURN encode(public.digest(jsonb_build_object(
     'targetType', current_job.target_type,
     'targetId', current_job.target_id,
     'payload', payload,
     'promptVersion', current_job.prompt_version,
     'model', COALESCE(current_job.model, current_job.model_version)
-  )::text, 'sha256'), 'hex');
+  )::text, 'sha256'::text), 'hex');
 END;
 $$;
 
@@ -2185,13 +2185,13 @@ BEGIN
   IF current_sentence.id IS NULL THEN
     RAISE EXCEPTION 'Frase nao encontrada para traducao.';
   END IF;
-  expected_target_hash := encode(digest(jsonb_build_object(
+  expected_target_hash := encode(public.digest(jsonb_build_object(
     'targetType', 'sentence',
     'targetId', current_sentence.id,
     'payload', jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'sourceId', current_sentence.source_id),
     'promptVersion', current_job.prompt_version,
     'model', COALESCE(current_job.model, current_job.model_version)
-  )::text, 'sha256'), 'hex');
+  )::text, 'sha256'::text), 'hex');
   IF current_job.target_hash IS NOT NULL AND current_job.target_hash <> expected_target_hash THEN
     PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
     RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
@@ -2309,13 +2309,13 @@ BEGIN
   IF current_sentence.id IS NULL THEN
     RAISE EXCEPTION 'Frase nao encontrada para leitura.';
   END IF;
-  expected_target_hash := encode(digest(jsonb_build_object(
+  expected_target_hash := encode(public.digest(jsonb_build_object(
     'targetType', 'sentence',
     'targetId', current_sentence.id,
     'payload', jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'portuguese', current_sentence.portuguese, 'sourceId', current_sentence.source_id),
     'promptVersion', current_job.prompt_version,
     'model', COALESCE(current_job.model, current_job.model_version)
-  )::text, 'sha256'), 'hex');
+  )::text, 'sha256'::text), 'hex');
   IF current_job.target_hash IS NOT NULL AND current_job.target_hash <> expected_target_hash THEN
     PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
     RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
@@ -2424,13 +2424,13 @@ BEGIN
   IF current_sentence.id IS NULL THEN
     RAISE EXCEPTION 'Frase nao encontrada para analise lexical.';
   END IF;
-  expected_target_hash := encode(digest(jsonb_build_object(
+  expected_target_hash := encode(public.digest(jsonb_build_object(
     'targetType', 'sentence',
     'targetId', current_sentence.id,
     'payload', jsonb_build_object('id', current_sentence.id, 'sentence', current_sentence.japanese, 'japanese', current_sentence.japanese, 'portuguese', current_sentence.portuguese, 'kana', current_sentence.kana, 'romaji', current_sentence.romaji, 'sourceId', current_sentence.source_id),
     'promptVersion', current_job.prompt_version,
     'model', COALESCE(current_job.model, current_job.model_version)
-  )::text, 'sha256'), 'hex');
+  )::text, 'sha256'::text), 'hex');
   IF current_job.target_hash IS NOT NULL AND current_job.target_hash <> expected_target_hash THEN
     PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
     RETURN jsonb_build_object('obsolete', true, 'sentence_id', current_sentence.id);
@@ -2789,13 +2789,13 @@ BEGIN
   IF current_job.payload ? 'sourceId' THEN
     expected_payload := expected_payload || jsonb_build_object('sourceId', current_job.payload->>'sourceId');
   END IF;
-  expected_target_hash := encode(digest(jsonb_build_object(
+  expected_target_hash := encode(public.digest(jsonb_build_object(
     'targetType', 'dictionary_entry',
     'targetId', current_entry.id,
     'payload', expected_payload,
     'promptVersion', current_job.prompt_version,
     'model', COALESCE(current_job.model, current_job.model_version)
-  )::text, 'sha256'), 'hex');
+  )::text, 'sha256'::text), 'hex');
   IF current_job.target_hash IS NOT NULL AND current_job.target_hash <> expected_target_hash THEN
     PERFORM mark_ai_job_obsolete(p_job_id, p_worker_id, 'O alvo mudou depois da criacao do job.');
     RETURN jsonb_build_object('obsolete', true, 'entry_id', current_entry.id);
