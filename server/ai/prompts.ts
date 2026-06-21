@@ -1,6 +1,7 @@
 import {
   dictionarySchema,
   sentenceAnalysisSchema,
+  sentencePreparationSchema,
   translationSchema,
 } from "./schemas";
 import { getModelForJobType, getPromptVersion, getTemperatureForJobType } from "./modelPolicy";
@@ -15,6 +16,19 @@ export interface AiPromptRequest {
 
 export function buildSingleAiRequest(jobType: string, input: any): AiPromptRequest {
   const promptVersion = getPromptVersion(jobType);
+
+  if (jobType === "prepare_sentence") {
+    return withPolicy(jobType, promptVersion, {
+      prompt: buildSentencePreparationPrompt({
+        japanese: input.sentence || input.japanese,
+        portuguese: input.portuguese,
+        kana: input.kana,
+        romaji: input.romaji,
+        known_words: input.known_words,
+      }),
+      responseSchema: sentencePreparationSchema(),
+    });
+  }
 
   if (jobType === "translate_sentence") {
     return withPolicy(jobType, promptVersion, {
@@ -70,6 +84,29 @@ function withPolicy(
     temperature: getTemperatureForJobType(jobType),
     promptVersion,
   };
+}
+
+function buildSentencePreparationPrompt(item: any): string {
+  return `Tarefa: preparar uma frase japonesa para estudo em um unico resultado.
+Traduza naturalmente para portugues brasileiro, gere a leitura completa e detecte palavras/particulas relevantes.
+Retorne o objeto da unica frase.
+
+Regras obrigatorias:
+- translation: portugues brasileiro natural; nunca copie o japones como traducao.
+- Se uma traducao em portugues ja existir na entrada e estiver correta, preserve o sentido.
+- kana: leitura completa da frase em hiragana/katakana.
+- romaji: leitura completa em letras minusculas.
+- terms: lista de ocorrencias na frase, nao verbetes longos de dicionario.
+- surface deve ser substring EXATA da frase japonesa original.
+- start_index e end_index devem apontar exatamente para surface.
+- lemma deve ser forma canonica de dicionario.
+- Cubra palavras e particulas relevantes; ignore so pontuacao.
+- context_meaning deve ser curto, 1 a 3 palavras.
+- grammar_note so quando necessario para conjugacoes ou uso contextual.
+- Prefira known_words quando o lemma aparecer de fato na frase.
+
+Entrada:
+${JSON.stringify([{ id: "item", ...item }])}`;
 }
 
 function buildAnalysisPrompt(items: any[]): string {

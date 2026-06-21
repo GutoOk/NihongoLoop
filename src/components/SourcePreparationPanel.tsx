@@ -188,7 +188,7 @@ export default function SourcePreparationPanel({
                 Preparacao de IA da fonte
               </h2>
               <p className="max-w-2xl text-xs leading-relaxed text-slate-500">
-                Mostra a execucao persistida e enfileira somente lacunas reais desta fonte.
+                Mostra a execucao persistida e enfileira lacunas em um job unico por frase.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

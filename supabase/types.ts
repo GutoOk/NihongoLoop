@@ -172,6 +172,7 @@ export interface DictionaryProgress {
 }
 
 export type AiJobType =
+  | 'prepare_sentence'
   | 'translate_sentence'
   | 'generate_sentence_reading'
   | 'detect_sentence_terms'

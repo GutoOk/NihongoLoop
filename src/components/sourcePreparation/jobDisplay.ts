@@ -11,6 +11,7 @@ const VISIBLE_QUEUE_STATUSES = new Set([
 ]);
 
 export function getJobHumanName(type: string): string {
+  if (type === "prepare_sentence") return "Preparacao da frase";
   if (type === "translate_sentence") return "Traducao de frase";
   if (type === "generate_sentence_reading") return "Leitura de frase";
   if (type === "detect_sentence_terms") return "Termos da frase";

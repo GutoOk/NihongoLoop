@@ -28,6 +28,22 @@ export function sentenceAnalysisSchema() {
   };
 }
 
+export function sentencePreparationSchema() {
+  return {
+    type: Type.OBJECT,
+    properties: {
+      translation: { type: Type.STRING, description: "Traducao natural em portugues brasileiro." },
+      kana: { type: Type.STRING, description: "Leitura em kana da frase completa." },
+      romaji: { type: Type.STRING, description: "Romaji em letras minusculas." },
+      terms: {
+        type: Type.ARRAY,
+        items: termSchema(),
+      },
+    },
+    required: ["translation", "kana", "romaji", "terms"],
+  };
+}
+
 export function dictionarySchema(includeFullFields: boolean) {
   const properties: Record<string, unknown> = {
     main_meaning: { type: Type.STRING, description: "Significado principal em portugues." },

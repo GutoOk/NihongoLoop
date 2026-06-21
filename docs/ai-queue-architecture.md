@@ -29,9 +29,8 @@ No private value belongs in YAML, frontend env, GitHub workflow text or document
 
 ## Individual Job Types
 
-- `translate_sentence`: translates one sentence.
-- `generate_sentence_reading`: writes `kana` and `romaji` for one sentence.
-- `detect_sentence_terms`: detects and persists terms for one sentence with grouped upserts.
+- `prepare_sentence`: translates one sentence, writes `kana`/`romaji`, and detects terms in one AI call.
+- `translate_sentence`, `generate_sentence_reading`, `detect_sentence_terms`: legacy sentence jobs still accepted by the worker.
 - `enrich_dictionary_entry`: enriches one dictionary entry and upserts senses/forms.
 
 ## Worker Concurrency
@@ -40,9 +39,8 @@ Initial production defaults:
 
 - global: `8`
 - per user: `4`
-- `translate_sentence`: `4`
-- `generate_sentence_reading`: `2`
-- `detect_sentence_terms`: `1`
+- `prepare_sentence`: `3`
+- legacy sentence jobs keep their previous limits.
 - `enrich_dictionary_entry`: `1`
 
 The global budget is authoritative; type limits do not add up beyond it.
@@ -59,7 +57,7 @@ The global budget is authoritative; type limits do not add up beyond it.
 - `schema_versions`
 - queue RPCs for claim, start, heartbeat, complete, fail, release and lease recovery
 
-The worker requires `schema_versions('ai_queue') = 2026-06-ai-queue-v25`.
+The worker requires `schema_versions('ai_queue') = 2026-06-ai-queue-v28`.
 
 After applying the destructive clean baseline, bootstrap the real Auth admin with the service role before starting the worker:
 

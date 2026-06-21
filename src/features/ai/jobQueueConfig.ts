@@ -16,6 +16,7 @@ export const DEFAULT_AI_QUEUE_LIMITS: AiQueueLimits = {
   claimBatchSize: 8,
   leaseSeconds: 300,
   byType: {
+    prepare_sentence: 3,
     translate_sentence: 4,
     generate_sentence_reading: 2,
     detect_sentence_terms: 1,

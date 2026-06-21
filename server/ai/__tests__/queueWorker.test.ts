@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getErrorMessage, getJobInput, processTranslateSentenceJob } from '../queueWorker';
+import { getErrorMessage, getJobInput, processPrepareSentenceJob, processTranslateSentenceJob } from '../queueWorker';
 import { generateStructuredJsonWithMeta } from '../../geminiJson';
 
 vi.mock('../../geminiJson', () => ({
@@ -12,6 +12,7 @@ const schema = readFileSync(resolve(process.cwd(), 'schema.sql'), 'utf8');
 const lexicalOffsetMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v25_lexical_offset_validation.sql'), 'utf8');
 const lexicalIntegrityMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v26_lexical_integrity_and_unicode.sql'), 'utf8');
 const continueAfterFailureMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v27_continue_ai_queue_after_job_failures.sql'), 'utf8');
+const unifiedSentencePreparationMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v28_unified_sentence_preparation.sql'), 'utf8');
 const normalizedLexicalOffsetMigration = lexicalOffsetMigration.replace(/\r\n/g, '\n');
 const normalizedLexicalIntegrityMigration = lexicalIntegrityMigration.replace(/\r\n/g, '\n');
 
@@ -37,13 +38,35 @@ function makeClient(canExecute: boolean) {
     target_id: 'sentence-1',
     status: 'running',
     worker_id: 'worker-1',
-    payload: { id: 'sentence-1', sentence: '待って', japanese: '待って' },
+    payload: { id: 'sentence-1', sentence: '\u5f85\u3063\u3066', japanese: '\u5f85\u3063\u3066' },
   };
   return {
     rpc: vi.fn(async (name: string) => {
       if (name === 'start_claimed_ai_job') return { data: job, error: null };
       if (name === 'validate_ai_job_for_execution') return { data: canExecute ? job : { can_execute: false }, error: null };
       if (name === 'apply_sentence_translation_result') return { data: { sentence_id: 'sentence-1' }, error: null };
+      return { data: null, error: null };
+    }),
+  } as any;
+}
+
+function makePrepareClient(canExecute: boolean) {
+  const job = {
+    can_execute: canExecute,
+    id: 'job-prepare-1',
+    user_id: 'user-1',
+    type: 'prepare_sentence',
+    target_type: 'sentence',
+    target_id: 'sentence-1',
+    status: 'running',
+    worker_id: 'worker-1',
+    payload: { id: 'sentence-1', sentence: '待って', japanese: '待って' },
+  };
+  return {
+    rpc: vi.fn(async (name: string) => {
+      if (name === 'start_claimed_ai_job') return { data: job, error: null };
+      if (name === 'validate_ai_job_for_execution') return { data: canExecute ? job : { can_execute: false }, error: null };
+      if (name === 'apply_sentence_preparation_result') return { data: { sentence_id: 'sentence-1' }, error: null };
       return { data: null, error: null };
     }),
   } as any;
@@ -82,6 +105,26 @@ describe('queueWorker persisted execution contract', () => {
     expect(getErrorMessage({ error: { message: 'This model is currently experiencing high demand' } })).toBe('This model is currently experiencing high demand');
   });
 
+  it('prepares translation, reading and terms with one Gemini request and one job apply', async () => {
+    vi.mocked(generateStructuredJsonWithMeta).mockResolvedValueOnce({
+      data: { translation: 'Espere.', kana: '\u307e\u3063\u3066', romaji: 'matte', terms: [{ surface: '\u5f85\u3063\u3066', lemma: '\u5f85\u3064', start_index: 0, end_index: 2, type: 'verbo' }] },
+      meta: { model: 'fake', temperature: 0, latency_ms: 1, input_chars: 1, output_chars: 1 },
+    } as any);
+    const client = makePrepareClient(true);
+
+    await processPrepareSentenceJob(client, { id: 'job-prepare-1' } as any, 'worker-1', 300, vi.fn(() => ({})) as any);
+
+    expect(generateStructuredJsonWithMeta).toHaveBeenCalledTimes(1);
+    expect(client.rpc).toHaveBeenCalledWith('apply_sentence_preparation_result', expect.objectContaining({
+      p_job_id: 'job-prepare-1',
+      p_translation: 'Espere.',
+      p_kana: '\u307e\u3063\u3066',
+      p_romaji: 'matte',
+    }));
+    expect(client.rpc).not.toHaveBeenCalledWith('apply_sentence_translation_result', expect.anything());
+    expect(client.rpc).not.toHaveBeenCalledWith('apply_sentence_lexical_analysis_result', expect.anything());
+  });
+
   it('marks permanent invalid job input as final without retry wait', () => {
     const body = functionBody('fail_ai_job_for_retry');
     expect(body).toContain("IF p_error_kind = 'permanent' THEN");
@@ -91,7 +134,7 @@ describe('queueWorker persisted execution contract', () => {
   it('continues orchestration around terminal failures for other targets', () => {
     const body = functionBody('create_or_resume_source_processing_run');
     expect(body).toContain("status IN ('failed','needs_review')");
-    expect(body).toContain("old.type = 'translate_sentence'");
+    expect(body).toContain("old.type = 'prepare_sentence'");
     expect(body).toContain("old.type = 'detect_sentence_terms'");
     expect(body).toContain("old.type = 'enrich_dictionary_entry'");
     expect(body).not.toContain("'Falha terminal exige retry manual.'");
@@ -104,6 +147,19 @@ describe('queueWorker persisted execution contract', () => {
     expect(continueAfterFailureMigration).toContain("old.type = 'enrich_dictionary_entry'");
     expect(continueAfterFailureMigration).not.toContain("'Falha terminal exige retry manual.'");
     expect(continueAfterFailureMigration.trim().endsWith('COMMIT;')).toBe(true);
+  });
+
+  it('ships unified sentence preparation orchestration', () => {
+    const body = functionBody('create_or_resume_source_processing_run');
+    expect(body).toContain("old.type = 'prepare_sentence'");
+    expect(body).toContain("selected_stage := 'sentence_preparation'");
+    expect(body).toContain("'prepare_sentence' AS type");
+    expect(body.indexOf("'prepare_sentence' AS type")).toBeLessThan(body.indexOf("'enrich_dictionary_entry' AS type"));
+    expect(schema).toContain('CREATE OR REPLACE FUNCTION public.apply_sentence_preparation_result');
+    expect(schema).toContain('public.build_ai_job_current_target_hash(current_job ai_jobs)');
+    expect(unifiedSentencePreparationMigration).toContain('CREATE OR REPLACE FUNCTION public.create_or_resume_source_processing_run');
+    expect(unifiedSentencePreparationMigration).toContain('CREATE OR REPLACE FUNCTION public.apply_sentence_preparation_result');
+    expect(unifiedSentencePreparationMigration.trim().endsWith('COMMIT;')).toBe(true);
   });
 
   it('manual retry creates a new job preserving the previous one', () => {

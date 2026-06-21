@@ -3,7 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import { buildSingleAiRequest } from "./prompts";
 import { generateStructuredJsonWithMeta } from "../geminiJson";
 
-export const AI_QUEUE_SCHEMA_VERSION = "2026-06-ai-queue-v25";
+export const AI_QUEUE_SCHEMA_VERSION = "2026-06-ai-queue-v28";
 
 type QueueJob = {
   id: string;
@@ -134,6 +134,7 @@ function buildJobRequest(job: QueueJob) {
 }
 
 function getTypeLimit(jobType: string): number {
+  if (jobType === "prepare_sentence") return Math.max(1, Math.min(Number(process.env.AI_WORKER_PREPARE_SENTENCE_CONCURRENCY || 3), 32));
   if (jobType === "translate_sentence") return Math.max(1, Math.min(Number(process.env.AI_WORKER_TRANSLATE_CONCURRENCY || 4), 32));
   if (jobType === "generate_sentence_reading") return Math.max(1, Math.min(Number(process.env.AI_WORKER_READING_CONCURRENCY || 2), 32));
   if (jobType === "detect_sentence_terms") return Math.max(1, Math.min(Number(process.env.AI_WORKER_TERMS_CONCURRENCY || 1), 16));
@@ -259,7 +260,7 @@ function classifyError(error: unknown): { message: string; code: string | null; 
   if (lower.includes("resultado invalido") || lower.includes("tradu") && lower.includes("ausente") || lower.includes("kana") || lower.includes("romaji")) {
     return { message, code: "INVALID_AI_RESPONSE", kind: "invalid_response" };
   }
-  if (lower.includes("frase nao encontrada") || lower.includes("job sem sentence") || lower.includes("job sem texto japones") || lower.includes("job sem lemma")) {
+  if (lower.includes("frase nao encontrada") || lower.includes("job sem sentence") || lower.includes("job sem texto japones") || lower.includes("job sem lemma") || lower.includes("job sem texto japones para preparacao")) {
     return { message, code: "INVALID_JOB_INPUT", kind: "permanent" };
   }
   return { message, code: "TRANSIENT_ERROR", kind: "transient" };
@@ -293,7 +294,7 @@ async function claimCoordinatedJobs(
   workerId: string,
   leaseSeconds: number,
 ): Promise<QueueJob[]> {
-  const supportedTypes = ["translate_sentence", "generate_sentence_reading", "detect_sentence_terms", "enrich_dictionary_entry"];
+  const supportedTypes = ["prepare_sentence", "translate_sentence", "generate_sentence_reading", "detect_sentence_terms", "enrich_dictionary_entry"];
   const globalLimit = getGlobalLimit();
   const userLimit = getUserLimit();
   const typeLimits = Object.fromEntries(supportedTypes.map((type) => [type, getTypeLimit(type)]));
@@ -382,6 +383,33 @@ async function applyLexicalResultRpc(
   const { data, error } = await client.rpc("apply_sentence_lexical_analysis_result", {
     p_job_id: jobId,
     p_worker_id: workerId,
+    p_kana: analysis.kana ?? null,
+    p_romaji: analysis.romaji ?? null,
+    p_terms: Array.isArray(analysis.terms) ? analysis.terms : [],
+    p_result: result,
+    p_raw_result: rawResult,
+    p_input_tokens: meta.inputTokens ?? null,
+    p_output_tokens: meta.outputTokens ?? null,
+    p_cost_actual: meta.costActual ?? null,
+    p_latency_ai_ms: meta.latencyAiMs ?? null,
+  });
+  if (error) throw error;
+  return data;
+}
+
+async function applySentencePreparationResultRpc(
+  client: SupabaseClient,
+  jobId: string,
+  workerId: string,
+  analysis: { translation?: string; kana?: string; romaji?: string; terms?: unknown[] },
+  result: any,
+  rawResult: any,
+  meta: { inputTokens?: number | null; outputTokens?: number | null; latencyAiMs?: number | null; costActual?: number | null },
+) {
+  const { data, error } = await client.rpc("apply_sentence_preparation_result", {
+    p_job_id: jobId,
+    p_worker_id: workerId,
+    p_translation: analysis.translation ?? null,
     p_kana: analysis.kana ?? null,
     p_romaji: analysis.romaji ?? null,
     p_terms: Array.isArray(analysis.terms) ? analysis.terms : [],
@@ -500,6 +528,76 @@ export async function processTranslateSentenceJob(
     {
       translation: data.translation,
       sentence_id: input.id || runningJob.target_id,
+      ai_meta: {
+        job_type: runningJob.type,
+        prompt_version: request.promptVersion,
+        model: meta.model,
+        temperature: meta.temperature,
+        latency_ms: meta.latency_ms,
+        input_chars: meta.input_chars,
+        output_chars: meta.output_chars,
+        usage_metadata: meta.usage_metadata,
+      },
+    },
+    data,
+    {
+      latencyAiMs: meta.latency_ms,
+      inputTokens: (meta.usage_metadata as any)?.promptTokenCount ?? null,
+      outputTokens: (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
+      costActual: await estimateCostActual(
+        client,
+        meta.model,
+        (meta.usage_metadata as any)?.promptTokenCount ?? null,
+        (meta.usage_metadata as any)?.candidatesTokenCount ?? null,
+      ),
+    },
+  );
+}
+
+export async function processPrepareSentenceJob(
+  client: SupabaseClient,
+  job: QueueJob,
+  workerId: string,
+  leaseSeconds: number,
+  getAi: () => GoogleGenAI,
+) {
+  await startJob(client, job, workerId, leaseSeconds);
+  const runningJob = await validateJobForExecution(client, job.id, workerId);
+  if (!runningJob) return;
+  const input = getJobInput(runningJob);
+  const sentenceText = input.sentence || input.japanese;
+  if (!sentenceText) throw new Error("Job sem texto japones para preparacao de frase.");
+
+  const request = buildJobRequest(runningJob);
+  const { data, meta } = await generateStructuredJsonWithMeta<{ translation?: string; kana?: string; romaji?: string; terms?: unknown[] }>({
+    ai: getAi(),
+    prompt: request.prompt,
+    responseSchema: request.responseSchema,
+    model: request.model,
+    temperature: request.temperature,
+  });
+
+  if (!data.translation || !String(data.translation).trim()) {
+    throw new Error("Resultado invalido: traducao ausente.");
+  }
+  if (!data.kana || !data.romaji) {
+    throw new Error("Resultado invalido: kana ou romaji ausente.");
+  }
+  if (!Array.isArray(data.terms)) {
+    throw new Error("Resultado invalido: lista de termos ausente.");
+  }
+
+  await applySentencePreparationResultRpc(
+    client,
+    runningJob.id,
+    workerId,
+    data,
+    {
+      translation: data.translation,
+      kana: data.kana,
+      romaji: data.romaji,
+      sentence_id: input.id || runningJob.target_id,
+      termCount: data.terms.length,
       ai_meta: {
         job_type: runningJob.type,
         prompt_version: request.promptVersion,
@@ -735,7 +833,9 @@ export function startAiQueueWorker(options: AiQueueWorkerOptions): AiQueueWorker
           jobs.map(async (job) => {
             try {
               await withLeaseHeartbeat(client, job.id, workerId, leaseSeconds, async () => {
-                if (job.type === "translate_sentence") {
+                if (job.type === "prepare_sentence") {
+                  await processPrepareSentenceJob(client, job, workerId, leaseSeconds, options.getAi);
+                } else if (job.type === "translate_sentence") {
                   await processTranslateSentenceJob(client, job, workerId, leaseSeconds, options.getAi);
                 } else if (job.type === "generate_sentence_reading") {
                   await processGenerateSentenceReadingJob(client, job, workerId, leaseSeconds, options.getAi);
@@ -780,12 +880,13 @@ export function startAiQueueWorker(options: AiQueueWorkerOptions): AiQueueWorker
     concurrency: {
       global: getGlobalLimit(),
       per_user: getUserLimit(),
+      prepare_sentence: getTypeLimit("prepare_sentence"),
       translate_sentence: getTypeLimit("translate_sentence"),
       generate_sentence_reading: getTypeLimit("generate_sentence_reading"),
       detect_sentence_terms: getTypeLimit("detect_sentence_terms"),
       enrich_dictionary_entry: getTypeLimit("enrich_dictionary_entry"),
     },
-    jobTypes: ["translate_sentence", "generate_sentence_reading", "detect_sentence_terms", "enrich_dictionary_entry"],
+    jobTypes: ["prepare_sentence", "translate_sentence", "generate_sentence_reading", "detect_sentence_terms", "enrich_dictionary_entry"],
   });
   timer = setTimeout(tick, 250);
 

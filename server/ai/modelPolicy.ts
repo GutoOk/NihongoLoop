@@ -1,6 +1,10 @@
-export type AiPromptKind = "translate_sentence" | "analyze_sentence" | "enrich_dictionary";
+export type AiPromptKind = "prepare_sentence" | "translate_sentence" | "analyze_sentence" | "enrich_dictionary";
 
 export function getPromptKind(jobType: string): AiPromptKind | null {
+  if (jobType === "prepare_sentence") {
+    return "prepare_sentence";
+  }
+
   if (jobType === "translate_sentence") {
     return "translate_sentence";
   }
@@ -26,7 +30,7 @@ export function getModelForJobType(jobType: string): string {
   if (envSpecific) return envSpecific;
   const cheapestModel = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
 
-  if (jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms") {
+  if (jobType === "prepare_sentence" || jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms") {
     return process.env.GEMINI_MODEL_ANALYZE || cheapestModel;
   }
 
@@ -34,6 +38,7 @@ export function getModelForJobType(jobType: string): string {
 }
 
 export function getTemperatureForJobType(jobType: string): number {
+  if (jobType === "prepare_sentence") return 0.1;
   if (jobType === "translate_sentence") return 0.15;
   if (jobType === "generate_sentence_reading" || jobType === "detect_sentence_terms") return 0.1;
   return 0.2;
