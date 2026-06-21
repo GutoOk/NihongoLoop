@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { AiJob, ProcessingRun } from '../types';
 import { AiJobRepository, ProcessingRunRepository } from '../repositories';
+import { AiQueueSummary } from '../repositories/aiJobRepository';
 import { useModal } from './ModalProvider';
 import { getJobHumanName } from './sourcePreparation/jobDisplay';
 
@@ -26,6 +27,7 @@ export default function SourcePreparationPanel({
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [run, setRun] = useState<ProcessingRun | null>(null);
   const [showGlobal, setShowGlobal] = useState(false);
+  const [globalSummary, setGlobalSummary] = useState<AiQueueSummary | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -41,8 +43,8 @@ export default function SourcePreparationPanel({
   }, [sourceId, showGlobal]);
 
   const refresh = async (silent = false) => {
-    setIsRefreshing(true);
     if (loadingRef.current) return;
+    setIsRefreshing(true);
     loadingRef.current = true;
     try {
       const latestRun = showGlobal ? null : await ProcessingRunRepository.getLatestRunBySource(sourceId);
@@ -51,6 +53,7 @@ export default function SourcePreparationPanel({
         : latestRun
           ? await AiJobRepository.getByRun(latestRun.id, 100)
           : await AiJobRepository.getBySource(sourceId);
+      const latestGlobalSummary = showGlobal ? await AiJobRepository.getGlobalSummary() : null;
       const signature = JSON.stringify({
         run: latestRun ? {
           status: latestRun.status,
@@ -63,6 +66,7 @@ export default function SourcePreparationPanel({
       if (signatureRef.current && signatureRef.current !== signature) onContentUpdated?.();
       signatureRef.current = signature;
       setRun(latestRun);
+      setGlobalSummary(latestGlobalSummary);
       setJobs(sourceJobs);
       setLoadError(null);
     } catch (error: any) {
@@ -126,7 +130,7 @@ export default function SourcePreparationPanel({
   };
 
   const sampledQueueCounts = useMemo(() => summarizeJobs(jobs), [jobs]);
-  const queueCounts = useMemo(() => showGlobal ? sampledQueueCounts : summarizeRun(run), [run, sampledQueueCounts, showGlobal]);
+  const queueCounts = useMemo(() => showGlobal ? (globalSummary || sampledQueueCounts) : summarizeRun(run), [globalSummary, run, sampledQueueCounts, showGlobal]);
   const visibleJobs = useMemo(() => jobs.filter(isVisibleQueueJob), [jobs]);
   const visibleJobTotal = showGlobal ? jobs.length : (run?.created_jobs || run?.planned_jobs || jobs.length);
   const isJobListLimited = !showGlobal && visibleJobTotal > jobs.length && jobs.length >= 100;

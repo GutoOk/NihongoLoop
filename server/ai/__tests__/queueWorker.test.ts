@@ -9,6 +9,7 @@ vi.mock('../../geminiJson', () => ({
 }));
 
 const schema = readFileSync(resolve(process.cwd(), 'schema.sql'), 'utf8');
+const lexicalOffsetMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v25_lexical_offset_validation.sql'), 'utf8');
 
 function functionBody(name: string) {
   const start = schema.indexOf(`CREATE OR REPLACE FUNCTION public.${name}`);
@@ -102,5 +103,12 @@ describe('queueWorker persisted execution contract', () => {
     expect(body).not.toContain('ORDER BY ABS');
     expect(body).toContain('SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface');
     expect(body).toContain('invalid_offset_count');
+  });
+
+  it('lexical offset migration applies the corrected RPC without realignment', () => {
+    expect(lexicalOffsetMigration).toContain('CREATE OR REPLACE FUNCTION public.apply_sentence_lexical_analysis_result');
+    expect(lexicalOffsetMigration).toContain('SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface');
+    expect(lexicalOffsetMigration).not.toContain('generate_series');
+    expect(lexicalOffsetMigration).not.toContain('ORDER BY ABS');
   });
 });

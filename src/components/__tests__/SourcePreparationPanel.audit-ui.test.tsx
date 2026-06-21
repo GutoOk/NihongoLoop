@@ -14,6 +14,7 @@ vi.mock('../../repositories', () => ({
     getByRun: vi.fn(),
     getBySource: vi.fn(),
     getAll: vi.fn(),
+    getGlobalSummary: vi.fn(),
     retryProblemJobsByRun: vi.fn(),
     retryProblemJobsBySource: vi.fn(),
     retryAllProblemJobs: vi.fn(),
@@ -64,6 +65,18 @@ describe('SourcePreparationPanel audit controls', () => {
     vi.clearAllMocks();
     vi.mocked(ProcessingRunRepository.getLatestRunBySource).mockResolvedValue(baseRun);
     vi.mocked(AiJobRepository.getByRun).mockResolvedValue(Array.from({ length: 100 }, (_, i) => job(i)));
+    vi.mocked(AiJobRepository.getAll).mockResolvedValue([]);
+    vi.mocked(AiJobRepository.getGlobalSummary).mockResolvedValue({
+      pending: 0,
+      running: 0,
+      retry: 0,
+      review: 0,
+      completed: 0,
+      cancelled: 0,
+      error: 0,
+      stuck: 0,
+      clearable: 0,
+    });
     vi.mocked(ProcessingRunRepository.startSourceProcessingRun).mockResolvedValue({ run_id: 'run-1', created_jobs: 0, status: 'running' });
     vi.mocked(ProcessingRunRepository.getRun).mockResolvedValue(baseRun);
   });
@@ -77,6 +90,22 @@ describe('SourcePreparationPanel audit controls', () => {
     const button = screen.getByRole('button', { name: /atualizando/i });
     expect(button).toBeDisabled();
     expect(button.querySelector('.animate-spin')).toBeTruthy();
+
+    resolveRun(baseRun);
+    await waitFor(() => expect(screen.getByRole('button', { name: /atualizar dados/i })).toBeEnabled());
+  });
+
+  it('does not get stuck refreshing after simultaneous refresh clicks', async () => {
+    const user = userEvent.setup();
+    render(<SourcePreparationPanel sourceId="source-1" onPreparationComplete={vi.fn()} />);
+    await screen.findByRole('button', { name: /atualizar dados/i });
+
+    let resolveRun: (run: any) => void = () => {};
+    vi.mocked(ProcessingRunRepository.getLatestRunBySource).mockReturnValueOnce(new Promise((resolve) => { resolveRun = resolve; }) as any);
+    const button = screen.getByRole('button', { name: /atualizar dados/i });
+
+    await user.dblClick(button);
+    expect(screen.getByRole('button', { name: /atualizando/i })).toBeDisabled();
 
     resolveRun(baseRun);
     await waitFor(() => expect(screen.getByRole('button', { name: /atualizar dados/i })).toBeEnabled());
@@ -107,5 +136,27 @@ describe('SourcePreparationPanel audit controls', () => {
     expect(ProcessingRunRepository.startSourceProcessingRun).toHaveBeenCalledWith('source-1', 'all');
     expect(screen.queryByText('Gerar fila das pendencias reais')).not.toBeInTheDocument();
     expect(screen.queryByText('Criar/retomar execucao')).not.toBeInTheDocument();
+  });
+
+  it('uses global summary totals for global queue actions', async () => {
+    const user = userEvent.setup();
+    vi.mocked(AiJobRepository.getGlobalSummary).mockResolvedValue({
+      pending: 3,
+      running: 1,
+      retry: 2,
+      review: 0,
+      completed: 200,
+      cancelled: 0,
+      error: 0,
+      stuck: 0,
+      clearable: 3,
+    });
+
+    render(<SourcePreparationPanel sourceId="source-1" onPreparationComplete={vi.fn()} />);
+    await user.click(await screen.findByRole('button', { name: /ver global/i }));
+
+    expect(await screen.findByRole('button', { name: /retentar problemas/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /cancelar fila global ativa/i })).toBeEnabled();
+    expect(AiJobRepository.getGlobalSummary).toHaveBeenCalled();
   });
 });
