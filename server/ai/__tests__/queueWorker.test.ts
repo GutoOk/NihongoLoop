@@ -125,6 +125,16 @@ describe('queueWorker persisted execution contract', () => {
     expect(client.rpc).not.toHaveBeenCalledWith('apply_sentence_lexical_analysis_result', expect.anything());
   });
 
+  it('rejects empty terms for normal Japanese sentence preparation', async () => {
+    vi.mocked(generateStructuredJsonWithMeta).mockResolvedValueOnce({
+      data: { translation: 'Espere.', kana: '\u307e\u3063\u3066', romaji: 'matte', terms: [] },
+      meta: { model: 'fake', temperature: 0, latency_ms: 1, input_chars: 1, output_chars: 1 },
+    } as any);
+
+    await expect(processPrepareSentenceJob(makePrepareClient(true), { id: 'job-prepare-1' } as any, 'worker-1', 300, vi.fn(() => ({})) as any))
+      .rejects.toThrow('lista de termos vazia');
+  });
+
   it('marks permanent invalid job input as final without retry wait', () => {
     const body = functionBody('fail_ai_job_for_retry');
     expect(body).toContain("IF p_error_kind = 'permanent' THEN");

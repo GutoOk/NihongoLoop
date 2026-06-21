@@ -62,12 +62,15 @@ const AI_JOB_LIST_SELECT = [
 export class AiJobRepository {
   static async getAll(): Promise<AiJob[]> {
     if (!isSupabaseConfigured) return [];
-    const { data } = await supabase!
+    const { data, error } = await supabase!
       .from('ai_jobs')
       .select(AI_JOB_LIST_SELECT)
       .eq('user_id', getUserId())
       .order('created_at', { ascending: false })
       .limit(500);
+    if (error) {
+      throw new Error(`Erro do Supabase ao carregar fila: ${error.message}`);
+    }
     return (data || []) as unknown as AiJob[];
   }
 

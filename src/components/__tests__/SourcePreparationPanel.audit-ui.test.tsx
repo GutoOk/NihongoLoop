@@ -79,6 +79,8 @@ function job(id: number) {
 describe('SourcePreparationPanel audit controls', () => {
   const aiJobRepositorySource = readFileSync(resolve(process.cwd(), 'src/repositories/aiJobRepository.ts'), 'utf8');
   const sourcePreparationPanelSource = readFileSync(resolve(process.cwd(), 'src/components/SourcePreparationPanel.tsx'), 'utf8');
+  const globalAiQueueControlSource = readFileSync(resolve(process.cwd(), 'src/components/GlobalAiQueueControl.tsx'), 'utf8');
+  const pendingAiScreenSource = readFileSync(resolve(process.cwd(), 'src/components/PendingAiScreen.tsx'), 'utf8');
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -153,10 +155,22 @@ describe('SourcePreparationPanel audit controls', () => {
     expect(AiJobRepository.getByRun).toHaveBeenCalledWith('run-1', 100);
   });
 
-  it('shows when only the latest 100 of 225 jobs are displayed', async () => {
+  it('does not present hidden completed history as missing visible jobs', async () => {
     render(<SourcePreparationPanel sourceId="source-1" onPreparationComplete={vi.fn()} />);
 
-    expect(await screen.findByText('Exibindo os últimos 100 de 225 jobs.')).toBeInTheDocument();
+    await screen.findByText('Nenhum job para exibir.');
+    expect(screen.queryByText(/Exibindo os .* de .* jobs/i)).not.toBeInTheDocument();
+  });
+
+  it('explains that completed jobs stay only in counters when attention jobs are visible', async () => {
+    vi.mocked(AiJobRepository.getByRun).mockResolvedValueOnce([
+      { ...job(1), status: 'running' },
+      ...Array.from({ length: 99 }, (_, i) => job(i + 2)),
+    ]);
+
+    render(<SourcePreparationPanel sourceId="source-1" onPreparationComplete={vi.fn()} />);
+
+    expect(await screen.findByText('Concluidos ficam apenas nos contadores. Exibindo 1 job que requer atencao.')).toBeInTheDocument();
   });
 
   it('keeps only one primary preparation action', async () => {
@@ -195,13 +209,21 @@ describe('SourcePreparationPanel audit controls', () => {
 
   it('gets global queue summary through one RPC instead of browser-side counts', () => {
     expect(aiJobRepositorySource).toContain("rpc('get_ai_queue_summary')");
+    expect(aiJobRepositorySource).toContain("throw new Error(`Erro do Supabase ao carregar fila: ${error.message}`)");
     expect(aiJobRepositorySource).not.toContain("count(['pending']");
     expect(aiJobRepositorySource).not.toContain("{ count: 'exact', head: true }");
   });
 
+  it('only exposes cancellation for active global jobs', () => {
+    expect(globalAiQueueControlSource).toContain("'pending'");
+    expect(globalAiQueueControlSource).toContain("'needs_review'");
+    expect(globalAiQueueControlSource).not.toContain('return Boolean(job.id)');
+    expect(pendingAiScreenSource).toContain('CANCELLABLE_JOB_STATUSES.includes(job.status)');
+  });
+
   it('shows a limited-list notice for global queue totals', () => {
     expect(sourcePreparationPanelSource).toContain('globalSummary?.total || jobs.length');
-    expect(sourcePreparationPanelSource).toContain('jobs.length >= (showGlobal ? 500 : 100)');
-    expect(sourcePreparationPanelSource).toContain('Exibindo os últimos');
+    expect(sourcePreparationPanelSource).toContain('hiddenHistoricalJobs > 0 && visibleJobs.length > 0');
+    expect(sourcePreparationPanelSource).toContain('Concluidos ficam apenas nos contadores');
   });
 });

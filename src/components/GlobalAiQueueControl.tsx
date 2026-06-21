@@ -5,6 +5,14 @@ import { AiJob } from '../types';
 import { getJobHumanName, getJobPreview, isVisibleQueueJob } from './sourcePreparation/jobDisplay';
 import { useModal } from './ModalProvider';
 
+const CLEARABLE_QUEUE_STATUSES: AiJob['status'][] = [
+  'pending',
+  'claimed',
+  'running',
+  'retry_wait',
+  'needs_review',
+];
+
 export function GlobalAiQueueControl() {
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -116,7 +124,7 @@ export function GlobalAiQueueControl() {
 }
 
 function isClearableQueueJob(job: AiJob): boolean {
-  return Boolean(job.id);
+  return CLEARABLE_QUEUE_STATUSES.includes(job.status);
 }
 
 function QueueMetric({ label, value }: { label: string; value: number }) {

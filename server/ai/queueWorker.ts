@@ -133,6 +133,40 @@ function buildJobRequest(job: QueueJob) {
   };
 }
 
+function hasJapaneseText(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0) || 0;
+    if ((code >= 0x3040 && code <= 0x30ff) || (code >= 0x3400 && code <= 0x9fff)) return true;
+  }
+  return false;
+}
+
+function isMinimalJapaneseUtterance(value: string): boolean {
+  const compact = value.replace(/[\s!?.,;:'"()[\]{}<>\/\\|~`@#$%^&*_+=-]/g, "");
+  const isolated = new Set([
+    "\u3042",
+    "\u3048",
+    "\u3046\u3093",
+    "\u3046\u3046\u3093",
+    "\u304a\u3046",
+    "\u306f\u3044",
+    "\u3044\u3044\u3048",
+    "\u306d",
+    "\u3088",
+  ]);
+  if (isolated.has(compact)) return true;
+  let japaneseChars = 0;
+  for (const char of compact) {
+    const code = char.codePointAt(0) || 0;
+    if ((code >= 0x3040 && code <= 0x30ff) || (code >= 0x3400 && code <= 0x9fff)) japaneseChars += 1;
+  }
+  return japaneseChars <= 1;
+}
+
+function shouldRejectEmptyTerms(sentenceText: string, terms: unknown[]): boolean {
+  return terms.length === 0 && hasJapaneseText(sentenceText) && !isMinimalJapaneseUtterance(sentenceText);
+}
+
 function getTypeLimit(jobType: string): number {
   if (jobType === "prepare_sentence") return Math.max(1, Math.min(Number(process.env.AI_WORKER_PREPARE_SENTENCE_CONCURRENCY || 3), 32));
   if (jobType === "translate_sentence") return Math.max(1, Math.min(Number(process.env.AI_WORKER_TRANSLATE_CONCURRENCY || 4), 32));
@@ -585,6 +619,9 @@ export async function processPrepareSentenceJob(
   }
   if (!Array.isArray(data.terms)) {
     throw new Error("Resultado invalido: lista de termos ausente.");
+  }
+  if (shouldRejectEmptyTerms(String(sentenceText), data.terms)) {
+    throw new Error("Resultado invalido: lista de termos vazia para frase japonesa.");
   }
 
   await applySentencePreparationResultRpc(

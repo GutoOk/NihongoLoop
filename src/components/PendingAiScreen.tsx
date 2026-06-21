@@ -15,6 +15,13 @@ import { useModal } from "./ModalProvider";
 import { GlobalAiQueueControl } from "./GlobalAiQueueControl";
 import { getJobPreview, isVisibleQueueJob } from "./sourcePreparation/jobDisplay";
 
+const CANCELLABLE_JOB_STATUSES: AiJob["status"][] = [
+  "pending",
+  "claimed",
+  "running",
+  "retry_wait",
+];
+
 export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,6 +127,7 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
         )}
 
         {jobs.map((job) => {
+          const canCancel = CANCELLABLE_JOB_STATUSES.includes(job.status);
           return (
             <div
               key={job.id}
@@ -136,9 +144,11 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
                       </h3>
                    </div>
                    
-                   <button onClick={(e) => cancelSingleJob(job.id, e)} className="p-1.5 bg-rose-50 text-rose-500 hover:bg-rose-100 rounded-md transition-colors" title="Cancelar job">
-                     <Square className="w-3.5 h-3.5" />
-                   </button>
+                   {canCancel && (
+                     <button onClick={(e) => cancelSingleJob(job.id, e)} className="p-1.5 bg-rose-50 text-rose-500 hover:bg-rose-100 rounded-md transition-colors" title="Cancelar job">
+                       <Square className="w-3.5 h-3.5" />
+                     </button>
+                   )}
                 </div>
 
                 <div className="bg-slate-50/70 rounded-lg p-2.5 border border-slate-100 space-y-1.5">

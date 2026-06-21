@@ -1,0 +1,57 @@
+name: Supabase Migrations
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: supabase-production-migrations
+  cancel-in-progress: false
+
+jobs:
+  push:
+    name: Push migrations to production
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Validate Supabase secrets
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN" || {
+            echo "Missing GitHub secret SUPABASE_ACCESS_TOKEN."
+            exit 1
+          }
+          test -n "$SUPABASE_DB_PASSWORD" || {
+            echo "Missing GitHub secret SUPABASE_DB_PASSWORD."
+            exit 1
+          }
+          test -n "$SUPABASE_PROJECT_ID" || {
+            echo "Missing GitHub secret SUPABASE_PROJECT_ID."
+            exit 1
+          }
+
+      - name: Link Supabase project
+        run: |
+          if [ ! -f supabase/config.toml ]; then
+            supabase init
+          fi
+          supabase link --project-ref "$SUPABASE_PROJECT_ID"
+
+      - name: Push pending migrations
+        run: supabase db push --linked

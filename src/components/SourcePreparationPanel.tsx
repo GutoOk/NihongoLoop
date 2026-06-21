@@ -129,7 +129,7 @@ export default function SourcePreparationPanel({
 
   const cancelPending = async () => {
     const scopeLabel = showGlobal ? 'global' : 'desta fonte';
-    if (!(await showConfirm('Cancelar jobs nao concluidos', `Isso vai marcar como cancelados os jobs ${scopeLabel} que ainda estejam pendentes, reivindicados, rodando, em retry ou em revisao. Historico e resultados ja concluidos permanecem para auditoria.`))) {
+    if (!(await showConfirm('Cancelar jobs nao concluidos', `Isso vai marcar como cancelados os jobs ${scopeLabel} que ainda estejam pendentes, reivindicados, rodando ou em retry. Historico e resultados ja concluidos permanecem para auditoria.`))) {
       return;
     }
     setIsBusy(true);
@@ -171,8 +171,8 @@ export default function SourcePreparationPanel({
   const queueCounts = useMemo(() => showGlobal ? (globalSummary || sampledQueueCounts) : summarizeRun(run), [globalSummary, run, sampledQueueCounts, showGlobal]);
   const visibleJobs = useMemo(() => jobs.filter(isVisibleQueueJob), [jobs]);
   const visibleJobTotal = showGlobal ? (globalSummary?.total || jobs.length) : (run?.created_jobs || run?.planned_jobs || jobs.length);
-  const isJobListLimited = visibleJobTotal > jobs.length && jobs.length >= (showGlobal ? 500 : 100);
-  const activeRunCount = queueCounts.pending + queueCounts.running + queueCounts.retry + queueCounts.review;
+  const hiddenHistoricalJobs = Math.max(0, visibleJobTotal - visibleJobs.length);
+  const activeRunCount = queueCounts.pending + queueCounts.running + queueCounts.retry;
   const problemRunCount = queueCounts.error + queueCounts.retry + queueCounts.review;
   const hasRun = showGlobal || Boolean(run);
   const busyTitle = isBusy ? 'Acao em andamento.' : isRefreshing ? 'Atualizacao em andamento.' : undefined;
@@ -299,9 +299,9 @@ export default function SourcePreparationPanel({
               <Metric label="Cancelados" value={queueCounts.cancelled} />
               <Metric label="Travados" value={queueCounts.stuck} />
             </div>
-            {isJobListLimited && (
+            {hiddenHistoricalJobs > 0 && visibleJobs.length > 0 && (
               <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs font-bold text-slate-600">
-                Exibindo os últimos {jobs.length} de {visibleJobTotal} jobs.
+                Concluidos ficam apenas nos contadores. Exibindo {visibleJobs.length} {visibleJobs.length === 1 ? 'job que requer atencao' : 'jobs que requerem atencao'}.
               </div>
             )}
             <JobList jobs={visibleJobs} />
@@ -393,7 +393,7 @@ function isStuckJob(job: AiJob): boolean {
 }
 
 function isClearableQueueJob(job: AiJob): boolean {
-  return job.status === 'pending' || job.status === 'error' || job.status === 'completed' || job.status === 'applied' || job.status === 'cancelled';
+  return job.status === 'pending' || job.status === 'claimed' || job.status === 'running' || job.status === 'retry_wait';
 }
 
 function summarizeJobs(jobs: AiJob[]) {
