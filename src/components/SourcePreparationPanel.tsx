@@ -3,7 +3,6 @@ import {
   AlertCircle,
   Database,
   ListPlus,
-  Play,
   RefreshCw,
   RotateCcw,
   Square,
@@ -24,12 +23,11 @@ export default function SourcePreparationPanel({
   onPreparationComplete,
   onContentUpdated,
 }: SourcePreparationPanelProps) {
-  const [diagnosis, setDiagnosis] = useState<any>(null);
-  const [plan, setPlan] = useState<any>(null);
   const [jobs, setJobs] = useState<AiJob[]>([]);
   const [run, setRun] = useState<ProcessingRun | null>(null);
   const [showGlobal, setShowGlobal] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const signatureRef = useRef<string | null>(null);
   const loadingRef = useRef(false);
@@ -43,6 +41,7 @@ export default function SourcePreparationPanel({
   }, [sourceId, showGlobal]);
 
   const refresh = async (silent = false) => {
+    setIsRefreshing(true);
     if (loadingRef.current) return;
     loadingRef.current = true;
     try {
@@ -63,15 +62,14 @@ export default function SourcePreparationPanel({
       });
       if (signatureRef.current && signatureRef.current !== signature) onContentUpdated?.();
       signatureRef.current = signature;
-      setDiagnosis(null);
-      setPlan(null);
       setRun(latestRun);
       setJobs(sourceJobs);
       setLoadError(null);
     } catch (error: any) {
-      if (!silent) setLoadError(error?.message || 'Nao foi possivel atualizar o diagnostico da fonte.');
+      if (!silent) setLoadError(error?.message || 'Nao foi possivel atualizar os dados da fonte.');
     } finally {
       loadingRef.current = false;
+      setIsRefreshing(false);
     }
   };
 
@@ -89,10 +87,6 @@ export default function SourcePreparationPanel({
     } finally {
       setIsBusy(false);
     }
-  };
-
-  const startProcessing = async () => {
-    await queueRealGaps();
   };
 
   const retryProblems = async () => {
@@ -131,15 +125,15 @@ export default function SourcePreparationPanel({
     }
   };
 
-  const queueCounts = useMemo(() => summarizeJobs(jobs), [jobs]);
+  const sampledQueueCounts = useMemo(() => summarizeJobs(jobs), [jobs]);
+  const queueCounts = useMemo(() => showGlobal ? sampledQueueCounts : summarizeRun(run), [run, sampledQueueCounts, showGlobal]);
   const visibleJobs = useMemo(() => jobs.filter(isVisibleQueueJob), [jobs]);
-  const pendingTotals = useMemo(() => {
-    const active = jobs.filter((job) => ['pending', 'claimed', 'running', 'retry_wait', 'needs_review'].includes(job.status));
-    const translation = active.filter((job) => job.type === 'translate_sentence').length;
-    const analysis = active.filter((job) => job.type === 'detect_sentence_terms' || job.type === 'generate_sentence_reading').length;
-    const dictionary = active.filter((job) => job.type === 'enrich_dictionary_entry').length;
-    return { translation, analysis, dictionary, total: translation + analysis + dictionary };
-  }, [jobs]);
+  const visibleJobTotal = showGlobal ? jobs.length : (run?.created_jobs || run?.planned_jobs || jobs.length);
+  const isJobListLimited = !showGlobal && visibleJobTotal > jobs.length && jobs.length >= 100;
+  const activeRunCount = queueCounts.pending + queueCounts.running + queueCounts.retry + queueCounts.review;
+  const problemRunCount = queueCounts.error + queueCounts.retry + queueCounts.review;
+  const hasRun = showGlobal || Boolean(run);
+  const busyTitle = isBusy ? 'Acao em andamento.' : isRefreshing ? 'Atualizacao em andamento.' : undefined;
 
   return (
     <section className="border-b border-[#E5E5E7] bg-white">
@@ -149,26 +143,27 @@ export default function SourcePreparationPanel({
             <div className="space-y-1">
               <h2 className="flex items-center gap-2 text-lg font-black tracking-tight text-slate-900">
                 <Database className="h-5 w-5 text-indigo-600" />
-                Auditoria de IA da fonte
+                Preparacao de IA da fonte
               </h2>
               <p className="max-w-2xl text-xs leading-relaxed text-slate-500">
-                Diagnostica o banco, monta plano e enfileira somente lacunas reais desta fonte.
+                Mostra a execucao persistida e enfileira somente lacunas reais desta fonte.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <ToolbarButton onClick={() => refresh()} icon={<RefreshCw className="h-4 w-4" />} label="Atualizar diagnostico" />
               <ToolbarButton
-                onClick={queueRealGaps}
-                disabled={isBusy}
-                primary
-                icon={<ListPlus className="h-4 w-4" />}
-                label="Gerar fila das pendencias reais"
+                onClick={() => refresh()}
+                disabled={isRefreshing}
+                title={isRefreshing ? 'Atualizacao em andamento.' : 'Atualizar run e jobs.'}
+                icon={<RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />}
+                label={isRefreshing ? 'Atualizando...' : 'Atualizar dados'}
               />
               <ToolbarButton
-                onClick={startProcessing}
-                disabled={isBusy}
-                icon={<Play className="h-4 w-4" />}
-                label="Criar/retomar execucao"
+                onClick={queueRealGaps}
+                disabled={isBusy || isRefreshing}
+                title={busyTitle || 'Preparar ou retomar esta fonte.'}
+                primary
+                icon={<ListPlus className="h-4 w-4" />}
+                label="Preparar/retomar fonte"
               />
             </div>
           </div>
@@ -179,59 +174,6 @@ export default function SourcePreparationPanel({
               {loadError}
             </div>
           )}
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Panel title="Raio-x da fonte">
-              {diagnosis ? (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  <Metric label="Frases totais" value={diagnosis.sentences.total} />
-                  <Metric label="Frases unicas" value={diagnosis.sentences.unique} />
-                  <Metric label="Repetidas" value={diagnosis.sentences.repeatedInsideSource} />
-                  <Metric label="Ja traduzidas" value={diagnosis.sentences.withTranslation} />
-                  <Metric label="Sem traducao" value={diagnosis.sentences.withoutTranslation} />
-                  <Metric label="Reaproveitaveis" value={diagnosis.sentences.reusableTranslation} />
-                  <Metric label="Com analise" value={diagnosis.sentences.withValidLexicalAnalysis} />
-                  <Metric label="Sem analise" value={diagnosis.sentences.withoutValidLexicalAnalysis} />
-                  <Metric label="Termos" value={diagnosis.terms.found} />
-                  <Metric label="Verbetes completos" value={diagnosis.dictionary.completeEntries} />
-                  <Metric label="Verbetes incompletos" value={diagnosis.dictionary.incompleteEntries} />
-                  <Metric label="Duplicados possiveis" value={diagnosis.jobs.possibleDuplicates} />
-                </div>
-              ) : (
-                <EmptyState text="Diagnostico detalhado movido para a execucao persistida no banco." />
-              )}
-            </Panel>
-
-            <Panel title="Pendencias reais">
-              <div className="grid gap-2">
-                <PendingLine value={pendingTotals.translation} text="textos unicos precisam de traducao por IA" />
-                <PendingLine value={pendingTotals.analysis} text="frases precisam de analise lexical" />
-                <PendingLine value={pendingTotals.dictionary} text="verbetes precisam ser completados" />
-              </div>
-              {pendingTotals.total === 0 && (
-                <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs font-bold text-emerald-700">
-                  Nada a fazer para esta fonte.
-                </div>
-              )}
-            </Panel>
-          </div>
-
-          <Panel title="Plano de fila antes de gastar IA">
-            {plan ? (
-              <div className="grid gap-3 sm:grid-cols-5">
-                <Metric label="Traducoes" value={plan.totals.translationJobs} />
-                <Metric label="Analises" value={plan.totals.lexicalAnalysisJobs} />
-                <Metric label="Dicionario" value={plan.totals.dictionaryJobs} />
-                <Metric label="Reaproveitar" value={plan.totals.reusableTranslationActions} />
-                <Metric label="Jobs novos" value={plan.totals.jobs} />
-                <div className="sm:col-span-5 rounded-lg bg-slate-50 p-3 text-xs font-semibold leading-relaxed text-slate-600">
-                  O plano roda em esteira com jobs individuais em paralelo: primeiro traducao e reaproveitamento, depois analise lexical, depois dicionario. Cada etapa recalcula o banco antes da proxima.
-                </div>
-              </div>
-            ) : (
-              <EmptyState text="O banco planeja as etapas e cria jobs individuais quando a execucao e iniciada ou retomada." />
-            )}
-          </Panel>
 
           <Panel title="Execucao persistida">
             {run ? (
@@ -257,9 +199,9 @@ export default function SourcePreparationPanel({
             title={showGlobal ? 'Fila global' : 'Fila da fonte'}
             actions={
               <div className="flex flex-wrap gap-2">
-                <ToolbarButton small onClick={() => setShowGlobal((value) => !value)} label={showGlobal ? 'Ver fonte' : 'Ver global'} />
-                <ToolbarButton small onClick={retryProblems} disabled={isBusy || queueCounts.error + queueCounts.stuck + queueCounts.retry + queueCounts.review === 0} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retentar problemas" />
-                <ToolbarButton small onClick={cancelPending} disabled={isBusy || jobs.length === 0} icon={<Square className="h-3.5 w-3.5" />} label={showGlobal ? 'Cancelar fila global ativa' : 'Cancelar nao concluidos'} />
+                <ToolbarButton small onClick={() => setShowGlobal((value) => !value)} label={showGlobal ? 'Ver fonte' : 'Ver global'} title={showGlobal ? 'Mostrar apenas a fonte.' : 'Mostrar fila global.'} />
+                <ToolbarButton small onClick={retryProblems} disabled={isBusy || isRefreshing || problemRunCount === 0} title={problemRunCount === 0 ? 'Sem problemas para retentar.' : busyTitle || 'Retentar problemas da run.'} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retentar problemas" />
+                <ToolbarButton small onClick={cancelPending} disabled={isBusy || isRefreshing || !hasRun || activeRunCount === 0} title={activeRunCount === 0 ? 'Sem jobs ativos para cancelar.' : busyTitle || 'Cancelar jobs nao concluidos.'} icon={<Square className="h-3.5 w-3.5" />} label={showGlobal ? 'Cancelar fila global ativa' : 'Cancelar nao concluidos'} />
               </div>
             }
           >
@@ -273,6 +215,11 @@ export default function SourcePreparationPanel({
               <Metric label="Cancelados" value={queueCounts.cancelled} />
               <Metric label="Travados" value={queueCounts.stuck} />
             </div>
+            {isJobListLimited && (
+              <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs font-bold text-slate-600">
+                Exibindo os últimos {jobs.length} de {visibleJobTotal} jobs.
+              </div>
+            )}
             <JobList jobs={visibleJobs} />
           </Panel>
         </div>
@@ -322,6 +269,7 @@ function ToolbarButton({
   disabled,
   primary,
   small,
+  title,
 }: {
   onClick: () => void;
   icon?: React.ReactNode;
@@ -329,14 +277,19 @@ function ToolbarButton({
   disabled?: boolean;
   primary?: boolean;
   small?: boolean;
+  title?: string;
 }) {
+  const enabledClass = primary
+    ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+    : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50';
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center justify-center gap-2 rounded-lg font-black uppercase tracking-wide disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 ${
+      title={title}
+      className={`inline-flex items-center justify-center gap-2 rounded-lg font-black uppercase tracking-wide ${
         small ? 'h-8 px-2.5 text-[10px]' : 'h-10 px-3 text-xs'
-      } ${primary ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'}`}
+      } ${disabled ? 'cursor-not-allowed border border-slate-200 bg-slate-200 text-slate-400' : enabledClass}`}
     >
       {icon}
       {label}
@@ -374,6 +327,20 @@ function summarizeJobs(jobs: AiJob[]) {
     error: jobs.filter((job) => job.status === 'error' || job.status === 'failed').length,
     stuck: jobs.filter(isStuckJob).length,
     clearable: jobs.filter(isClearableQueueJob).length,
+  };
+}
+
+function summarizeRun(run: ProcessingRun | null) {
+  return {
+    pending: run?.pending_jobs || 0,
+    running: (run?.running_jobs || 0) + (run?.claimed_jobs || 0),
+    retry: run?.retry_jobs || 0,
+    review: run?.review_jobs || run?.needs_review_jobs || 0,
+    completed: run?.completed_jobs || 0,
+    cancelled: run?.cancelled_jobs || 0,
+    error: run?.failed_jobs || run?.failed_items || 0,
+    stuck: 0,
+    clearable: 0,
   };
 }
 

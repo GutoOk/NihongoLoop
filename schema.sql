@@ -2399,6 +2399,7 @@ DECLARE
   inserted_entries INTEGER := 0;
   inserted_forms INTEGER := 0;
   inserted_senses INTEGER := 0;
+  invalid_offset_count INTEGER := 0;
   expected_target_hash TEXT;
 BEGIN
   SELECT * INTO current_job
@@ -2509,21 +2510,14 @@ BEGIN
       AND end_index > start_index
       AND BTRIM(surface) ~ '[ぁ-んァ-ン一-龯々〆ヵヶ]'
   ),
-  aligned_terms AS (
+  valid_terms AS (
     SELECT
-      r.*,
-      match_pos - 1 AS aligned_start_index,
-      match_pos - 1 + CHAR_LENGTH(r.surface) AS aligned_end_index
+      r.*
     FROM raw_terms r
-    CROSS JOIN LATERAL (
-      SELECT pos AS match_pos
-      FROM generate_series(1, GREATEST(CHAR_LENGTH(current_sentence.japanese) - CHAR_LENGTH(r.surface) + 1, 1)) AS pos
-      WHERE SUBSTRING(current_sentence.japanese FROM pos FOR CHAR_LENGTH(r.surface)) = r.surface
-      ORDER BY ABS((pos - 1) - r.start_index)
-      LIMIT 1
-    ) matched
+    WHERE r.end_index <= CHAR_LENGTH(current_sentence.japanese)
+      AND SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface
   )
-  SELECT DISTINCT ON (surface, lemma, aligned_start_index, aligned_end_index)
+  SELECT DISTINCT ON (surface, lemma, start_index, end_index)
     surface,
     lemma,
     term_type,
@@ -2534,13 +2528,36 @@ BEGIN
     form_type,
     grammar_note,
     meaning,
-    aligned_start_index AS start_index,
-    aligned_end_index AS end_index,
+    start_index,
+    end_index,
     confidence,
     LOWER(REGEXP_REPLACE(lemma, '[[:space:]]+', '', 'g')) || '|' ||
       LOWER(REGEXP_REPLACE(COALESCE(entry_kana, ''), '[[:space:]]+', '', 'g')) || '|' ||
       LOWER(REGEXP_REPLACE(term_type, '[[:space:]]+', '', 'g')) AS entry_key
-  FROM aligned_terms;
+  FROM valid_terms;
+
+  WITH raw_terms AS (
+    SELECT
+      BTRIM(surface) AS surface,
+      start_index,
+      end_index
+    FROM jsonb_to_recordset(COALESCE(p_terms, '[]'::jsonb)) AS t(
+      surface TEXT,
+      start_index INTEGER,
+      end_index INTEGER
+    )
+    WHERE BTRIM(COALESCE(surface, '')) <> ''
+      AND start_index IS NOT NULL
+      AND end_index IS NOT NULL
+      AND end_index > start_index
+      AND BTRIM(surface) ~ '[ぁ-んァ-ン一-龯々〆ヵヶ]'
+  )
+  SELECT COUNT(*) INTO invalid_offset_count
+  FROM raw_terms r
+  WHERE NOT (
+    r.end_index <= CHAR_LENGTH(current_sentence.japanese)
+    AND SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface
+  );
 
   WITH entry_rows AS (
     SELECT DISTINCT
@@ -2689,7 +2706,8 @@ BEGIN
       'termCount', inserted_terms,
       'entryCount', inserted_entries,
       'formCount', inserted_forms,
-      'senseCount', inserted_senses
+      'senseCount', inserted_senses,
+      'invalid_offset_count', invalid_offset_count
     ),
     p_raw_result,
     p_input_tokens,
@@ -2704,7 +2722,8 @@ BEGIN
     'termCount', inserted_terms,
     'entryCount', inserted_entries,
     'formCount', inserted_forms,
-    'senseCount', inserted_senses
+    'senseCount', inserted_senses,
+    'invalid_offset_count', invalid_offset_count
   );
 END;
 $$;

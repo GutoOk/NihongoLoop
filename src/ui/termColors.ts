@@ -24,8 +24,8 @@ export const TERM_COLORS: Record<string, TermColor> = {
     bg: "bg-rose-50 border border-rose-200 hover:bg-rose-100",
     border: "border-rose-200",
   },
-  advérbio: {
-    name: "Advérbio",
+  adverbio: {
+    name: "Adverbio",
     text: "text-teal-700",
     bg: "bg-teal-50 border border-teal-200 hover:bg-teal-100",
     border: "border-teal-200",
@@ -36,14 +36,14 @@ export const TERM_COLORS: Record<string, TermColor> = {
     bg: "bg-sky-50 border border-sky-200 hover:bg-sky-100",
     border: "border-sky-200",
   },
-  partícula: {
-    name: "Partícula",
-    text: "text-emerald-700",
-    bg: "bg-emerald-50 border border-emerald-200 hover:bg-emerald-100",
-    border: "border-emerald-200",
+  particula: {
+    name: "Particula",
+    text: "text-slate-600",
+    bg: "bg-transparent border border-emerald-100 hover:bg-emerald-50",
+    border: "border-emerald-100",
   },
-  expressão: {
-    name: "Expressão",
+  expressao: {
+    name: "Expressao",
     text: "text-purple-700",
     bg: "bg-purple-50 border border-purple-200 hover:bg-purple-100",
     border: "border-purple-200",
@@ -56,9 +56,9 @@ export const TERM_COLORS: Record<string, TermColor> = {
   },
   auxiliar: {
     name: "Auxiliar",
-    text: "text-pink-700",
-    bg: "bg-pink-50 border border-pink-200 hover:bg-pink-100",
-    border: "border-pink-200",
+    text: "text-slate-600",
+    bg: "bg-transparent border border-slate-200 hover:bg-slate-50",
+    border: "border-slate-200",
   },
   tempo: {
     name: "Tempo",
@@ -80,7 +80,14 @@ export const TERM_COLORS: Record<string, TermColor> = {
   },
 };
 
+function normalizeTypeKey(type?: string | null): string {
+  return (type || "outro")
+    .toLowerCase()
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 export function getTermColor(type?: string | null): TermColor {
-  const normalizedType = (type || "outro").toLowerCase().trim();
-  return TERM_COLORS[normalizedType] || TERM_COLORS.outro;
+  return TERM_COLORS[normalizeTypeKey(type)] || TERM_COLORS.outro;
 }

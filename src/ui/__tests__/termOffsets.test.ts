@@ -20,12 +20,19 @@ function term(surface: string, start_index: number, end_index: number): Sentence
 }
 
 describe("normalizeTermOffsets", () => {
-  it("realigns offsets to the exact surface in the original sentence", () => {
-    const text = "Oh baby, 踊り明かしたいなら、私と何度とパーティーを再開しないか？";
-    const terms = normalizeTermOffsets(text, [term("踊り", 4, 11)]);
+  it("drops an invalid offset instead of moving it to another occurrence", () => {
+    const text = "踊りたいなら踊り";
+    const terms = normalizeTermOffsets(text, [term("踊り", 2, 4)]);
+
+    expect(terms).toEqual([]);
+  });
+
+  it("does not assign a repeated word to a different occurrence", () => {
+    const text = "猫と猫";
+    const terms = normalizeTermOffsets(text, [term("猫", 0, 1), term("猫", 1, 2)]);
 
     expect(terms).toEqual([
-      expect.objectContaining({ surface: "踊り", start_index: 9, end_index: 11 }),
+      expect.objectContaining({ surface: "猫", start_index: 0, end_index: 1 }),
     ]);
   });
 

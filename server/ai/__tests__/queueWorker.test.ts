@@ -95,4 +95,12 @@ describe('queueWorker persisted execution contract', () => {
     expect(update).toBeGreaterThan(reviewed);
     expect(body.slice(reviewed, update)).toContain("'already_reviewed'");
   });
+
+  it('lexical RPC rejects invalid offsets instead of realigning terms', () => {
+    const body = functionBody('apply_sentence_lexical_analysis_result');
+    expect(body).not.toContain('generate_series');
+    expect(body).not.toContain('ORDER BY ABS');
+    expect(body).toContain('SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface');
+    expect(body).toContain('invalid_offset_count');
+  });
 });
