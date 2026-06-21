@@ -24,6 +24,7 @@ import { Sentence, DictionaryEntry } from "../types";
 import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // for TTS settings
 import { TERM_COLORS, getTermColor } from "../ui/termColors";
+import { normalizeTermOffsets } from "../ui/termOffsets";
 import { AppNavigate } from "../navigation";
 import { drawStudyPipCanvas } from "./studyPlayer/pipCanvas";
 
@@ -718,26 +719,7 @@ export default function StudyPlayerScreen({
     const elements: React.ReactNode[] = [];
     let lastIdx = 0;
 
-    const validTerms = currentTerms
-      .filter(
-        (t) =>
-          t.start_index !== undefined &&
-          t.end_index !== undefined &&
-          t.start_index >= 0 &&
-          t.end_index <= txt.length &&
-          t.start_index < t.end_index,
-      )
-      .sort((a, b) => a.start_index - b.start_index);
-
-    let filteredTerms: any[] = [];
-    for (const term of validTerms) {
-      if (term.start_index >= lastIdx) {
-        filteredTerms.push(term);
-        lastIdx = term.end_index;
-      }
-    }
-
-    lastIdx = 0;
+    const filteredTerms = normalizeTermOffsets(txt, currentTerms);
     filteredTerms.forEach((term, idx) => {
       if (term.start_index > lastIdx) {
         elements.push(

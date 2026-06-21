@@ -36,6 +36,7 @@ import { Database } from "../database/db"; // Assuming we still get settings con
 import { TermDetectionService } from "../services/termDetectionService";
 import { useModal } from "./ModalProvider";
 import { TERM_COLORS, getTermColor } from "../ui/termColors";
+import { normalizeTermOffsets } from "../ui/termOffsets";
 import SourcePreparationPanel from "./SourcePreparationPanel";
 import { AppNavigate } from "../navigation";
 
@@ -250,25 +251,7 @@ export default function ReadingScreen({
       for (const sent of sents) {
         const terms = termsBySentence[sent.id] || [];
 
-        // Remove overlaps (simplest greedy match for longer terms)
-        const sortedTerms = terms.sort(
-          (a, b) => b.end_index - b.start_index - (a.end_index - a.start_index),
-        );
-        const filtered: SentenceTerm[] = [];
-        const usedIndexes = new Set<number>();
-        for (const t of sortedTerms) {
-          let overlap = false;
-          for (let i = t.start_index; i < t.end_index; i++) {
-            if (usedIndexes.has(i)) overlap = true;
-          }
-          if (!overlap) {
-            for (let i = t.start_index; i < t.end_index; i++)
-              usedIndexes.add(i);
-            filtered.push(t);
-          }
-        }
-
-        tMap[sent.id] = filtered.sort((a, b) => a.start_index - b.start_index);
+        tMap[sent.id] = normalizeTermOffsets(sent.japanese, terms);
       }
       setProgressMap(pMap);
       setTermsMap(tMap);

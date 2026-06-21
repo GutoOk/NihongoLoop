@@ -2469,46 +2469,78 @@ BEGIN
 
   DROP TABLE IF EXISTS tmp_lexical_terms;
   CREATE TEMP TABLE tmp_lexical_terms ON COMMIT DROP AS
-  SELECT DISTINCT ON (surface, lemma, start_index, end_index)
-    BTRIM(surface) AS surface,
-    BTRIM(COALESCE(NULLIF(lemma, ''), surface)) AS lemma,
-    BTRIM(COALESCE(NULLIF(term_type, ''), NULLIF(type, ''), 'outro')) AS term_type,
-    NULLIF(BTRIM(COALESCE(entry_kana, kana, '')), '') AS entry_kana,
-    NULLIF(BTRIM(COALESCE(entry_romaji, romaji, '')), '') AS entry_romaji,
-    NULLIF(BTRIM(COALESCE(form_kana, kana, '')), '') AS form_kana,
-    NULLIF(BTRIM(COALESCE(form_romaji, romaji, '')), '') AS form_romaji,
-    BTRIM(COALESCE(NULLIF(form_type, ''), 'forma encontrada')) AS form_type,
-    NULLIF(BTRIM(COALESCE(grammar_note, '')), '') AS grammar_note,
-    NULLIF(BTRIM(COALESCE(meaning, context_meaning, '')), '') AS meaning,
-    start_index,
-    end_index,
-    COALESCE(confidence, 1) AS confidence,
-    LOWER(REGEXP_REPLACE(BTRIM(COALESCE(NULLIF(lemma, ''), surface)), '[[:space:]]+', '', 'g')) || '|' ||
-      LOWER(REGEXP_REPLACE(BTRIM(COALESCE(entry_kana, kana, '')), '[[:space:]]+', '', 'g')) || '|' ||
-      LOWER(REGEXP_REPLACE(BTRIM(COALESCE(NULLIF(term_type, ''), 'outro')), '[[:space:]]+', '', 'g')) AS entry_key
-  FROM jsonb_to_recordset(COALESCE(p_terms, '[]'::jsonb)) AS t(
-    surface TEXT,
-    lemma TEXT,
-    term_type TEXT,
-    type TEXT,
-    kana TEXT,
-    romaji TEXT,
-    entry_kana TEXT,
-    entry_romaji TEXT,
-    form_kana TEXT,
-    form_romaji TEXT,
-    form_type TEXT,
-    grammar_note TEXT,
-    meaning TEXT,
-    context_meaning TEXT,
-    start_index INTEGER,
-    end_index INTEGER,
-    confidence FLOAT
+  WITH raw_terms AS (
+    SELECT
+      BTRIM(surface) AS surface,
+      BTRIM(COALESCE(NULLIF(lemma, ''), surface)) AS lemma,
+      BTRIM(COALESCE(NULLIF(term_type, ''), NULLIF(type, ''), 'outro')) AS term_type,
+      NULLIF(BTRIM(COALESCE(entry_kana, kana, '')), '') AS entry_kana,
+      NULLIF(BTRIM(COALESCE(entry_romaji, romaji, '')), '') AS entry_romaji,
+      NULLIF(BTRIM(COALESCE(form_kana, kana, '')), '') AS form_kana,
+      NULLIF(BTRIM(COALESCE(form_romaji, romaji, '')), '') AS form_romaji,
+      BTRIM(COALESCE(NULLIF(form_type, ''), 'forma encontrada')) AS form_type,
+      NULLIF(BTRIM(COALESCE(grammar_note, '')), '') AS grammar_note,
+      NULLIF(BTRIM(COALESCE(meaning, context_meaning, '')), '') AS meaning,
+      start_index,
+      end_index,
+      COALESCE(confidence, 1) AS confidence
+    FROM jsonb_to_recordset(COALESCE(p_terms, '[]'::jsonb)) AS t(
+      surface TEXT,
+      lemma TEXT,
+      term_type TEXT,
+      type TEXT,
+      kana TEXT,
+      romaji TEXT,
+      entry_kana TEXT,
+      entry_romaji TEXT,
+      form_kana TEXT,
+      form_romaji TEXT,
+      form_type TEXT,
+      grammar_note TEXT,
+      meaning TEXT,
+      context_meaning TEXT,
+      start_index INTEGER,
+      end_index INTEGER,
+      confidence FLOAT
+    )
+    WHERE BTRIM(COALESCE(surface, '')) <> ''
+      AND start_index IS NOT NULL
+      AND end_index IS NOT NULL
+      AND end_index > start_index
+      AND BTRIM(surface) ~ '[ぁ-んァ-ン一-龯々〆ヵヶ]'
+  ),
+  aligned_terms AS (
+    SELECT
+      r.*,
+      match_pos - 1 AS aligned_start_index,
+      match_pos - 1 + CHAR_LENGTH(r.surface) AS aligned_end_index
+    FROM raw_terms r
+    CROSS JOIN LATERAL (
+      SELECT pos AS match_pos
+      FROM generate_series(1, GREATEST(CHAR_LENGTH(current_sentence.japanese) - CHAR_LENGTH(r.surface) + 1, 1)) AS pos
+      WHERE SUBSTRING(current_sentence.japanese FROM pos FOR CHAR_LENGTH(r.surface)) = r.surface
+      ORDER BY ABS((pos - 1) - r.start_index)
+      LIMIT 1
+    ) matched
   )
-  WHERE BTRIM(COALESCE(surface, '')) <> ''
-    AND start_index IS NOT NULL
-    AND end_index IS NOT NULL
-    AND end_index > start_index;
+  SELECT DISTINCT ON (surface, lemma, aligned_start_index, aligned_end_index)
+    surface,
+    lemma,
+    term_type,
+    entry_kana,
+    entry_romaji,
+    form_kana,
+    form_romaji,
+    form_type,
+    grammar_note,
+    meaning,
+    aligned_start_index AS start_index,
+    aligned_end_index AS end_index,
+    confidence,
+    LOWER(REGEXP_REPLACE(lemma, '[[:space:]]+', '', 'g')) || '|' ||
+      LOWER(REGEXP_REPLACE(COALESCE(entry_kana, ''), '[[:space:]]+', '', 'g')) || '|' ||
+      LOWER(REGEXP_REPLACE(term_type, '[[:space:]]+', '', 'g')) AS entry_key
+  FROM aligned_terms;
 
   WITH entry_rows AS (
     SELECT DISTINCT
