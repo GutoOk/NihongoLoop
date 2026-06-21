@@ -109,8 +109,19 @@ function parseMaybeJson(value: any) {
   }
 }
 
-function getJobInput(job: QueueJob) {
-  return parseMaybeJson(job.payload) || parseMaybeJson(job.input) || {};
+export function getJobInput(job: QueueJob) {
+  const payload = parseMaybeJson(job.payload);
+  const input = parseMaybeJson(job.input);
+
+  if (payload && typeof payload === "object" && Object.keys(payload).length > 0) {
+    return payload;
+  }
+
+  if (input && typeof input === "object" && Object.keys(input).length > 0) {
+    return input;
+  }
+
+  return {};
 }
 
 function buildJobRequest(job: QueueJob) {
@@ -205,16 +216,50 @@ async function maybeAdvanceRun(client: SupabaseClient, runId: string | null | un
   if (error) throw error;
 }
 
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+
+  if (error && typeof error === "object") {
+    const value = error as Record<string, unknown>;
+    const nestedError =
+      value.error && typeof value.error === "object"
+        ? (value.error as Record<string, unknown>)
+        : null;
+
+    const message =
+      value.message ||
+      nestedError?.message ||
+      value.statusText ||
+      value.details ||
+      value.hint;
+
+    if (typeof message === "string" && message.trim()) {
+      return message;
+    }
+
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Erro desconhecido.";
+    }
+  }
+
+  return String(error || "Erro desconhecido.");
+}
+
 function classifyError(error: unknown): { message: string; code: string | null; kind: "transient" | "permanent" | "rate_limit" | "invalid_response" } {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = getErrorMessage(error);
   const lower = message.toLowerCase();
   if (lower.includes("429") || lower.includes("rate") || lower.includes("resource_exhausted")) {
     return { message, code: "RATE_LIMIT", kind: "rate_limit" };
   }
+  if (lower.includes("503") || lower.includes("unavailable") || lower.includes("timeout") || lower.includes("tempo limite") || lower.includes("network") || lower.includes("fetch failed")) {
+    return { message, code: "TRANSIENT_ERROR", kind: "transient" };
+  }
   if (lower.includes("resultado invalido") || lower.includes("tradu") && lower.includes("ausente") || lower.includes("kana") || lower.includes("romaji")) {
     return { message, code: "INVALID_AI_RESPONSE", kind: "invalid_response" };
   }
-  if (lower.includes("frase nao encontrada") || lower.includes("job sem sentence")) {
+  if (lower.includes("frase nao encontrada") || lower.includes("job sem sentence") || lower.includes("job sem texto japones") || lower.includes("job sem lemma")) {
     return { message, code: "INVALID_JOB_INPUT", kind: "permanent" };
   }
   return { message, code: "TRANSIENT_ERROR", kind: "transient" };
@@ -686,7 +731,7 @@ export function startAiQueueWorker(options: AiQueueWorkerOptions): AiQueueWorker
       });
       const jobs = await claimCoordinatedJobs(client, workerId, leaseSeconds);
       if (jobs.length > 0) {
-        await Promise.all(
+        await Promise.allSettled(
           jobs.map(async (job) => {
             try {
               await withLeaseHeartbeat(client, job.id, workerId, leaseSeconds, async () => {
@@ -706,7 +751,7 @@ export function startAiQueueWorker(options: AiQueueWorkerOptions): AiQueueWorker
             } catch (error) {
               console.error("[ai-worker] job failed", { jobId: job.id, type: job.type, error });
               try {
-                const message = error instanceof Error ? error.message : String(error);
+                const message = getErrorMessage(error);
                 if (message.toLowerCase().includes("cancelado")) {
                   await cancelRunningJob(client, job.id, workerId, message);
                 } else {

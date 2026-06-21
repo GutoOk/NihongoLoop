@@ -2954,8 +2954,11 @@ BEGIN
     RETURN;
   END IF;
 
-  IF p_error_kind IN ('permanent','invalid_response') AND current_attempt >= max_attempt_count THEN
-    terminal_status := CASE WHEN p_error_kind = 'invalid_response' THEN 'needs_review' ELSE 'failed' END;
+  IF p_error_kind = 'permanent' THEN
+    terminal_status := 'failed';
+    next_retry := NULL;
+  ELSIF p_error_kind = 'invalid_response' AND current_attempt >= max_attempt_count THEN
+    terminal_status := 'needs_review';
     next_retry := NULL;
   ELSIF current_attempt >= max_attempt_count THEN
     terminal_status := 'failed';

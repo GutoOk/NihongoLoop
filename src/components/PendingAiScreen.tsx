@@ -13,6 +13,7 @@ import { AiJobRepository } from "../repositories";
 import { AiJob } from "../types";
 import { useModal } from "./ModalProvider";
 import { GlobalAiQueueControl } from "./GlobalAiQueueControl";
+import { getJobPreview, isVisibleQueueJob } from "./sourcePreparation/jobDisplay";
 
 export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
   const [jobs, setJobs] = useState<AiJob[]>([]);
@@ -30,7 +31,7 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
   const loadJobs = async (silent = false) => {
     if(!silent) setLoading(true);
     const data = await AiJobRepository.getAll();
-    setJobs(data.sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+    setJobs(data.filter(isVisibleQueueJob).sort((a,b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
     if(!silent) setLoading(false);
   };
 
@@ -131,7 +132,7 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
                         Tipo de Processamento
                       </span>
                       <h3 className="text-xs font-black font-mono text-slate-800 uppercase truncate">
-                        {job.type}
+                        {getJobPreview(job)}
                       </h3>
                    </div>
                    
@@ -142,8 +143,8 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
 
                 <div className="bg-slate-50/70 rounded-lg p-2.5 border border-slate-100 space-y-1.5">
                   <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs whitespace-nowrap">
-                    <span className="font-medium text-slate-600 truncate max-w-[220px]" title={`${job.target_type}:${job.target_id}`}>
-                      {job.target_type}:{job.target_id}
+                    <span className="font-medium text-slate-600 truncate max-w-[220px]" title={job.type}>
+                      {job.type}
                     </span>
                   </div>
                   {job.error && (

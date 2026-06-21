@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertCircle, Database, RefreshCw, Square } from 'lucide-react';
 import { AiJobRepository } from '../repositories';
 import { AiJob } from '../types';
-import { getJobHumanName } from './sourcePreparation/jobDisplay';
+import { getJobHumanName, getJobPreview, isVisibleQueueJob } from './sourcePreparation/jobDisplay';
 import { useModal } from './ModalProvider';
 
 export function GlobalAiQueueControl() {
@@ -96,9 +96,9 @@ export function GlobalAiQueueControl() {
               <div key={job.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
-                    <div className="font-black text-slate-900">{label}</div>
+                    <div className="font-black text-slate-900">{getJobPreview(job)}</div>
                     <div className="mt-1 text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                      {getJobHumanName(job.type)} · {job.target_id}
+                      {label}
                     </div>
                   </div>
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${statusClass(job.status)}`}>
@@ -117,10 +117,6 @@ export function GlobalAiQueueControl() {
 
 function isClearableQueueJob(job: AiJob): boolean {
   return Boolean(job.id);
-}
-
-function isVisibleQueueJob(job: AiJob): boolean {
-  return ['pending', 'claimed', 'running', 'retry_wait', 'needs_review', 'failed', 'error'].includes(job.status);
 }
 
 function QueueMetric({ label, value }: { label: string; value: number }) {

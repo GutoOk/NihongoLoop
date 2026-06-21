@@ -337,11 +337,15 @@ BEGIN
   UPDATE public.ai_jobs j
   SET
     status = CASE
+      WHEN p_error_kind = 'permanent'
+        THEN 'failed'
       WHEN COALESCE(j.attempts, 0) >= COALESCE(j.max_attempts, 3)
         THEN 'failed'
       ELSE 'retry_wait'
     END,
     retry_at = CASE
+      WHEN p_error_kind = 'permanent'
+        THEN NULL
       WHEN COALESCE(j.attempts, 0) >= COALESCE(j.max_attempts, 3)
         THEN NULL
       ELSE COALESCE(p_retry_at, now() + interval '1 minute')

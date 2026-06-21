@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { processTranslateSentenceJob } from '../queueWorker';
+import { getErrorMessage, getJobInput, processTranslateSentenceJob } from '../queueWorker';
 import { generateStructuredJsonWithMeta } from '../../geminiJson';
 
 vi.mock('../../geminiJson', () => ({
@@ -74,6 +74,17 @@ describe('queueWorker persisted execution contract', () => {
 
     expect(generateStructuredJsonWithMeta).not.toHaveBeenCalled();
     expect(client.rpc).not.toHaveBeenCalledWith('apply_sentence_translation_result', expect.anything());
+  });
+
+  it('uses input when payload is empty and extracts object error messages', () => {
+    expect(getJobInput({ payload: {}, input: { japanese: '待って' } } as any)).toEqual({ japanese: '待って' });
+    expect(getErrorMessage({ error: { message: 'This model is currently experiencing high demand' } })).toBe('This model is currently experiencing high demand');
+  });
+
+  it('marks permanent invalid job input as final without retry wait', () => {
+    const body = functionBody('fail_ai_job_for_retry');
+    expect(body).toContain("IF p_error_kind = 'permanent' THEN");
+    expect(body.indexOf("IF p_error_kind = 'permanent' THEN")).toBeLessThan(body.indexOf("terminal_status := 'retry_wait'"));
   });
 
   it('does not auto-enqueue when a stage has terminal failures', () => {

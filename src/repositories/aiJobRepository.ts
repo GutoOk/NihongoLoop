@@ -25,6 +25,8 @@ const AI_JOB_LIST_SELECT = [
   'job_key',
   'status',
   'priority',
+  'input',
+  'payload',
   'input_hash',
   'error',
   'error_code',

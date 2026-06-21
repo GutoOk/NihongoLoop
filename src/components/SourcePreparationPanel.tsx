@@ -12,7 +12,7 @@ import { AiJobRepository, ProcessingRunRepository } from '../repositories';
 import { AiQueueSummary } from '../repositories/aiJobRepository';
 import { SourceLexicalIntegritySummary } from '../repositories/processingRunRepository';
 import { useModal } from './ModalProvider';
-import { getJobHumanName } from './sourcePreparation/jobDisplay';
+import { getJobHumanName, getJobPreview, isVisibleQueueJob } from './sourcePreparation/jobDisplay';
 
 interface SourcePreparationPanelProps {
   sourceId: string;
@@ -396,10 +396,6 @@ function isClearableQueueJob(job: AiJob): boolean {
   return job.status === 'pending' || job.status === 'error' || job.status === 'completed' || job.status === 'applied' || job.status === 'cancelled';
 }
 
-function isVisibleQueueJob(job: AiJob): boolean {
-  return !['obsolete'].includes(job.status);
-}
-
 function summarizeJobs(jobs: AiJob[]) {
   return {
     pending: jobs.filter((job) => job.status === 'pending').length,
@@ -434,7 +430,7 @@ function JobList({ jobs }: { jobs: AiJob[] }) {
     <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
       {jobs.map((job) => {
         const displayLabel = getJobHumanName(job.type);
-        const label = getJobLabel(job, displayLabel);
+        const label = getJobPreview(job);
         return (
           <div key={job.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-xs">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -442,7 +438,7 @@ function JobList({ jobs }: { jobs: AiJob[] }) {
                 <div className="font-black text-slate-900">{label}</div>
                 <div className="mt-1 flex flex-wrap gap-2 text-[10px] font-bold uppercase tracking-wide text-slate-500">
                   <span>{displayLabel}</span>
-                  <span>{job.target_type}:{job.target_id}</span>
+                  <span>{job.target_type}</span>
                   <span>{job.attempts || 0} tentativas</span>
                   {job.worker_id && <span>{job.worker_id}</span>}
                   {job.latency_ai_ms ? <span>IA {job.latency_ai_ms}ms</span> : null}
@@ -464,10 +460,6 @@ function JobList({ jobs }: { jobs: AiJob[] }) {
       })}
     </div>
   );
-}
-
-function getJobLabel(job: AiJob, fallback: string): string {
-  return fallback;
 }
 
 function statusLabel(status: AiJob['status'] | ProcessingRun['status']): string {
