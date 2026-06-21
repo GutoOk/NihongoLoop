@@ -111,6 +111,7 @@ describe('queueWorker persisted execution contract', () => {
     expect(lexicalOffsetMigration).toContain('SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface');
     expect(lexicalOffsetMigration).toContain('BEGIN;');
     expect(normalizedLexicalOffsetMigration).toContain('END;\n$$;\n\nCOMMIT;');
+    expect(lexicalOffsetMigration).toContain('WHERE user_id = auth.uid()::text');
     expect(lexicalOffsetMigration).toContain('public.digest');
     expect(lexicalOffsetMigration).toContain('r.start_index >= 0');
     expect(lexicalOffsetMigration).toContain('ORDER BY surface, lemma, start_index, end_index, confidence DESC');

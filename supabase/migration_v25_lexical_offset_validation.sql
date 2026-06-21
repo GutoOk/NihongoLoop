@@ -29,7 +29,7 @@ AS $$
     'clearable', COUNT(*) FILTER (WHERE status IN ('pending','error','completed','applied','cancelled'))
   )
   FROM ai_jobs
-  WHERE user_id = auth.uid();
+  WHERE user_id = auth.uid()::text;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.get_ai_queue_summary() TO authenticated;
