@@ -2,6 +2,8 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+DROP FUNCTION IF EXISTS public.digest(TEXT, TEXT);
+
 DO $$
 DECLARE
   v_pgcrypto_schema TEXT;
