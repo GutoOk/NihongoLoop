@@ -11,6 +11,7 @@ vi.mock('../../geminiJson', () => ({
 const schema = readFileSync(resolve(process.cwd(), 'schema.sql'), 'utf8');
 const lexicalOffsetMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v25_lexical_offset_validation.sql'), 'utf8');
 const lexicalIntegrityMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v26_lexical_integrity_and_unicode.sql'), 'utf8');
+const continueAfterFailureMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v27_continue_ai_queue_after_job_failures.sql'), 'utf8');
 const normalizedLexicalOffsetMigration = lexicalOffsetMigration.replace(/\r\n/g, '\n');
 const normalizedLexicalIntegrityMigration = lexicalIntegrityMigration.replace(/\r\n/g, '\n');
 
@@ -94,6 +95,15 @@ describe('queueWorker persisted execution contract', () => {
     expect(body).toContain("old.type = 'detect_sentence_terms'");
     expect(body).toContain("old.type = 'enrich_dictionary_entry'");
     expect(body).not.toContain("'Falha terminal exige retry manual.'");
+  });
+
+  it('ships the continue-after-failure orchestration migration', () => {
+    expect(continueAfterFailureMigration).toContain('CREATE OR REPLACE FUNCTION public.create_or_resume_source_processing_run');
+    expect(continueAfterFailureMigration).toContain("old.type = 'translate_sentence'");
+    expect(continueAfterFailureMigration).toContain("old.type = 'detect_sentence_terms'");
+    expect(continueAfterFailureMigration).toContain("old.type = 'enrich_dictionary_entry'");
+    expect(continueAfterFailureMigration).not.toContain("'Falha terminal exige retry manual.'");
+    expect(continueAfterFailureMigration.trim().endsWith('COMMIT;')).toBe(true);
   });
 
   it('manual retry creates a new job preserving the previous one', () => {
