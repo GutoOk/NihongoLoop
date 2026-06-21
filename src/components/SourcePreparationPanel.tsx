@@ -129,7 +129,7 @@ export default function SourcePreparationPanel({
 
   const cancelPending = async () => {
     const scopeLabel = showGlobal ? 'global' : 'desta fonte';
-    if (!(await showConfirm('Cancelar jobs nao concluidos', `Isso vai marcar como cancelados os jobs ${scopeLabel} que ainda estejam pendentes, reivindicados, rodando ou em retry. Historico e resultados ja concluidos permanecem para auditoria.`))) {
+    if (!(await showConfirm('Zerar fila', `Isso vai marcar como cancelados todos os jobs ${scopeLabel} que ainda nao foram concluidos, incluindo erros, revisao, retry e jobs rodando. Resultados ja concluidos permanecem para auditoria.`))) {
       return;
     }
     setIsBusy(true);
@@ -172,7 +172,7 @@ export default function SourcePreparationPanel({
   const visibleJobs = useMemo(() => jobs.filter(isVisibleQueueJob), [jobs]);
   const visibleJobTotal = showGlobal ? (globalSummary?.total || jobs.length) : (run?.created_jobs || run?.planned_jobs || jobs.length);
   const hiddenHistoricalJobs = Math.max(0, visibleJobTotal - visibleJobs.length);
-  const activeRunCount = queueCounts.pending + queueCounts.running + queueCounts.retry;
+  const clearableQueueCount = queueCounts.clearable || 0;
   const problemRunCount = queueCounts.error + queueCounts.retry + queueCounts.review;
   const hasRun = showGlobal || Boolean(run);
   const busyTitle = isBusy ? 'Acao em andamento.' : isRefreshing ? 'Atualizacao em andamento.' : undefined;
@@ -285,7 +285,7 @@ export default function SourcePreparationPanel({
               <div className="flex flex-wrap gap-2">
                 <ToolbarButton small onClick={() => setShowGlobal((value) => !value)} label={showGlobal ? 'Ver fonte' : 'Ver global'} title={showGlobal ? 'Mostrar apenas a fonte.' : 'Mostrar fila global.'} />
                 <ToolbarButton small onClick={retryProblems} disabled={isBusy || isRefreshing || problemRunCount === 0} title={problemRunCount === 0 ? 'Sem problemas para retentar.' : busyTitle || 'Retentar problemas da run.'} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retentar problemas" />
-                <ToolbarButton small onClick={cancelPending} disabled={isBusy || isRefreshing || !hasRun || activeRunCount === 0} title={activeRunCount === 0 ? 'Sem jobs ativos para cancelar.' : busyTitle || 'Cancelar jobs nao concluidos.'} icon={<Square className="h-3.5 w-3.5" />} label={showGlobal ? 'Cancelar fila global ativa' : 'Cancelar nao concluidos'} />
+                <ToolbarButton small onClick={cancelPending} disabled={isBusy || isRefreshing || !hasRun || clearableQueueCount === 0} title={clearableQueueCount === 0 ? 'Sem jobs na fila para cancelar.' : busyTitle || 'Zerar fila.'} icon={<Square className="h-3.5 w-3.5" />} label={showGlobal ? 'Zerar fila global' : 'Zerar fila'} />
               </div>
             }
           >
@@ -393,7 +393,7 @@ function isStuckJob(job: AiJob): boolean {
 }
 
 function isClearableQueueJob(job: AiJob): boolean {
-  return job.status === 'pending' || job.status === 'claimed' || job.status === 'running' || job.status === 'retry_wait';
+  return job.status !== 'completed' && job.status !== 'applied' && job.status !== 'cancelled';
 }
 
 function summarizeJobs(jobs: AiJob[]) {
@@ -420,7 +420,7 @@ function summarizeRun(run: ProcessingRun | null) {
     cancelled: run?.cancelled_jobs || 0,
     error: run?.failed_jobs || run?.failed_items || 0,
     stuck: 0,
-    clearable: 0,
+    clearable: (run?.pending_jobs || 0) + (run?.running_jobs || 0) + (run?.claimed_jobs || 0) + (run?.retry_jobs || 0) + (run?.review_jobs || run?.needs_review_jobs || 0) + (run?.failed_jobs || run?.failed_items || 0),
   };
 }
 

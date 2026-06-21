@@ -142,7 +142,7 @@ describe('SourcePreparationPanel audit controls', () => {
 
     await waitFor(() => expect(screen.getAllByText('20').length).toBeGreaterThan(0));
     expect(screen.getByRole('button', { name: /retentar problemas/i })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /cancelar nao concluidos/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /zerar fila/i })).toBeEnabled();
   });
 
   it('keeps run and jobs visible when lexical integrity RPC is missing', async () => {
@@ -203,7 +203,7 @@ describe('SourcePreparationPanel audit controls', () => {
     await user.click(await screen.findByRole('button', { name: /ver global/i }));
 
     expect(await screen.findByRole('button', { name: /retentar problemas/i })).toBeEnabled();
-    expect(screen.getByRole('button', { name: /cancelar fila global ativa/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /zerar fila global/i })).toBeEnabled();
     expect(AiJobRepository.getGlobalSummary).toHaveBeenCalledTimes(1);
   });
 
@@ -214,9 +214,10 @@ describe('SourcePreparationPanel audit controls', () => {
     expect(aiJobRepositorySource).not.toContain("{ count: 'exact', head: true }");
   });
 
-  it('only exposes cancellation for active global jobs', () => {
-    expect(globalAiQueueControlSource).toContain("'pending'");
-    expect(globalAiQueueControlSource).toContain("'needs_review'");
+  it('exposes cancellation for every unfinished global queue job', () => {
+    expect(globalAiQueueControlSource).toContain("job.status !== 'completed'");
+    expect(globalAiQueueControlSource).toContain("job.status !== 'applied'");
+    expect(globalAiQueueControlSource).toContain("job.status !== 'cancelled'");
     expect(globalAiQueueControlSource).not.toContain('return Boolean(job.id)');
     expect(pendingAiScreenSource).toContain('CANCELLABLE_JOB_STATUSES.includes(job.status)');
   });

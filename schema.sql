@@ -327,7 +327,7 @@ CREATE TABLE schema_versions (
   applied_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v28');
+INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v29');
 
 CREATE TABLE study_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1405,6 +1405,7 @@ BEGIN
 
   UPDATE ai_jobs
   SET status = 'cancelled',
+      cancel_requested = CASE WHEN status = 'running' THEN TRUE ELSE cancel_requested END,
       error = 'Cancelado pelo usuario.',
       error_code = 'USER_CANCELLED',
       error_kind = 'permanent',
@@ -1417,28 +1418,12 @@ BEGIN
       updated_at = NOW()
   WHERE run_id = p_run_id
     AND user_id = p_user_id
-    AND status IN ('pending','claimed','retry_wait','needs_review');
+    AND status NOT IN ('completed','applied','cancelled');
 
   GET DIAGNOSTICS cancelled_count = ROW_COUNT;
 
-  UPDATE ai_jobs
-  SET cancel_requested = TRUE,
-      logs = COALESCE(logs, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('at', NOW(), 'event', 'cancel_requested')),
-      updated_at = NOW()
-  WHERE run_id = p_run_id
-    AND user_id = p_user_id
-    AND status = 'running';
-
   UPDATE processing_run_stages
-  SET status = CASE
-        WHEN EXISTS (
-          SELECT 1 FROM ai_jobs
-          WHERE stage_id = processing_run_stages.id
-            AND status = 'running'
-            AND cancel_requested = TRUE
-        ) THEN status
-        ELSE 'cancelled'
-      END,
+  SET status = 'cancelled',
       cancelled_jobs = (
         SELECT COUNT(*) FROM ai_jobs
         WHERE stage_id = processing_run_stages.id AND status = 'cancelled'
@@ -1450,17 +1435,13 @@ BEGIN
 
   UPDATE processing_runs
   SET cancel_requested = TRUE,
-      status = CASE
-        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = p_run_id AND status = 'running') THEN status
-        ELSE 'cancelled'
-      END,
-      finished_at = CASE
-        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = p_run_id AND status = 'running') THEN finished_at
-        ELSE NOW()
-      END,
-      current_step = 'Cancelamento solicitado pelo usuario.',
+      status = 'cancelled',
+      finished_at = NOW(),
+      current_step = 'Fila zerada pelo usuario.',
       updated_at = NOW()
-  WHERE id = p_run_id AND user_id = p_user_id;
+  WHERE id = p_run_id
+    AND user_id = p_user_id
+    AND status IN ('pending','planning','running','paused','needs_review');
 
   PERFORM refresh_processing_run_snapshot(p_run_id);
   RETURN cancelled_count;
@@ -1488,6 +1469,7 @@ BEGIN
 
   UPDATE ai_jobs
   SET status = 'cancelled',
+      cancel_requested = CASE WHEN status = 'running' THEN TRUE ELSE cancel_requested END,
       error = 'Cancelado pelo usuario.',
       error_code = 'USER_CANCELLED',
       error_kind = 'permanent',
@@ -1499,7 +1481,7 @@ BEGIN
       completed_at = NOW(),
       updated_at = NOW()
   WHERE user_id = p_user_id
-    AND status IN ('pending','claimed','retry_wait','needs_review')
+    AND status NOT IN ('completed','applied','cancelled')
     AND (
       run_id = ANY(run_ids)
       OR target_id = p_source_id
@@ -1509,32 +1491,26 @@ BEGIN
 
   GET DIAGNOSTICS cancelled_count = ROW_COUNT;
 
-  UPDATE ai_jobs
-  SET cancel_requested = TRUE,
-      logs = COALESCE(logs, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('at', NOW(), 'event', 'cancel_requested')),
+  UPDATE processing_run_stages
+  SET status = 'cancelled',
+      cancelled_jobs = (
+        SELECT COUNT(*) FROM ai_jobs
+        WHERE stage_id = processing_run_stages.id AND status = 'cancelled'
+      ),
       updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND status = 'running'
-    AND (
-      run_id = ANY(run_ids)
-      OR target_id = p_source_id
-      OR input->>'sourceId' = p_source_id::TEXT
-      OR payload->>'sourceId' = p_source_id::TEXT
-    );
+  WHERE run_id = ANY(run_ids)
+    AND user_id = p_user_id
+    AND status IN ('pending','running','needs_review','blocked');
 
   UPDATE processing_runs
   SET cancel_requested = TRUE,
-      status = CASE
-        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = processing_runs.id AND status = 'running') THEN status
-        ELSE 'cancelled'
-      END,
-      finished_at = CASE
-        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = processing_runs.id AND status = 'running') THEN finished_at
-        ELSE NOW()
-      END,
-      current_step = 'Cancelamento solicitado pelo usuario.',
+      status = 'cancelled',
+      finished_at = NOW(),
+      current_step = 'Fila zerada pelo usuario.',
       updated_at = NOW()
-  WHERE id = ANY(run_ids) AND user_id = p_user_id;
+  WHERE id = ANY(run_ids)
+    AND user_id = p_user_id
+    AND status IN ('pending','planning','running','paused','needs_review');
 
   PERFORM refresh_processing_run_snapshot(ids.run_id)
   FROM unnest(run_ids) AS ids(run_id);
@@ -1559,11 +1535,11 @@ BEGIN
 
   SELECT COALESCE(array_agg(id), ARRAY[]::UUID[]) INTO run_ids
   FROM processing_runs
-  WHERE user_id = p_user_id
-    AND status IN ('pending','planning','running','paused','needs_review');
+  WHERE user_id = p_user_id;
 
   UPDATE ai_jobs
   SET status = 'cancelled',
+      cancel_requested = CASE WHEN status = 'running' THEN TRUE ELSE cancel_requested END,
       error = 'Cancelado pelo usuario.',
       error_code = 'USER_CANCELLED',
       error_kind = 'permanent',
@@ -1575,28 +1551,26 @@ BEGIN
       completed_at = NOW(),
       updated_at = NOW()
   WHERE user_id = p_user_id
-    AND status IN ('pending','claimed','retry_wait','needs_review');
+    AND status NOT IN ('completed','applied','cancelled');
 
   GET DIAGNOSTICS cancelled_count = ROW_COUNT;
 
-  UPDATE ai_jobs
-  SET cancel_requested = TRUE,
-      logs = COALESCE(logs, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('at', NOW(), 'event', 'cancel_requested')),
+  UPDATE processing_run_stages
+  SET status = 'cancelled',
+      cancelled_jobs = (
+        SELECT COUNT(*) FROM ai_jobs
+        WHERE stage_id = processing_run_stages.id AND status = 'cancelled'
+      ),
       updated_at = NOW()
-  WHERE user_id = p_user_id
-    AND status = 'running';
+  WHERE run_id = ANY(run_ids)
+    AND user_id = p_user_id
+    AND status IN ('pending','running','needs_review','blocked');
 
   UPDATE processing_runs
   SET cancel_requested = TRUE,
-      status = CASE
-        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = processing_runs.id AND status = 'running') THEN status
-        ELSE 'cancelled'
-      END,
-      finished_at = CASE
-        WHEN EXISTS (SELECT 1 FROM ai_jobs WHERE run_id = processing_runs.id AND status = 'running') THEN finished_at
-        ELSE NOW()
-      END,
-      current_step = 'Cancelamento global solicitado pelo usuario.',
+      status = 'cancelled',
+      finished_at = NOW(),
+      current_step = 'Fila global zerada pelo usuario.',
       updated_at = NOW()
   WHERE user_id = p_user_id
     AND status IN ('pending','planning','running','paused','needs_review');
@@ -3338,7 +3312,7 @@ AS $$
           )
         )
     ),
-    'clearable', COUNT(*) FILTER (WHERE status IN ('pending','error','completed','applied','cancelled'))
+    'clearable', COUNT(*) FILTER (WHERE status NOT IN ('completed','applied','cancelled'))
   )
   FROM ai_jobs
   WHERE user_id = auth.uid()::text;

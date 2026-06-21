@@ -139,7 +139,7 @@ export class AiJobRepository {
     });
     if (error) {
       console.error(error);
-      throw new Error(`Erro do Supabase ao cancelar fila ativa: ${error.message}`);
+      throw new Error(`Erro do Supabase ao zerar fila: ${error.message}`);
     }
     return true;
   }
