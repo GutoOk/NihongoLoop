@@ -19,6 +19,24 @@ export interface Source {
   difficulty?: number | null;
 }
 
+export interface SourceGroup {
+  id: string;
+  user_id: string;
+  parent_id: string | null;
+  name: string;
+  color: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SourceGroupMembership {
+  user_id: string;
+  group_id: string;
+  source_id: string;
+  created_at: string;
+}
+
 export type SentenceStatus = 'raw' | 'translated' | 'reading_ready' | 'reviewed' | 'problematic';
 
 export interface Sentence {

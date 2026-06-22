@@ -215,6 +215,19 @@ export default function App() {
                 onSelectSource={(sourceId) =>
                   handleNavigate("reading", { sourceId })
                 }
+                onStudyGroup={(groupId, sourceIds) =>
+                  handleNavigate("study_player", {
+                    config: {
+                      entityType: "sentence",
+                      targetType: "source_group",
+                      sourceGroupId: groupId,
+                      sourceIds,
+                      limit: 9999,
+                      order: "original",
+                      studyMode: "jp-pt",
+                    },
+                  })
+                }
               />
             </div>
           )}
@@ -235,6 +248,19 @@ export default function App() {
                 onBack={handleGoBack}
                 onStartStandard={(sourceId, mode) =>
                   handleNavigate("standard_study", { sourceId, mode })
+                }
+                onStartGroup={(groupId, sourceIds) =>
+                  handleNavigate("study_player", {
+                    config: {
+                      entityType: "sentence",
+                      targetType: "source_group",
+                      sourceGroupId: groupId,
+                      sourceIds,
+                      limit: 9999,
+                      order: "original",
+                      studyMode: "jp-pt",
+                    },
+                  })
                 }
                 onStartCustom={() => handleNavigate("study_setup")}
               />

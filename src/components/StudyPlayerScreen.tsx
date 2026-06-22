@@ -362,10 +362,10 @@ export default function StudyPlayerScreen({
         if (config.targetType === "no_meaning")
           entries = entries.filter((e) => !e.main_meaning);
 
-        if (config.targetType === "source" && config.sourceId) {
-          const sourceSents = await SentenceRepository.getBySourceId(
-            config.sourceId,
-          );
+        if ((config.targetType === "source" && config.sourceId) || (config.targetType === "source_group" && Array.isArray(config.sourceIds))) {
+          const sourceSents = Array.isArray(config.sourceIds) && config.sourceIds.length > 0
+            ? await SentenceRepository.getBySourceIds(config.sourceIds)
+            : await SentenceRepository.getBySourceId(config.sourceId);
           const sourceSentIds = sourceSents.map((s) => s.id);
           const terms = await TermRepository.getBySentences(sourceSentIds);
           const validEntryIds = new Set(
@@ -376,14 +376,14 @@ export default function StudyPlayerScreen({
 
         if (config.targetType === "custom_word_filter") {
           // Filter by source
-          if (config.sourceId) {
-            let sourceSents = await SentenceRepository.getBySourceId(
-              config.sourceId,
-            );
+          if (config.sourceId || (Array.isArray(config.sourceIds) && config.sourceIds.length > 0)) {
+            let sourceSents = Array.isArray(config.sourceIds) && config.sourceIds.length > 0
+              ? await SentenceRepository.getBySourceIds(config.sourceIds)
+              : await SentenceRepository.getBySourceId(config.sourceId);
             const sourceSentIds = sourceSents.map((s) => s.id);
             let terms = await TermRepository.getBySentences(sourceSentIds);
 
-            if (!terms || terms.length === 0) {
+            if ((!terms || terms.length === 0) && config.sourceId) {
               const { TermDetectionService } =
                 await import("../services/termDetectionService");
               await TermDetectionService.detectWordsInSource(config.sourceId);
@@ -499,10 +499,13 @@ export default function StudyPlayerScreen({
         sents = orderedIds.map((id) => byId.get(id)).filter((item): item is Sentence => Boolean(item));
       } else if (
         (config.targetType === "source" ||
+          config.targetType === "source_group" ||
           config.targetType === "standard_flow") &&
-        config.sourceId
+        (config.sourceId || (Array.isArray(config.sourceIds) && config.sourceIds.length > 0))
       ) {
-        sents = await SentenceRepository.getBySourceId(config.sourceId);
+        sents = Array.isArray(config.sourceIds) && config.sourceIds.length > 0
+          ? await SentenceRepository.getBySourceIds(config.sourceIds)
+          : await SentenceRepository.getBySourceId(config.sourceId);
       } else {
         sents = await SentenceRepository.getPage(0, Math.min(Math.max(config.limit || 100, 50), 500));
       }

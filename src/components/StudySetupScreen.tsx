@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { ArrowLeft, Play, Settings2, BookOpen } from "lucide-react";
 import { SourceRepository, DictionaryRepository } from "../repositories";
-import { Source, DictionaryEntry } from "../types";
+import { Source, DictionaryEntry, SourceGroup } from "../types";
 
 interface StudySetupScreenProps {
   onBack: () => void;
@@ -13,6 +13,7 @@ export default function StudySetupScreen({
   onStartSession,
 }: StudySetupScreenProps) {
   const [sources, setSources] = useState<Source[]>([]);
+  const [groups, setGroups] = useState<SourceGroup[]>([]);
   const [words, setWords] = useState<DictionaryEntry[]>([]);
 
   const [entityType, setEntityType] = useState<
@@ -22,6 +23,7 @@ export default function StudySetupScreen({
   // Basic session config mimicking the user requirements
   const [targetType, setTargetType] = useState<string>("all");
   const [selectedSource, setSelectedSource] = useState("");
+  const [selectedGroup, setSelectedGroup] = useState("");
   const [selectedWordId, setSelectedWordId] = useState("");
   const [filterWordType, setFilterWordType] = useState<string>("all");
   const [filterWordLevel, setFilterWordLevel] = useState<string>("all");
@@ -33,11 +35,14 @@ export default function StudySetupScreen({
 
   useEffect(() => {
     SourceRepository.getAll().then(setSources);
+    SourceRepository.getGroups().then(setGroups);
     DictionaryRepository.getPage({ limit: 200 }).then(({ entries }) => setWords(entries));
   }, []);
 
   // Reset target targetType when entity changes to avoid invalid combinations
   useEffect(() => {
+    setSelectedGroup("");
+    setSelectedSource("");
     if (entityType === "sentence") {
       setTargetType("all");
     } else if (entityType === "word") {
@@ -47,14 +52,19 @@ export default function StudySetupScreen({
     }
   }, [entityType]);
 
-  const handleStart = () => {
+  const handleStart = async () => {
+    const sourceIds = selectedGroup ? await SourceRepository.getSourceIdsByGroupId(selectedGroup) : [];
     onStartSession({
       entityType,
-      targetType: entityType === "word" ? "custom_word_filter" : targetType,
+      targetType: selectedGroup
+        ? (entityType === "word" ? "custom_word_filter" : "source_group")
+        : entityType === "word" ? "custom_word_filter" : targetType,
       sourceId:
-        targetType === "source" || entityType === "word"
+        !selectedGroup && (targetType === "source" || entityType === "word")
           ? selectedSource
           : null,
+      sourceIds: selectedGroup ? sourceIds : undefined,
+      sourceGroupId: selectedGroup || undefined,
       wordId: entityType === "word_context" ? selectedWordId : null,
       filterWordType,
       filterWordLevel,
@@ -139,6 +149,12 @@ export default function StudySetupScreen({
                 Uma Fonte
               </button>
               <button
+                onClick={() => setTargetType("source_group")}
+                className={`py-3 text-xs font-bold rounded-xl border transition-all ${targetType === "source_group" ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-[#E5E5E7]"}`}
+              >
+                Grupo
+              </button>
+              <button
                 onClick={() => setTargetType("new")}
                 className={`py-3 text-xs font-bold rounded-xl border transition-all ${targetType === "new" ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-[#E5E5E7]"}`}
               >
@@ -165,13 +181,34 @@ export default function StudySetupScreen({
                 <label className="text-xs font-bold text-gray-700">Fonte</label>
                 <select
                   value={selectedSource}
-                  onChange={(e) => setSelectedSource(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedSource(e.target.value);
+                    if (e.target.value) setSelectedGroup("");
+                  }}
                   className="w-full mt-1 p-3 bg-white border border-[#E5E5E7] rounded-xl text-sm outline-none"
                 >
                   <option value="">Todas as Fontes</option>
                   {sources.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-bold text-gray-700">Grupo</label>
+                <select
+                  value={selectedGroup}
+                  onChange={(e) => {
+                    setSelectedGroup(e.target.value);
+                    if (e.target.value) setSelectedSource("");
+                  }}
+                  className="w-full mt-1 p-3 bg-white border border-[#E5E5E7] rounded-xl text-sm outline-none"
+                >
+                  <option value="">Todos os grupos</option>
+                  {groups.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
                     </option>
                   ))}
                 </select>
@@ -236,13 +273,30 @@ export default function StudySetupScreen({
           {targetType === "source" && entityType === "sentence" && (
             <select
               value={selectedSource}
-              onChange={(e) => setSelectedSource(e.target.value)}
+              onChange={(e) => {
+                setSelectedSource(e.target.value);
+                if (e.target.value) setSelectedGroup("");
+              }}
               className="w-full mt-2 p-3 bg-[#F5F5F7] border border-[#E5E5E7] rounded-xl text-sm outline-none"
             >
               <option value="">Selecione uma fonte...</option>
               {sources.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.title}
+                </option>
+              ))}
+            </select>
+          )}
+          {targetType === "source_group" && entityType === "sentence" && (
+            <select
+              value={selectedGroup}
+              onChange={(e) => setSelectedGroup(e.target.value)}
+              className="w-full mt-2 p-3 bg-[#F5F5F7] border border-[#E5E5E7] rounded-xl text-sm outline-none"
+            >
+              <option value="">Selecione um grupo...</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
                 </option>
               ))}
             </select>
@@ -318,6 +372,7 @@ export default function StudySetupScreen({
           onClick={handleStart}
           disabled={
             (targetType === "source" && !selectedSource) ||
+            (targetType === "source_group" && !selectedGroup) ||
             (entityType === "word_context" && !selectedWordId)
           }
           className="btn btn-primary flex items-center justify-center gap-2 disabled:opacity-50"

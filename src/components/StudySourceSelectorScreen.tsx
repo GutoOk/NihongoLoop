@@ -1,25 +1,36 @@
 import React, { useState, useEffect } from "react";
-import { ArrowLeft, Play, Settings2, BookOpen } from "lucide-react";
+import { ArrowLeft, Play, Settings2, BookOpen, Folder } from "lucide-react";
 import { SourceRepository } from "../repositories";
-import { Source } from "../types";
+import { Source, SourceGroup } from "../types";
 
 interface StudySourceSelectorScreenProps {
   onBack: () => void;
   onStartStandard: (sourceId: string, mode: "sentences" | "words") => void;
+  onStartGroup: (groupId: string, sourceIds: string[]) => void;
   onStartCustom: () => void;
 }
 
 export default function StudySourceSelectorScreen({
   onBack,
   onStartStandard,
+  onStartGroup,
   onStartCustom,
 }: StudySourceSelectorScreenProps) {
   const [sources, setSources] = useState<Source[]>([]);
+  const [groups, setGroups] = useState<SourceGroup[]>([]);
   const [selectedSource, setSelectedSource] = useState("");
+  const [selectedGroup, setSelectedGroup] = useState("");
 
   useEffect(() => {
     SourceRepository.getAll().then(setSources);
+    SourceRepository.getGroups().then(setGroups);
   }, []);
+
+  const handleStartGroup = async () => {
+    if (!selectedGroup) return;
+    const sourceIds = await SourceRepository.getSourceIdsByGroupId(selectedGroup);
+    onStartGroup(selectedGroup, sourceIds);
+  };
 
   return (
     <div className="screen">
@@ -101,6 +112,33 @@ export default function StudySourceSelectorScreen({
           >
             <Settings2 className="w-4 h-4" />
             Estudo Personalizado
+          </button>
+        </div>
+
+        <div className="pt-6 border-t border-[#E5E5E7] space-y-4">
+          <div className="space-y-1.5">
+            <label className="field-label">Estudar um grupo</label>
+            <select
+              value={selectedGroup}
+              onChange={(e) => setSelectedGroup(e.target.value)}
+              className="form-select"
+            >
+              <option value="">Selecione um grupo...</option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={handleStartGroup}
+            disabled={!selectedGroup}
+            className="btn bg-slate-800 hover:bg-slate-900 text-white"
+          >
+            <Folder className="w-4 h-4" />
+            Frases do Grupo
           </button>
         </div>
       </main>

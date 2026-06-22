@@ -42,6 +42,24 @@ export class SentenceRepository {
     return data || [];
   }
 
+  static async getBySourceIds(sourceIds: string[]): Promise<Sentence[]> {
+    if (isE2EMockMode()) return defaultMockSentences.filter((s) => sourceIds.includes(s.source_id));
+    if (!isSupabaseConfigured || sourceIds.length === 0) return [];
+    let allData: Sentence[] = [];
+    for (const chunk of chunkArray(Array.from(new Set(sourceIds)), 50)) {
+      const { data, error } = await supabase!
+        .from('sentences')
+        .select(SENTENCE_SELECT)
+        .in('source_id', chunk)
+        .eq('user_id', getUserId())
+        .order('source_id', { ascending: true })
+        .order('order_index', { ascending: true });
+      if (error) throw new Error(`Erro do Supabase ao carregar frases dos grupos: ${error.message}`);
+      if (data) allData = allData.concat(data);
+    }
+    return allData;
+  }
+
   static async getPageBySourceId(sourceId: string, offset = 0, limit = 50): Promise<Sentence[]> {
     if (isE2EMockMode()) return defaultMockSentences.filter((s) => s.source_id === sourceId).slice(offset, offset + limit);
     if (!isSupabaseConfigured) return [];
