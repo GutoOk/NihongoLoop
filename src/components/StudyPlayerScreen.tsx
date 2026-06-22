@@ -12,7 +12,10 @@ import {
   PictureInPicture,
   Edit2,
   Save,
-  Plus
+  Plus,
+  BookmarkPlus,
+  Layers,
+  Database as DatabaseIcon,
 } from "lucide-react";
 import {
   SentenceRepository,
@@ -21,8 +24,9 @@ import {
   DictionaryFormRepository,
   DictionarySenseRepository,
   TermRepository,
+  SourceRepository,
 } from "../repositories";
-import { Sentence, DictionaryEntry, DictionaryForm, DictionarySense } from "../types";
+import { Sentence, DictionaryEntry, DictionaryForm, DictionarySense, DictionaryProgress, SentenceTerm, Source } from "../types";
 import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // for TTS settings
 import { TERM_COLORS, getTermColor, isLowEmphasisTerm } from "../ui/termColors";
@@ -69,6 +73,10 @@ export default function StudyPlayerScreen({
     entry: DictionaryEntry | null;
     forms?: DictionaryForm[];
     senses?: DictionarySense[];
+    occurrences?: Array<{ sentence: Sentence; term: SentenceTerm; sourceTitle: string }>;
+    sources?: Array<{ sourceId: string; title: string; count: number }>;
+    progress?: DictionaryProgress | null;
+    loading?: boolean;
   } | null>(null);
   const [showLegendModal, setShowLegendModal] = useState(false);
   const playActiveRef = useRef(false);
@@ -171,19 +179,59 @@ export default function StudyPlayerScreen({
     let entry = entryHint || null;
     let forms: DictionaryForm[] = [];
     let senses: DictionarySense[] = [];
+    let occurrences: Array<{ sentence: Sentence; term: SentenceTerm; sourceTitle: string }> = [];
+    let sources: Array<{ sourceId: string; title: string; count: number }> = [];
+    let progress: DictionaryProgress | null = null;
+
+    setActiveDictionaryPopup({ term, entry, forms, senses, occurrences, sources, progress, loading: Boolean(entryId) });
 
     if (entryId) {
-      const [loadedEntry, loadedForms, loadedSenses] = await Promise.all([
+      const [loadedEntry, loadedForms, loadedSenses, allTerms, loadedProgress] = await Promise.all([
         entry ? Promise.resolve(entry) : DictionaryRepository.getById(entryId),
         DictionaryFormRepository.getByEntryId(entryId),
         DictionarySenseRepository.getByEntryId(entryId),
+        TermRepository.getByDictionaryEntry(entryId),
+        ProgressRepository.getDictionaryProgress(entryId),
       ]);
       entry = loadedEntry;
       forms = loadedForms;
       senses = loadedSenses;
+      progress = loadedProgress;
+
+      const sentenceIds = Array.from(new Set(allTerms.map((t) => t.sentence_id)));
+      const relatedSentences = await SentenceRepository.getByIds(sentenceIds);
+      const sentenceMap = new Map(relatedSentences.map((sentence) => [sentence.id, sentence]));
+      const sourceCounts = new Map<string, number>();
+      for (const sentence of relatedSentences) {
+        sourceCounts.set(sentence.source_id, (sourceCounts.get(sentence.source_id) || 0) + 1);
+      }
+      const sourceRows = await Promise.all(
+        Array.from(sourceCounts.keys()).map((id) => SourceRepository.getById(id)),
+      );
+      const sourceTitleMap = new Map(
+        sourceRows.filter((item): item is Source => Boolean(item)).map((item) => [item.id, item.title]),
+      );
+      occurrences = allTerms
+        .map((item) => {
+          const sentence = sentenceMap.get(item.sentence_id);
+          if (!sentence) return null;
+          return {
+            sentence,
+            term: item,
+            sourceTitle: sourceTitleMap.get(sentence.source_id) || "Fonte sem titulo",
+          };
+        })
+        .filter((item): item is { sentence: Sentence; term: SentenceTerm; sourceTitle: string } => Boolean(item));
+      sources = Array.from(sourceCounts.entries())
+        .map(([sourceId, count]) => ({
+          sourceId,
+          count,
+          title: sourceTitleMap.get(sourceId) || "Fonte sem titulo",
+        }))
+        .sort((a, b) => b.count - a.count);
     }
 
-    setActiveDictionaryPopup({ term, entry, forms, senses });
+    setActiveDictionaryPopup({ term, entry, forms, senses, occurrences, sources, progress, loading: false });
   };
 
   // Picture-in-Picture feature support
@@ -688,6 +736,36 @@ export default function StudyPlayerScreen({
     }
   };
 
+  const addPopupWordToFlashcards = async () => {
+    const entryId = activeDictionaryPopup?.entry?.id;
+    if (!entryId) {
+      alert("Esta palavra ainda nao possui verbete para virar flashcard.");
+      return;
+    }
+    const saved = await ProgressRepository.setDictionaryProgressFields(
+      entryId,
+      { favorite: true, suspended: false },
+      activeDictionaryPopup.progress || null,
+    );
+    setActiveDictionaryPopup((current) => (current ? { ...current, progress: saved } : current));
+  };
+
+  const studyPopupWordAsSource = () => {
+    const entryId = activeDictionaryPopup?.entry?.id;
+    if (!entryId || !parentNavigate) return;
+    setActiveDictionaryPopup(null);
+    parentNavigate("study_player", {
+      config: {
+        entityType: "word_context",
+        targetType: "specific",
+        wordId: entryId,
+        limit: 30,
+        order: "original",
+        studyMode: "jp-pt",
+      },
+    });
+  };
+
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center text-xs">
@@ -1008,6 +1086,13 @@ export default function StudyPlayerScreen({
                 )}
               </div>
 
+              {activeDictionaryPopup.loading && (
+                <div className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 p-4 text-xs font-bold text-slate-500">
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Carregando dados da palavra
+                </div>
+              )}
+
               {getPanelMeanings(activeDictionaryPopup).length > 1 && (
                 <PanelSection title="Acepcoes">
                   <ol className="space-y-2">
@@ -1116,9 +1201,60 @@ export default function StudyPlayerScreen({
                   </div>
                 </PanelSection>
               )}
+
+              {activeDictionaryPopup?.occurrences && activeDictionaryPopup.occurrences.length > 0 && (
+                <PanelSection title={`Frases de exemplo (${activeDictionaryPopup.occurrences.length})`}>
+                  {activeDictionaryPopup.occurrences.slice(0, 12).map(({ sentence, term, sourceTitle }) => (
+                    <div key={`${sentence.id}-${term.id}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                      <p className="text-[9px] font-black uppercase text-slate-400">{sourceTitle}</p>
+                      <p className="mt-1 text-sm font-black text-slate-900">{sentence.japanese}</p>
+                      {sentence.portuguese && (
+                        <p className="mt-1 text-xs font-medium leading-relaxed text-slate-600">{sentence.portuguese}</p>
+                      )}
+                      {term.context_meaning && (
+                        <p className="mt-2 rounded bg-white px-2 py-1 text-[10px] font-bold text-indigo-800">{term.context_meaning}</p>
+                      )}
+                    </div>
+                  ))}
+                </PanelSection>
+              )}
+
+              {activeDictionaryPopup?.sources && activeDictionaryPopup.sources.length > 0 && (
+                <PanelSection title={`Textos e fontes (${activeDictionaryPopup.sources.length})`}>
+                  {activeDictionaryPopup.sources.map((source) => (
+                    <div key={source.sourceId} className="flex items-center justify-between gap-3 rounded-lg border border-purple-100 bg-purple-50/40 p-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <DatabaseIcon className="h-4 w-4 shrink-0 text-purple-500" />
+                        <span className="truncate text-xs font-bold text-slate-700">{source.title}</span>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-black text-purple-700">{source.count}</span>
+                    </div>
+                  ))}
+                </PanelSection>
+              )}
             </div>
 
             <div className="p-4 pt-0 space-y-2">
+              {activeDictionaryPopup?.entry && (
+                <button
+                  type="button"
+                  onClick={() => void addPopupWordToFlashcards()}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-3.5 rounded-xl uppercase tracking-widest transition-colors shadow-md flex items-center justify-center gap-2"
+                >
+                  <BookmarkPlus className="h-4 w-4" />
+                  {activeDictionaryPopup.progress?.favorite ? "No baralho de flashcards" : "Adicionar ao baralho"}
+                </button>
+              )}
+              {activeDictionaryPopup?.entry && parentNavigate && (
+                <button
+                  type="button"
+                  onClick={studyPopupWordAsSource}
+                  className="w-full bg-slate-100 border border-slate-200 hover:bg-slate-200 text-slate-700 text-xs font-bold py-3.5 rounded-xl uppercase tracking-widest transition-colors shadow-sm flex items-center justify-center gap-2"
+                >
+                  <Layers className="h-4 w-4" />
+                  Usar como fonte de estudos
+                </button>
+              )}
               {activeDictionaryPopup?.entry && parentNavigate && (
                 <button
                   onClick={() => {

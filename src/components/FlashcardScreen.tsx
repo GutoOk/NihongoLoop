@@ -45,21 +45,28 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   const [lastResult, setLastResult] = useState<SessionResult | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [sessionNonce, setSessionNonce] = useState(0);
+  const [activityVersion, setActivityVersion] = useState(0);
 
-  useEffect(() => { loadData(); setDecks(FlashcardStore.getDecks()); }, []);
+  useEffect(() => {
+    void loadData();
+  }, []);
 
   const loadData = async () => {
     setLoading(true);
-    const [entries, progress, srcs] = await Promise.all([
+    const [entries, progress, srcs, flashcardData] = await Promise.all([
       DictionaryRepository.getAll(), // full deck (getPage is capped at 200)
       ProgressRepository.getAllDictionaryProgress(),
       SourceRepository.getAll(),
+      FlashcardStore.hydrateRemote(),
     ]);
     setDictionary(entries);
     setAllProgress(progress);
     setSources(srcs);
+    setSettings(flashcardData.settings);
+    setDecks(flashcardData.decks);
     setTypes(Array.from(new Set(entries.map((e) => e.type).filter(Boolean))) as string[]);
     setLevels(Array.from(new Set(entries.map((e) => e.jlpt_level).filter(Boolean))) as string[]);
+    setActivityVersion((value) => value + 1);
     setLoading(false);
   };
 
@@ -170,7 +177,9 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   }, []);
 
   const onFinish = useCallback((result: SessionResult) => {
-    FlashcardStore.recordSession(result.reviewCount, result.newCount, result.again);
+    void FlashcardStore.recordSessionRemote(result.reviewCount, result.newCount, result.again)
+      .then(() => setActivityVersion((value) => value + 1))
+      .catch((err) => showAlert("Atividade nao sincronizada", err?.message || "A sessao terminou, mas a contagem diaria nao foi salva no Supabase."));
     void StudySessionRepository.saveSession({
       user_id: "",
       type: "flashcards",
@@ -181,7 +190,7 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
     }).catch((err) => console.warn("Failed to save flashcard session", err));
     setLastResult(result);
     setView("summary");
-  }, [sessionMode]);
+  }, [sessionMode, showAlert]);
 
   const handleReactivateCard = useCallback((entryId: string) => {
     void ProgressRepository.setDictionaryProgressFields(entryId, { suspended: false }, progressMap[entryId] || null)
@@ -207,19 +216,28 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   }, [showAlert, upsertLocalProgress]);
 
   // ─── Settings ────────────────────────────────────────────────────────────────
-  const updateSettings = (patch: Partial<FlashcardSettings>) => setSettings(FlashcardStore.saveSettings(patch));
+  const updateSettings = (patch: Partial<FlashcardSettings>) => {
+    void FlashcardStore.saveSettingsRemote(patch)
+      .then((saved) => {
+        setSettings(saved);
+        setActivityVersion((value) => value + 1);
+      })
+      .catch((err) => showAlert("Nao foi possivel salvar preferencias", err?.message || "Tente novamente quando a conexao voltar."));
+  };
 
   // ─── Deck management ─────────────────────────────────────────────────────────
   const handleSaveDeck = (name: string, config: SessionConfig) => {
-    FlashcardStore.saveDeck(name, config);
-    setDecks(FlashcardStore.getDecks());
+    void FlashcardStore.saveDeckRemote(name, config)
+      .then(() => setDecks(FlashcardStore.getDecks()))
+      .catch((err) => showAlert("Nao foi possivel salvar baralho", err?.message || "Tente novamente quando a conexao voltar."));
   };
   const handleDeleteDeck = (id: string) => {
-    FlashcardStore.deleteDeck(id);
-    setDecks(FlashcardStore.getDecks());
+    void FlashcardStore.deleteDeckRemote(id)
+      .then(() => setDecks(FlashcardStore.getDecks()))
+      .catch((err) => showAlert("Nao foi possivel apagar baralho", err?.message || "Tente novamente quando a conexao voltar."));
   };
 
-  const tip = useMemo(() => getStudyTip(deckStats, FlashcardStore.getStreak()), [deckStats]);
+  const tip = useMemo(() => getStudyTip(deckStats, FlashcardStore.getStreak()), [deckStats, activityVersion]);
   const upcomingTomorrow = useMemo(() => forecastDueReviews(allProgress, 2)[1] ?? 0, [allProgress]);
 
   // ─── Tutor (rule-based pedagogical analysis) ─────────────────────────────────
@@ -235,7 +253,7 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
     todayNewCards: FlashcardStore.getTodayCounts().newCards,
     hourHistogram: FlashcardStore.getHourHistogram(),
     recentAgainRate: FlashcardStore.getRecentAgainRate(),
-  }), [dictionary, allProgress, deckStats, settings, view]);
+  }), [dictionary, allProgress, deckStats, settings, view, activityVersion]);
 
   const handleTutorAction = useCallback((action?: TutorAction) => {
     if (!action || action.kind === "none") return;

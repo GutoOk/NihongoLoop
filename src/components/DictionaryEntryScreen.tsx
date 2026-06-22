@@ -2,7 +2,6 @@ import React, { useEffect, useState } from "react";
 import {
   ArrowLeft,
   BookOpen,
-  BrainCircuit,
   Play,
   ChevronDown,
   ChevronUp,
@@ -20,6 +19,7 @@ import {
   Plus,
   Save,
   X,
+  BookmarkPlus,
 } from "lucide-react";
 import {
   DictionaryRepository,
@@ -27,6 +27,7 @@ import {
   TermRepository,
   SourceRepository,
   ProcessingRunRepository,
+  ProgressRepository,
 } from "../repositories";
 import { SpeechService } from "../services/speechService";
 import { DictionaryEntry, Sentence, SentenceTerm } from "../types";
@@ -52,6 +53,7 @@ export default function DictionaryEntryScreen({
   const [entry, setEntry] = useState<DictionaryEntry | null>(null);
   const { showAlert } = useModal();
   const [isPlaying, setIsPlaying] = useState(false);
+  const [savingDeck, setSavingDeck] = useState(false);
 
   const [isGrammarOpen, setIsGrammarOpen] = useState(true);
   const [isComponentsOpen, setIsComponentsOpen] = useState(true);
@@ -258,6 +260,25 @@ export default function DictionaryEntryScreen({
     SpeechService.stop();
     SpeechService.speakJapaneseText(entry.lemma, 1);
     setTimeout(() => setIsPlaying(false), 1200);
+  };
+
+  const handleAddToFlashcardDeck = async () => {
+    if (!entry || savingDeck) return;
+    setSavingDeck(true);
+    try {
+      const current = await ProgressRepository.getDictionaryProgress(entry.id);
+      await ProgressRepository.setDictionaryProgressFields(
+        entry.id,
+        { favorite: true, suspended: false },
+        current,
+      );
+      showAlert("Baralho", "Palavra adicionada aos favoritos dos flashcards.");
+    } catch (e: any) {
+      console.error(e);
+      showAlert("Erro", `Nao foi possivel adicionar ao baralho: ${e.message || e}`);
+    } finally {
+      setSavingDeck(false);
+    }
   };
 
   if (showSentencesQuiz) {
@@ -1054,30 +1075,33 @@ export default function DictionaryEntryScreen({
         <div className="bg-slate-900 rounded-3xl p-6 text-white space-y-4 shadow-xl border border-slate-850">
           <div className="space-y-1">
             <h3 className="text-base font-black flex items-center gap-1.5 uppercase tracking-wide">
-              <Play className="w-4 h-4 text-indigo-400 fill-indigo-400" />{" "}
-              Prática & Fixação
+              <Bookmark className="w-4 h-4 text-indigo-400 fill-indigo-400" />
+              Estudar depois
             </h3>
-            <p className="text-xs text-slate-400">
-              Estude este vocabulário com o reprodutor inteligente e exercícios
-              de memorização do aplicativo.
-            </p>
           </div>
+
+          <p className="text-xs text-slate-400">
+            Guarde este verbete para revisar em flashcards ou use seus
+            contextos como uma fonte de estudo.
+          </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <button
               type="button"
-              onClick={onStudyContext}
+              onClick={() => void handleAddToFlashcardDeck()}
+              disabled={savingDeck}
               className="btn btn-primary flex items-center justify-center gap-2"
             >
-              <Play className="w-4 h-4 fill-current text-white" />
-              <span>Estudar Frases (Repetição)</span>
+              <BookmarkPlus className="w-4 h-4 text-white" />
+              <span className="text-xs">{savingDeck ? "Adicionando..." : "Adicionar ao baralho"}</span>
             </button>
             <button
-              onClick={() => setShowSentencesQuiz(true)}
+              type="button"
+              onClick={onStudyContext}
               className="btn bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center gap-2"
             >
-              <BrainCircuit className="w-4 h-4" />
-              <span>Quiz das Frases Relacionadas</span>
+              <Layers className="w-4 h-4" />
+              <span className="text-xs">Usar como fonte de estudos</span>
             </button>
           </div>
         </div>

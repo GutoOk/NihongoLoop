@@ -1,5 +1,11 @@
 import { DictionaryEntry, DictionaryProgress } from "../types";
 import {
+  FlashcardActivityRow,
+  FlashcardLocalSnapshot,
+  FlashcardRepository,
+  FlashcardRemoteSnapshot,
+} from "../repositories/flashcardRepository";
+import {
   CardState,
   classifyCardState,
   isCardDue,
@@ -63,6 +69,7 @@ const KEY_SETTINGS = "nihongo.fc.settings";
 const KEY_DECKS = "nihongo.fc.decks";
 const KEY_DAILY = "nihongo.fc.daily"; // { [dateISO]: { reviews, newCards, again } }
 const KEY_HOURS = "nihongo.fc.hours"; // number[24] — sessions started per hour
+const KEY_REMOTE_MIGRATION = "nihongo.fc.remoteMigrationDone";
 
 export const DEFAULT_SETTINGS: FlashcardSettings = {
   dailyNewLimit: 20,
@@ -75,7 +82,7 @@ export const DEFAULT_SETTINGS: FlashcardSettings = {
 
 const DECK_COLORS = ["indigo", "violet", "emerald", "sky", "amber", "rose", "teal", "fuchsia"];
 
-interface DailyEntry { reviews: number; newCards: number; again: number; }
+interface DailyEntry { reviews: number; newCards: number; again: number; sessionsCount?: number; }
 
 // ─── localStorage helpers ──────────────────────────────────────────────────────
 
@@ -106,16 +113,116 @@ function write(key: string, value: unknown): void {
   }
 }
 
-function todayKey(d: Date = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function todayKey(d: Date = new Date(), timeZone = "America/Sao_Paulo"): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function getLocalSnapshot(): FlashcardLocalSnapshot {
+  return {
+    settings: FlashcardStore.getSettings(),
+    decks: FlashcardStore.getDecks(),
+    dailyLog: FlashcardStore.getDailyLog(),
+    hourHistogram: FlashcardStore.getHourHistogram(),
+  };
+}
+
+function cacheRemoteSnapshot(snapshot: FlashcardRemoteSnapshot): void {
+  write(KEY_SETTINGS, snapshot.settings);
+  write(KEY_DECKS, snapshot.decks);
+  write(KEY_DAILY, dailyLogFromActivity(snapshot.activity));
+  write(KEY_HOURS, aggregateHourHistogram(snapshot.activity));
+}
+
+function upsertActivityInCache(row: FlashcardActivityRow): void {
+  const daily = FlashcardStore.getDailyLog();
+  daily[row.date] = {
+    reviews: row.reviews,
+    newCards: row.newCards,
+    again: row.again,
+    sessionsCount: row.sessionsCount,
+  };
+  write(KEY_DAILY, daily);
+
+  const rows = activityRowsFromLocal({
+    settings: FlashcardStore.getSettings(),
+    decks: FlashcardStore.getDecks(),
+    dailyLog: daily,
+    hourHistogram: FlashcardStore.getHourHistogram(),
+  }).filter((item) => item.date !== row.date);
+  write(KEY_HOURS, aggregateHourHistogram([...rows, row]));
+}
+
+function dailyLogFromActivity(rows: FlashcardActivityRow[]): Record<string, DailyEntry> {
+  const out: Record<string, DailyEntry> = {};
+  for (const row of rows) {
+    out[row.date] = {
+      reviews: row.reviews,
+      newCards: row.newCards,
+      again: row.again,
+      sessionsCount: row.sessionsCount,
+    };
+  }
+  return out;
+}
+
+function activityRowsFromLocal(snapshot: FlashcardLocalSnapshot): FlashcardActivityRow[] {
+  return Object.entries(snapshot.dailyLog).map(([date, entry]) => ({
+    date,
+    reviews: entry.reviews || 0,
+    newCards: entry.newCards || 0,
+    again: entry.again || 0,
+    sessionsCount: entry.sessionsCount || 0,
+    hourHistogram: date === todayKey() ? normalizeHours(snapshot.hourHistogram) : normalizeHours([]),
+  }));
+}
+
+function aggregateHourHistogram(rows: FlashcardActivityRow[]): number[] {
+  const out = normalizeHours([]);
+  for (const row of rows) {
+    const hours = normalizeHours(row.hourHistogram);
+    for (let i = 0; i < 24; i++) out[i] += hours[i];
+  }
+  return out;
+}
+
+function normalizeHours(value: unknown): number[] {
+  const input = Array.isArray(value) ? value : [];
+  return Array.from({ length: 24 }, (_, index) => Math.max(0, Number(input[index] || 0)));
 }
 
 // ─── Settings ──────────────────────────────────────────────────────────────────
 
 export const FlashcardStore = {
+  async hydrateRemote(): Promise<FlashcardRemoteSnapshot & { usingFallback: boolean; error?: unknown }> {
+    try {
+      const localSnapshot = getLocalSnapshot();
+      const migrationDone = localStorage.getItem(KEY_REMOTE_MIGRATION) === "true";
+      if (!migrationDone) {
+        const imported = await FlashcardRepository.importLocalSnapshotIfRemoteEmpty(localSnapshot);
+        localStorage.setItem(KEY_REMOTE_MIGRATION, "true");
+        if (imported) console.info("Flashcard local cache migrated to Supabase.");
+      }
+      const snapshot = await FlashcardRepository.getSnapshot();
+      cacheRemoteSnapshot(snapshot);
+      return { ...snapshot, usingFallback: false };
+    } catch (error) {
+      console.warn("Using local flashcard cache fallback", error);
+      const snapshot = getLocalSnapshot();
+      return {
+        settings: snapshot.settings,
+        decks: snapshot.decks,
+        activity: activityRowsFromLocal(snapshot),
+        usingFallback: true,
+        error,
+      };
+    }
+  },
+
   getSettings(): FlashcardSettings {
     return read(KEY_SETTINGS, DEFAULT_SETTINGS);
   },
@@ -123,6 +230,11 @@ export const FlashcardStore = {
     const merged = { ...this.getSettings(), ...s };
     write(KEY_SETTINGS, merged);
     return merged;
+  },
+  async saveSettingsRemote(s: Partial<FlashcardSettings>): Promise<FlashcardSettings> {
+    const saved = await FlashcardRepository.saveSettings(s);
+    write(KEY_SETTINGS, saved);
+    return saved;
   },
 
   // ─── Custom decks ──────────────────────────────────────────────────────────
@@ -141,8 +253,22 @@ export const FlashcardStore = {
     write(KEY_DECKS, [...decks, deck]);
     return deck;
   },
+  async saveDeckRemote(name: string, config: SessionConfig, color?: string): Promise<CustomDeck> {
+    const decks = this.getDecks();
+    const deck = await FlashcardRepository.createDeck(
+      name,
+      config,
+      color || DECK_COLORS[decks.length % DECK_COLORS.length],
+    );
+    write(KEY_DECKS, [...decks.filter((item) => item.id !== deck.id), deck]);
+    return deck;
+  },
   deleteDeck(id: string): void {
     write(KEY_DECKS, this.getDecks().filter((d) => d.id !== id));
+  },
+  async deleteDeckRemote(id: string): Promise<void> {
+    await FlashcardRepository.deleteDeck(id);
+    this.deleteDeck(id);
   },
 
   // ─── Daily log (streak + heatmap + throttling + tutor signals) ────────────────
@@ -156,12 +282,18 @@ export const FlashcardStore = {
     entry.reviews += reviews;
     entry.newCards += newCards;
     entry.again = (entry.again || 0) + again;
+    entry.sessionsCount = (entry.sessionsCount || 0) + 1;
     log[k] = entry;
     write(KEY_DAILY, log);
     // Hour-of-day histogram for "quando estudar".
     const hours = this.getHourHistogram();
     hours[new Date().getHours()] += 1;
     write(KEY_HOURS, hours);
+  },
+  async recordSessionRemote(reviews: number, newCards: number, again = 0): Promise<FlashcardActivityRow> {
+    const row = await FlashcardRepository.recordDailyActivity(reviews, newCards, again);
+    upsertActivityInCache(row);
+    return row;
   },
   getTodayCounts(): { reviews: number; newCards: number } {
     const e = this.getDailyLog()[todayKey()];

@@ -1,5 +1,6 @@
 export { AiJobRepository } from './aiJobRepository';
 export { DictionaryRepository, DictionaryFormRepository, DictionarySenseRepository } from './dictionaryRepository';
+export { FlashcardRepository } from './flashcardRepository';
 export { ProcessingRunRepository } from './processingRunRepository';
 export { ProgressRepository } from './progressRepository';
 export { SentenceRepository } from './sentenceRepository';

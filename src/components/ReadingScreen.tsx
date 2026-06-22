@@ -16,6 +16,9 @@ import {
   Check,
   X,
   Trash2,
+  BookmarkPlus,
+  Layers,
+  Database as DatabaseIcon,
 } from "lucide-react";
 import {
   SourceRepository,
@@ -24,6 +27,9 @@ import {
   TermRepository,
   ProcessingRunRepository,
   AiJobRepository,
+  DictionaryFormRepository,
+  DictionarySenseRepository,
+  DictionaryRepository,
 } from "../repositories";
 import {
   Sentence,
@@ -31,6 +37,9 @@ import {
   SentenceProgress,
   SentenceTerm,
   DictionaryEntry,
+  DictionaryForm,
+  DictionarySense,
+  DictionaryProgress,
 } from "../types";
 import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // Assuming we still get settings config from there for general TTS settings if not extracted
@@ -54,6 +63,17 @@ type ReanalysisLogState = {
   runId?: string;
   jobId?: string;
   finished: boolean;
+};
+
+type ActiveWordPanel = {
+  term: SentenceTerm;
+  entry: DictionaryEntry | null;
+  forms: DictionaryForm[];
+  senses: DictionarySense[];
+  occurrences: Array<{ sentence: Sentence; term: SentenceTerm; sourceTitle: string }>;
+  sources: Array<{ sourceId: string; title: string; count: number }>;
+  progress: DictionaryProgress | null;
+  loading: boolean;
 };
 
 const REANALYSIS_TERMINAL_STATUSES = new Set([
@@ -119,10 +139,9 @@ export default function ReadingScreen({
     Record<string, SentenceProgress | null>
   >({});
   const [loading, setLoading] = useState(true);
-  const [activeTermHover, setActiveTermHover] = useState<{
-    term: SentenceTerm;
-    entry: DictionaryEntry | null;
-  } | null>(null);
+  const [activeWordPanel, setActiveWordPanel] = useState<ActiveWordPanel | null>(null);
+  const activeTermHover: any = null;
+  const setActiveTermHover = (_value: any) => setActiveWordPanel(null);
   const [showLegendModal, setShowLegendModal] = useState(false);
   const [showPrep, setShowPrep] = useState(false);
   const { showAlert, showConfirm } = useModal();
@@ -577,6 +596,106 @@ export default function ReadingScreen({
     }
   };
 
+  const openWordPanel = async (term: SentenceTerm, entryHint: DictionaryEntry | null) => {
+    const entryId = entryHint?.id || term.dictionary_entry_id || null;
+    setActiveWordPanel({
+      term,
+      entry: entryHint,
+      forms: [],
+      senses: [],
+      occurrences: [],
+      sources: [],
+      progress: null,
+      loading: Boolean(entryId),
+    });
+
+    if (!entryId) return;
+
+    try {
+      const [entry, forms, senses, allTerms, progress] = await Promise.all([
+        entryHint ? Promise.resolve(entryHint) : DictionaryRepository.getById(entryId),
+        DictionaryFormRepository.getByEntryId(entryId),
+        DictionarySenseRepository.getByEntryId(entryId),
+        TermRepository.getByDictionaryEntry(entryId),
+        ProgressRepository.getDictionaryProgress(entryId),
+      ]);
+      const sentenceIds = Array.from(new Set(allTerms.map((t) => t.sentence_id)));
+      const relatedSentences = await SentenceRepository.getByIds(sentenceIds);
+      const sentenceMap = new Map(relatedSentences.map((sentence) => [sentence.id, sentence]));
+      const sourceCounts = new Map<string, number>();
+      for (const sentence of relatedSentences) {
+        sourceCounts.set(sentence.source_id, (sourceCounts.get(sentence.source_id) || 0) + 1);
+      }
+      const sourceRows = await Promise.all(
+        Array.from(sourceCounts.keys()).map((id) => SourceRepository.getById(id)),
+      );
+      const sourceTitleMap = new Map(
+        sourceRows.filter((item): item is Source => Boolean(item)).map((item) => [item.id, item.title]),
+      );
+      const occurrences = allTerms
+        .map((item) => {
+          const sentence = sentenceMap.get(item.sentence_id);
+          if (!sentence) return null;
+          return {
+            sentence,
+            term: item,
+            sourceTitle: sourceTitleMap.get(sentence.source_id) || "Fonte sem titulo",
+          };
+        })
+        .filter((item): item is { sentence: Sentence; term: SentenceTerm; sourceTitle: string } => Boolean(item));
+      const sources = Array.from(sourceCounts.entries())
+        .map(([sourceId, count]) => ({
+          sourceId,
+          count,
+          title: sourceTitleMap.get(sourceId) || "Fonte sem titulo",
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      setActiveWordPanel((current) =>
+        current?.term.id === term.id
+          ? { ...current, entry, forms, senses, occurrences, sources, progress, loading: false }
+          : current,
+      );
+    } catch (e) {
+      console.error(e);
+      setActiveWordPanel((current) =>
+        current?.term.id === term.id ? { ...current, loading: false } : current,
+      );
+    }
+  };
+
+  const addActiveWordToFlashcards = async () => {
+    if (!activeWordPanel?.entry?.id) {
+      showAlert("Aviso", "Esta palavra ainda nao possui verbete para virar flashcard.");
+      return;
+    }
+    const saved = await ProgressRepository.setDictionaryProgressFields(
+      activeWordPanel.entry.id,
+      { favorite: true, suspended: false },
+      activeWordPanel.progress,
+    );
+    setActiveWordPanel((current) => (current ? { ...current, progress: saved } : current));
+    showAlert("Baralho", "Palavra adicionada aos favoritos dos flashcards.");
+  };
+
+  const studyActiveWordAsSource = () => {
+    if (!activeWordPanel?.entry?.id || !onNavigate) {
+      showAlert("Aviso", "Esta palavra ainda nao possui contextos suficientes para estudar.");
+      return;
+    }
+    onNavigate("study_player", {
+      config: {
+        entityType: "word_context",
+        targetType: "specific",
+        wordId: activeWordPanel.entry.id,
+        limit: 30,
+        order: "original",
+        studyMode: "jp-pt",
+      },
+    });
+    setActiveWordPanel(null);
+  };
+
   const renderSentence = (sent: Sentence) => {
     const terms = termsMap[sent.id] || [];
     if (terms.length === 0)
@@ -605,7 +724,7 @@ export default function ReadingScreen({
       elements.push(
         <button
           key={`term-${idx}`}
-          onClick={() => setActiveTermHover({ term, entry: entry || null })}
+          onClick={() => void openWordPanel(term, entry || null)}
           className={termStyle}
         >
           {sliceCodePoints(sent.japanese, term.start_index, term.end_index)}
@@ -1043,8 +1162,232 @@ export default function ReadingScreen({
         </div>
       )}
 
-      {/* Mini Dictionary Modal */}
-      {activeTermHover && (
+      {activeWordPanel && (
+        <div className="fixed inset-0 z-50 bg-black/20" onClick={() => setActiveWordPanel(null)}>
+          <aside
+            className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="relative shrink-0 border-b border-slate-100 p-4 text-center">
+              <button
+                type="button"
+                onClick={() => setActiveWordPanel(null)}
+                className="absolute right-3 top-3 rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Fechar painel da palavra"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              {activeWordPanel.entry?.kana && (
+                <p className="text-xs font-medium tracking-wide text-slate-400">{activeWordPanel.entry.kana}</p>
+              )}
+              <h3 className="text-3xl font-black text-slate-900">
+                {activeWordPanel.entry?.lemma || activeWordPanel.term.surface}
+              </h3>
+              {activeWordPanel.entry?.romaji && (
+                <p className="pt-1 text-[10px] font-mono uppercase tracking-widest text-slate-400">
+                  {activeWordPanel.entry.romaji}
+                </p>
+              )}
+            </div>
+
+            <div className="flex-1 space-y-4 overflow-y-auto p-4 text-slate-900">
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50/70 p-4 text-center">
+                {activeWordPanel.entry?.main_meaning ? (
+                  <span className="text-sm font-bold text-indigo-950">{activeWordPanel.entry.main_meaning}</span>
+                ) : (
+                  <span className="text-xs italic text-indigo-400">Sem significado cadastrado</span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap justify-center gap-2">
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase text-slate-500">
+                  {activeWordPanel.entry?.type || activeWordPanel.term.type || "Outro"}
+                </span>
+                {activeWordPanel.entry?.subtype && (
+                  <span className="rounded-full bg-indigo-50 px-3 py-1 text-[10px] font-bold uppercase text-indigo-700">
+                    {activeWordPanel.entry.subtype}
+                  </span>
+                )}
+                {activeWordPanel.entry?.jlpt_level && (
+                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-black uppercase text-emerald-800">
+                    {activeWordPanel.entry.jlpt_level}
+                  </span>
+                )}
+              </div>
+
+              {activeWordPanel.loading && (
+                <div className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 p-4 text-xs font-bold text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Carregando dados da palavra
+                </div>
+              )}
+
+              {(activeWordPanel.term.context_meaning ||
+                activeWordPanel.term.grammar_note ||
+                activeWordPanel.term.structure_note) && (
+                <ReadingPanelSection title="Nesta frase">
+                  {activeWordPanel.term.context_meaning && (
+                    <p className="text-xs font-bold text-teal-900">{activeWordPanel.term.context_meaning}</p>
+                  )}
+                  {activeWordPanel.term.grammar_note && (
+                    <p className="text-xs font-semibold leading-relaxed text-amber-950">{activeWordPanel.term.grammar_note}</p>
+                  )}
+                  {activeWordPanel.term.structure_note && (
+                    <p className="text-xs font-semibold leading-relaxed text-slate-700">{activeWordPanel.term.structure_note}</p>
+                  )}
+                </ReadingPanelSection>
+              )}
+
+              {getWordPanelMeanings(activeWordPanel).length > 1 && (
+                <ReadingPanelSection title="Acepcoes">
+                  {getWordPanelMeanings(activeWordPanel).map((meaning, idx) => (
+                    <div key={`${meaning}-${idx}`} className="flex gap-2 text-xs font-semibold text-slate-700">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-black text-indigo-700">
+                        {idx + 1}
+                      </span>
+                      <span>{meaning}</span>
+                    </div>
+                  ))}
+                </ReadingPanelSection>
+              )}
+
+              {activeWordPanel.entry?.short_note && (
+                <ReadingPanelSection title="Nota rapida">
+                  <p className="text-xs font-semibold leading-relaxed text-amber-950">{activeWordPanel.entry.short_note}</p>
+                </ReadingPanelSection>
+              )}
+
+              {(activeWordPanel.entry?.grammar_info || activeWordPanel.entry?.subtype) && (
+                <ReadingPanelSection title="Uso e gramatica">
+                  {activeWordPanel.entry?.subtype && (
+                    <p className="text-xs font-bold text-indigo-800">
+                      {activeWordPanel.entry.type} - {activeWordPanel.entry.subtype}
+                    </p>
+                  )}
+                  {activeWordPanel.entry?.grammar_info && (
+                    <p className="whitespace-pre-wrap text-xs font-semibold leading-relaxed text-slate-700">
+                      {activeWordPanel.entry.grammar_info}
+                    </p>
+                  )}
+                </ReadingPanelSection>
+              )}
+
+              {activeWordPanel.senses.length > 0 && (
+                <ReadingPanelSection title="Sentidos detalhados">
+                  {activeWordPanel.senses.map((sense) => (
+                    <div key={sense.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-left">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-black text-slate-900">{sense.meaning}</span>
+                        {sense.meaning_type && (
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold uppercase text-slate-500">
+                            {sense.meaning_type}
+                          </span>
+                        )}
+                      </div>
+                      {sense.explanation && (
+                        <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-600">{sense.explanation}</p>
+                      )}
+                      {(sense.example_japanese || sense.example_portuguese) && (
+                        <div className="mt-2 rounded-lg bg-white p-2 text-xs">
+                          {sense.example_japanese && <p className="font-black text-slate-900">{sense.example_japanese}</p>}
+                          {sense.example_portuguese && <p className="mt-1 font-medium text-slate-500">{sense.example_portuguese}</p>}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </ReadingPanelSection>
+              )}
+
+              {activeWordPanel.entry?.components &&
+                Array.isArray(activeWordPanel.entry.components) &&
+                activeWordPanel.entry.components.length > 0 && (
+                  <ReadingPanelSection title="Estrutura">
+                    {activeWordPanel.entry.components.map((component: any, idx: number) => (
+                      <div key={`${component.kanji || idx}`} className="flex items-center gap-3 rounded-lg border border-teal-100 bg-teal-50/50 p-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-2xl font-black text-teal-700">
+                          {component.kanji}
+                        </div>
+                        <div className="min-w-0">
+                          {component.reading && <p className="text-[9px] font-bold uppercase text-teal-600">{component.reading}</p>}
+                          <p className="truncate text-xs font-black text-slate-800">{component.meaning}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </ReadingPanelSection>
+                )}
+
+              {activeWordPanel.forms.length > 0 && (
+                <ReadingPanelSection title="Formas">
+                  <div className="flex flex-wrap gap-2">
+                    {activeWordPanel.forms.map((form) => (
+                      <span
+                        key={form.id}
+                        className="rounded-lg border border-orange-100 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-950"
+                        title={form.grammar_note || undefined}
+                      >
+                        {form.form}
+                        {form.form_type && <span className="ml-1 text-[9px] uppercase text-orange-500">{form.form_type}</span>}
+                      </span>
+                    ))}
+                  </div>
+                </ReadingPanelSection>
+              )}
+
+              {activeWordPanel.occurrences.length > 0 && (
+                <ReadingPanelSection title={`Frases de exemplo (${activeWordPanel.occurrences.length})`}>
+                  {activeWordPanel.occurrences.slice(0, 12).map(({ sentence, term, sourceTitle }) => (
+                    <div key={`${sentence.id}-${term.id}`} className="rounded-lg border border-slate-100 bg-slate-50 p-3">
+                      <p className="text-[9px] font-black uppercase text-slate-400">{sourceTitle}</p>
+                      <p className="mt-1 text-sm font-black text-slate-900">{sentence.japanese}</p>
+                      {sentence.portuguese && <p className="mt-1 text-xs font-medium leading-relaxed text-slate-600">{sentence.portuguese}</p>}
+                      {term.context_meaning && <p className="mt-2 rounded bg-white px-2 py-1 text-[10px] font-bold text-indigo-800">{term.context_meaning}</p>}
+                    </div>
+                  ))}
+                </ReadingPanelSection>
+              )}
+
+              {activeWordPanel.sources.length > 0 && (
+                <ReadingPanelSection title={`Textos e fontes (${activeWordPanel.sources.length})`}>
+                  {activeWordPanel.sources.map((item) => (
+                    <div key={item.sourceId} className="flex items-center justify-between gap-3 rounded-lg border border-purple-100 bg-purple-50/40 p-3">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <DatabaseIcon className="h-4 w-4 shrink-0 text-purple-500" />
+                        <span className="truncate text-xs font-bold text-slate-700">{item.title}</span>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-black text-purple-700">{item.count}</span>
+                    </div>
+                  ))}
+                </ReadingPanelSection>
+              )}
+            </div>
+
+            <div className="shrink-0 space-y-2 border-t border-slate-100 p-4">
+              <button type="button" onClick={() => void addActiveWordToFlashcards()} className="btn btn-primary flex items-center justify-center gap-2">
+                <BookmarkPlus className="h-4 w-4 text-white" />
+                <span>{activeWordPanel.progress?.favorite ? "No baralho de flashcards" : "Adicionar ao baralho"}</span>
+              </button>
+              <button type="button" onClick={studyActiveWordAsSource} className="btn btn-secondary flex items-center justify-center gap-2">
+                <Layers className="h-4 w-4" />
+                <span>Usar como fonte de estudos</span>
+              </button>
+              {activeWordPanel.entry?.id && onNavigate && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onNavigate("dictionary_entry", { entryId: activeWordPanel.entry!.id });
+                    setActiveWordPanel(null);
+                  }}
+                  className="w-full rounded-xl border border-slate-200 py-3 text-xs font-black uppercase tracking-widest text-slate-600 hover:bg-slate-50"
+                >
+                  Ver ficha editavel
+                </button>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {false && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/20"
           onClick={() => setActiveTermHover(null)}
@@ -1226,5 +1569,24 @@ export default function ReadingScreen({
         </div>
       )}
     </div>
+  );
+}
+
+function getWordPanelMeanings(panel: ActiveWordPanel) {
+  const values = [
+    panel.entry?.main_meaning,
+    ...panel.senses.map((sense) => sense.meaning),
+  ].filter((value): value is string => Boolean(value && value.trim()));
+  return Array.from(new Set(values)).slice(0, 8);
+}
+
+function ReadingPanelSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4 text-left">
+      <h4 className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
+        {title}
+      </h4>
+      <div className="space-y-3">{children}</div>
+    </section>
   );
 }
