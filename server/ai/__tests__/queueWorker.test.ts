@@ -113,6 +113,73 @@ describe('queueWorker persisted execution contract', () => {
     expect(client.rpc).not.toHaveBeenCalledWith('apply_sentence_lexical_analysis_result', expect.anything());
   });
 
+  it('repairs sentence preparation term offsets before persisting AI output', async () => {
+    const sentence = 'ンッ… やっと２人とも落ち着いたか';
+    const client = {
+      rpc: vi.fn(async (name: string) => {
+        if (name === 'start_claimed_ai_job') return {
+          data: {
+            can_execute: true,
+            id: 'job-prepare-1',
+            user_id: 'user-1',
+            type: 'prepare_sentence',
+            target_type: 'sentence',
+            target_id: 'sentence-1',
+            status: 'running',
+            worker_id: 'worker-1',
+            payload: { id: 'sentence-1', sentence, japanese: sentence },
+          },
+          error: null,
+        };
+        if (name === 'validate_ai_job_for_execution') return {
+          data: {
+            can_execute: true,
+            id: 'job-prepare-1',
+            user_id: 'user-1',
+            type: 'prepare_sentence',
+            target_type: 'sentence',
+            target_id: 'sentence-1',
+            status: 'running',
+            worker_id: 'worker-1',
+            payload: { id: 'sentence-1', sentence, japanese: sentence },
+          },
+          error: null,
+        };
+        if (name === 'apply_sentence_preparation_result') return { data: { sentence_id: 'sentence-1' }, error: null };
+        return { data: null, error: null };
+      }),
+    } as any;
+    vi.mocked(generateStructuredJsonWithMeta).mockResolvedValueOnce({
+      data: {
+        translation: 'Hã... finalmente os dois se acalmaram?',
+        kana: 'ンッ… やっと ふたりとも おちついたか',
+        romaji: 'n… yatto futari tomo ochitsuita ka',
+        terms: [
+          { surface: 'ンッ', lemma: 'ンッ', start_index: 0, end_index: 3, type: 'interjeicao' },
+          { surface: 'やっと', lemma: 'やっと', start_index: 4, end_index: 7, type: 'adverbio' },
+          { surface: '２人', lemma: '二人', start_index: 8, end_index: 10, type: 'substantivo' },
+          { surface: 'とも', lemma: 'とも', start_index: 10, end_index: 12, type: 'particula' },
+          { surface: '落ち着いた', lemma: '落ち着く', start_index: 13, end_index: 18, type: 'verbo' },
+          { surface: 'か', lemma: 'か', start_index: 18, end_index: 19, type: 'particula' },
+        ],
+      },
+      meta: { model: 'fake', temperature: 0, latency_ms: 1, input_chars: 1, output_chars: 1 },
+    } as any);
+
+    await processPrepareSentenceJob(client, { id: 'job-prepare-1' } as any, 'worker-1', 300, vi.fn(() => ({})) as any);
+
+    expect(client.rpc).toHaveBeenCalledWith('apply_sentence_preparation_result', expect.objectContaining({
+      p_terms: [
+        expect.objectContaining({ surface: 'ンッ', start_index: 0, end_index: 2 }),
+        expect.objectContaining({ surface: 'やっと', start_index: 4, end_index: 7 }),
+        expect.objectContaining({ surface: '２人', start_index: 7, end_index: 9 }),
+        expect.objectContaining({ surface: 'とも', start_index: 9, end_index: 11 }),
+        expect.objectContaining({ surface: '落ち着いた', start_index: 11, end_index: 16 }),
+        expect.objectContaining({ surface: 'か', start_index: 16, end_index: 17 }),
+      ],
+    }));
+  });
+
   it('rejects empty terms for normal Japanese sentence preparation', async () => {
     vi.mocked(generateStructuredJsonWithMeta).mockResolvedValueOnce({
       data: { translation: 'Espere.', kana: '\u307e\u3063\u3066', romaji: 'matte', terms: [] },

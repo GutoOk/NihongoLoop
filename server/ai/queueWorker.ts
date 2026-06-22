@@ -167,6 +167,57 @@ function shouldRejectEmptyTerms(sentenceText: string, terms: unknown[]): boolean
   return terms.length === 0 && hasJapaneseText(sentenceText) && !isMinimalJapaneseUtterance(sentenceText);
 }
 
+function findSurfaceAtOrAfter(textChars: string[], surfaceChars: string[], startAt: number): number {
+  if (surfaceChars.length === 0 || surfaceChars.length > textChars.length) return -1;
+  for (let start = Math.max(0, startAt); start <= textChars.length - surfaceChars.length; start += 1) {
+    let matches = true;
+    for (let offset = 0; offset < surfaceChars.length; offset += 1) {
+      if (textChars[start + offset] !== surfaceChars[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return start;
+  }
+  return -1;
+}
+
+function termHasValidOffsets(sentenceChars: string[], term: any): boolean {
+  if (!Number.isInteger(term.start_index) || !Number.isInteger(term.end_index)) return false;
+  if (term.start_index < 0 || term.end_index <= term.start_index || term.end_index > sentenceChars.length) return false;
+  return sentenceChars.slice(term.start_index, term.end_index).join("") === term.surface;
+}
+
+function repairTermOffsets(sentenceText: string, terms: unknown[]): unknown[] {
+  const sentenceChars = Array.from(sentenceText);
+  let cursor = 0;
+  let repairedCount = 0;
+
+  const repaired = terms.map((term) => {
+    if (!term || typeof term !== "object") return term;
+    const item = term as Record<string, unknown>;
+    const surface = typeof item.surface === "string" ? item.surface : "";
+    if (!surface) return term;
+
+    if (termHasValidOffsets(sentenceChars, item)) {
+      cursor = Math.max(cursor, Number(item.end_index));
+      return term;
+    }
+
+    const surfaceChars = Array.from(surface);
+    let start = findSurfaceAtOrAfter(sentenceChars, surfaceChars, cursor);
+    if (start < 0) start = findSurfaceAtOrAfter(sentenceChars, surfaceChars, 0);
+    if (start < 0) return term;
+
+    repairedCount += 1;
+    const end = start + surfaceChars.length;
+    cursor = end;
+    return { ...item, start_index: start, end_index: end };
+  });
+
+  return repairedCount > 0 ? repaired : terms;
+}
+
 function getTypeLimit(jobType: string): number {
   if (jobType === "prepare_sentence") return Math.max(1, Math.min(Number(process.env.AI_WORKER_PREPARE_SENTENCE_CONCURRENCY || 3), 32));
   if (jobType === "translate_sentence") return Math.max(1, Math.min(Number(process.env.AI_WORKER_TRANSLATE_CONCURRENCY || 4), 32));
@@ -623,18 +674,20 @@ export async function processPrepareSentenceJob(
   if (shouldRejectEmptyTerms(String(sentenceText), data.terms)) {
     throw new Error("Resultado invalido: lista de termos vazia para frase japonesa.");
   }
+  const termsWithRepairedOffsets = repairTermOffsets(String(sentenceText), data.terms);
+  const analysisForPersistence = { ...data, terms: termsWithRepairedOffsets };
 
   await applySentencePreparationResultRpc(
     client,
     runningJob.id,
     workerId,
-    data,
+    analysisForPersistence,
     {
       translation: data.translation,
       kana: data.kana,
       romaji: data.romaji,
       sentence_id: input.id || runningJob.target_id,
-      termCount: data.terms.length,
+      termCount: termsWithRepairedOffsets.length,
       ai_meta: {
         job_type: runningJob.type,
         prompt_version: request.promptVersion,
