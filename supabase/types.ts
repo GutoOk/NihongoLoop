@@ -216,6 +216,7 @@ export interface AiJob {
   error_code?: string | null;
   error_kind?: string | null;
   error_structured?: any;
+  current_step?: string | null;
   attempts?: number;
   max_attempts?: number;
   model?: string | null;
