@@ -53,5 +53,18 @@ jobs:
           fi
           supabase link --project-ref "$SUPABASE_PROJECT_ID"
 
+      - name: Print remote migrations history before push
+        run: supabase migration list --linked
+
       - name: Push pending migrations
-        run: supabase db push --linked
+        run: |
+          if ! supabase db push --linked; then
+            echo "=========================================================="
+            echo "ERROR: Supabase db push failed!"
+            echo "One of the migrations failed to apply or there is a schema mismatch/divergence."
+            echo "Check the detailed error logs above."
+            echo "=========================================================="
+            echo "Current migration list status (Local vs Remote):"
+            supabase migration list --linked
+            exit 1
+          fi
