@@ -34,7 +34,7 @@ export function GlobalAiQueueControl() {
   const visibleJobs = jobs.filter(isVisibleQueueJob);
 
   const clearQueue = async () => {
-    if (!(await showConfirm('Zerar fila global', 'Isso vai cancelar todos os jobs da fila que ainda nao foram concluidos, incluindo erros, revisao, retry e jobs rodando. Resultados ja concluidos permanecem para auditoria.'))) {
+    if (!(await showConfirm('Zerar fila global', 'Isso vai remover da fila todos os jobs globais, incluindo pendentes, problemas, concluidos e cancelados historicos.'))) {
       return;
     }
     setIsClearing(true);
@@ -116,7 +116,7 @@ export function GlobalAiQueueControl() {
 }
 
 function isClearableQueueJob(job: AiJob): boolean {
-  return job.status !== 'completed' && job.status !== 'applied' && job.status !== 'cancelled';
+  return job.status !== 'obsolete';
 }
 
 function QueueMetric({ label, value }: { label: string; value: number }) {

@@ -130,7 +130,7 @@ export default function SourcePreparationPanel({
 
   const cancelPending = async () => {
     const scopeLabel = showGlobal ? 'global' : 'desta fonte';
-    if (!(await showConfirm('Zerar fila', `Isso vai marcar como cancelados todos os jobs ${scopeLabel} que ainda nao foram concluidos, incluindo erros, revisao, retry e jobs rodando. Resultados ja concluidos permanecem para auditoria.`))) {
+    if (!(await showConfirm('Zerar fila', `Isso vai remover da fila todos os jobs ${scopeLabel}, incluindo pendentes, problemas, concluidos e cancelados historicos.`))) {
       return;
     }
     setIsBusy(true);
@@ -338,7 +338,7 @@ export default function SourcePreparationPanel({
             </div>
             {hiddenHistoricalJobs > 0 && visibleJobs.length > 0 && (
               <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs font-bold text-slate-600">
-                Concluidos ficam apenas nos contadores. Exibindo {visibleJobs.length} {visibleJobs.length === 1 ? 'job que requer atencao' : 'jobs que requerem atencao'}.
+                Historico sem acao fica apenas nos contadores. Exibindo {visibleJobs.length} {visibleJobs.length === 1 ? 'job que requer atencao' : 'jobs que requerem atencao'}.
               </div>
             )}
             <JobList jobs={visibleJobs} />
@@ -430,7 +430,7 @@ function isStuckJob(job: AiJob): boolean {
 }
 
 function isClearableQueueJob(job: AiJob): boolean {
-  return job.status !== 'completed' && job.status !== 'applied' && job.status !== 'cancelled';
+  return job.status !== 'obsolete';
 }
 
 function summarizeJobs(jobs: AiJob[]) {
@@ -457,7 +457,7 @@ function summarizeRun(run: ProcessingRun | null) {
     cancelled: run?.cancelled_jobs || 0,
     error: run?.failed_jobs || run?.failed_items || 0,
     stuck: 0,
-    clearable: (run?.pending_jobs || 0) + (run?.running_jobs || 0) + (run?.claimed_jobs || 0) + (run?.retry_jobs || 0) + (run?.needs_review_jobs || 0) + (run?.failed_jobs || run?.failed_items || 0),
+    clearable: run?.planned_jobs || 0,
   };
 }
 

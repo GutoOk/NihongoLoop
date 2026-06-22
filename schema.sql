@@ -326,7 +326,7 @@ CREATE TABLE schema_versions (
   applied_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v33');
+INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v34');
 
 CREATE TABLE study_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1348,7 +1348,7 @@ BEGIN
 
   UPDATE processing_runs pr
   SET
-    planned_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id), 0),
+    planned_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status <> 'obsolete'), 0),
     pending_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'pending'), 0),
     claimed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'claimed'), 0),
     running_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'running'), 0),
@@ -1370,7 +1370,7 @@ BEGIN
 
   UPDATE processing_run_stages s
   SET
-    planned_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id), 0),
+    planned_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status <> 'obsolete'), 0),
     pending_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'pending'), 0),
     claimed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'claimed'), 0),
     running_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE stage_id = s.id AND status = 'running'), 0),
@@ -1405,21 +1405,21 @@ BEGIN
   p_user_id := public.request_user_id(p_user_id);
 
   UPDATE ai_jobs
-  SET status = 'cancelled',
-      cancel_requested = CASE WHEN status = 'running' THEN TRUE ELSE cancel_requested END,
-      error = 'Cancelado pelo usuario.',
-      error_code = 'USER_CANCELLED',
+  SET status = 'obsolete',
+      cancel_requested = TRUE,
+      error = 'Removido da fila pelo usuario.',
+      error_code = 'USER_CLEARED_QUEUE',
       error_kind = 'permanent',
       locked_by = NULL,
       locked_until = NULL,
       lease_expires_at = NULL,
       worker_id = NULL,
       retry_at = NULL,
-      completed_at = NOW(),
+      completed_at = COALESCE(completed_at, NOW()),
       updated_at = NOW()
   WHERE run_id = p_run_id
     AND user_id = p_user_id
-    AND status NOT IN ('completed','applied','cancelled');
+    AND status <> 'obsolete';
 
   GET DIAGNOSTICS cancelled_count = ROW_COUNT;
 
@@ -1442,7 +1442,7 @@ BEGIN
       updated_at = NOW()
   WHERE id = p_run_id
     AND user_id = p_user_id
-    AND status IN ('pending','planning','running','paused','needs_review');
+    AND status IN ('pending','planning','running','paused','needs_review','cancelled','completed');
 
   PERFORM refresh_processing_run_snapshot(p_run_id);
   RETURN cancelled_count;
@@ -1469,20 +1469,20 @@ BEGIN
   WHERE source_id = p_source_id AND user_id = p_user_id;
 
   UPDATE ai_jobs
-  SET status = 'cancelled',
-      cancel_requested = CASE WHEN status = 'running' THEN TRUE ELSE cancel_requested END,
-      error = 'Cancelado pelo usuario.',
-      error_code = 'USER_CANCELLED',
+  SET status = 'obsolete',
+      cancel_requested = TRUE,
+      error = 'Removido da fila pelo usuario.',
+      error_code = 'USER_CLEARED_QUEUE',
       error_kind = 'permanent',
       locked_by = NULL,
       locked_until = NULL,
       lease_expires_at = NULL,
       worker_id = NULL,
       retry_at = NULL,
-      completed_at = NOW(),
+      completed_at = COALESCE(completed_at, NOW()),
       updated_at = NOW()
   WHERE user_id = p_user_id
-    AND status NOT IN ('completed','applied','cancelled')
+    AND status <> 'obsolete'
     AND (
       run_id = ANY(run_ids)
       OR target_id = p_source_id
@@ -1511,7 +1511,7 @@ BEGIN
       updated_at = NOW()
   WHERE id = ANY(run_ids)
     AND user_id = p_user_id
-    AND status IN ('pending','planning','running','paused','needs_review');
+    AND status IN ('pending','planning','running','paused','needs_review','cancelled','completed');
 
   PERFORM refresh_processing_run_snapshot(ids.run_id)
   FROM unnest(run_ids) AS ids(run_id);
@@ -1539,20 +1539,20 @@ BEGIN
   WHERE user_id = p_user_id;
 
   UPDATE ai_jobs
-  SET status = 'cancelled',
-      cancel_requested = CASE WHEN status = 'running' THEN TRUE ELSE cancel_requested END,
-      error = 'Cancelado pelo usuario.',
-      error_code = 'USER_CANCELLED',
+  SET status = 'obsolete',
+      cancel_requested = TRUE,
+      error = 'Removido da fila pelo usuario.',
+      error_code = 'USER_CLEARED_QUEUE',
       error_kind = 'permanent',
       locked_by = NULL,
       locked_until = NULL,
       lease_expires_at = NULL,
       worker_id = NULL,
       retry_at = NULL,
-      completed_at = NOW(),
+      completed_at = COALESCE(completed_at, NOW()),
       updated_at = NOW()
   WHERE user_id = p_user_id
-    AND status NOT IN ('completed','applied','cancelled');
+    AND status <> 'obsolete';
 
   GET DIAGNOSTICS cancelled_count = ROW_COUNT;
 
@@ -1574,7 +1574,7 @@ BEGIN
       current_step = 'Fila global zerada pelo usuario.',
       updated_at = NOW()
   WHERE user_id = p_user_id
-    AND status IN ('pending','planning','running','paused','needs_review');
+    AND status IN ('pending','planning','running','paused','needs_review','cancelled','completed');
 
   PERFORM refresh_processing_run_snapshot(ids.run_id)
   FROM unnest(run_ids) AS ids(run_id);
@@ -3286,7 +3286,7 @@ BEGIN
      IMMUTABLE
      STRICT
      AS %L',
-    format('SELECT %I.digest($1::bytea, $2)', v_pgcrypto_schema)
+    format('SELECT %I.digest(convert_to($1, ''UTF8''), $2)', v_pgcrypto_schema)
   );
 END;
 $$;
@@ -3413,10 +3413,11 @@ AS $$
           )
         )
     ),
-    'clearable', COUNT(*) FILTER (WHERE status NOT IN ('completed','applied','cancelled'))
+    'clearable', COUNT(*) FILTER (WHERE status <> 'obsolete')
   )
   FROM ai_jobs
-  WHERE user_id = auth.uid()::text;
+  WHERE user_id = auth.uid()::text
+    AND status <> 'obsolete';
 $$;
 
 CREATE OR REPLACE FUNCTION public.get_source_lexical_integrity_summary(p_source_id UUID)

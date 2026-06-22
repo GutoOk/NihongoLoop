@@ -164,7 +164,7 @@ describe('SourcePreparationPanel audit controls', () => {
     expect(screen.queryByText(/Exibindo os .* de .* jobs/i)).not.toBeInTheDocument();
   });
 
-  it('explains that completed jobs stay only in counters when attention jobs are visible', async () => {
+  it('explains that inactive history stays only in counters when attention jobs are visible', async () => {
     vi.mocked(AiJobRepository.getByRun).mockResolvedValueOnce([
       { ...job(1), status: 'running' },
       ...Array.from({ length: 99 }, (_, i) => job(i + 2)),
@@ -172,7 +172,7 @@ describe('SourcePreparationPanel audit controls', () => {
 
     render(<SourcePreparationPanel sourceId="source-1" onPreparationComplete={vi.fn()} />);
 
-    expect(await screen.findByText('Concluidos ficam apenas nos contadores. Exibindo 1 job que requer atencao.')).toBeInTheDocument();
+    expect(await screen.findByText('Historico sem acao fica apenas nos contadores. Exibindo 1 job que requer atencao.')).toBeInTheDocument();
   });
 
   it('keeps only one primary preparation action', async () => {
@@ -218,10 +218,9 @@ describe('SourcePreparationPanel audit controls', () => {
     expect(aiJobRepositorySource).not.toContain("{ count: 'exact', head: true }");
   });
 
-  it('exposes cancellation for every unfinished global queue job', () => {
-    expect(globalAiQueueControlSource).toContain("job.status !== 'completed'");
-    expect(globalAiQueueControlSource).toContain("job.status !== 'applied'");
-    expect(globalAiQueueControlSource).toContain("job.status !== 'cancelled'");
+  it('exposes queue clearing for every non-obsolete global queue job', () => {
+    expect(globalAiQueueControlSource).toContain("job.status !== 'obsolete'");
+    expect(sourcePreparationPanelSource).toContain("job.status !== 'obsolete'");
     expect(globalAiQueueControlSource).not.toContain('return Boolean(job.id)');
     expect(pendingAiScreenSource).toContain('CANCELLABLE_JOB_STATUSES.includes(job.status)');
   });
@@ -229,6 +228,6 @@ describe('SourcePreparationPanel audit controls', () => {
   it('shows a limited-list notice for global queue totals', () => {
     expect(sourcePreparationPanelSource).toContain('globalSummary?.total || jobs.length');
     expect(sourcePreparationPanelSource).toContain('hiddenHistoricalJobs > 0 && visibleJobs.length > 0');
-    expect(sourcePreparationPanelSource).toContain('Concluidos ficam apenas nos contadores');
+    expect(sourcePreparationPanelSource).toContain('Historico sem acao fica apenas nos contadores');
   });
 });
