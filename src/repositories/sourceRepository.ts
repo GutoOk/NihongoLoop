@@ -12,7 +12,11 @@ export class SourceRepository {
   static async getAll(): Promise<Source[]> {
     if (isE2EMockMode()) return defaultMockSources;
     if (!isSupabaseConfigured) return [];
-    const { data } = await supabase!.from('sources').select(SOURCE_SELECT).eq('user_id', getUserId()).order('created_at', { ascending: false });
+    const { data, error } = await supabase!.from('sources').select(SOURCE_SELECT).eq('user_id', getUserId()).order('created_at', { ascending: false });
+    if (error) {
+      console.error('Erro ao consultar fontes:', error);
+      throw new Error(`Erro do Supabase ao consultar fontes: ${error.message}`);
+    }
     return (data || []) as unknown as Source[];
   }
 

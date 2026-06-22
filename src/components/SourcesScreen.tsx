@@ -28,6 +28,9 @@ export default function SourcesScreen({
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [draftGroupIds, setDraftGroupIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [groupsError, setGroupsError] = useState(false);
+  const [failedSentenceLoads, setFailedSentenceLoads] = useState<Record<string, boolean>>({});
   const { showConfirm, showAlert } = useModal();
 
   useEffect(() => {
@@ -36,25 +39,43 @@ export default function SourcesScreen({
 
   const loadSources = async () => {
     setLoading(true);
+    setError(null);
+    setGroupsError(false);
     try {
       const data = await SourceRepository.getAll();
-      const [groupData, membershipData] = await Promise.all([
-        SourceRepository.getGroups(),
-        SourceRepository.getGroupMemberships(),
-      ]);
       setSources(data);
-      setGroups(groupData);
-      setMemberships(membershipData);
+
+      try {
+        const [groupData, membershipData] = await Promise.all([
+          SourceRepository.getGroups(),
+          SourceRepository.getGroupMemberships(),
+        ]);
+        setGroups(groupData);
+        setMemberships(membershipData);
+      } catch (groupErr) {
+        console.error("Falha ao carregar grupos/vínculos de fontes:", groupErr);
+        setGroupsError(true);
+        setGroups([]);
+        setMemberships([]);
+      }
 
       const sentencesMap: Record<string, Sentence[]> = {};
-      await Promise.all(
+      const failedMap: Record<string, boolean> = {};
+      await Promise.allSettled(
         data.map(async (source) => {
-          sentencesMap[source.id] = await SentenceRepository.getBySourceId(source.id);
-        }),
+          try {
+            sentencesMap[source.id] = await SentenceRepository.getBySourceId(source.id);
+          } catch (sentErr) {
+            console.error(`Falha ao carregar frases da fonte ${source.id}:`, sentErr);
+            failedMap[source.id] = true;
+          }
+        })
       );
       setSentencesBySource(sentencesMap);
-    } catch (err) {
-      console.error(err);
+      setFailedSentenceLoads(failedMap);
+    } catch (err: any) {
+      console.error("Erro ao carregar fontes:", err);
+      setError(err?.message || String(err));
     } finally {
       setLoading(false);
     }
@@ -167,6 +188,11 @@ export default function SourcesScreen({
       </header>
 
       <main className="flex-1 overflow-auto p-4 space-y-4">
+        {groupsError && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-700">
+            A organização por grupos está temporariamente indisponível, mas suas fontes continuam acessíveis.
+          </div>
+        )}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Grupos de estudo</span>
@@ -245,7 +271,24 @@ export default function SourcesScreen({
           </div>
         </section>
 
-        {loading ? (
+        {error ? (
+          <div className="empty-state">
+            <div className="empty-state-icon bg-rose-50 text-rose-500 p-2.5 rounded-xl">
+              <X className="w-7 h-7 text-rose-500" />
+            </div>
+            <h3 className="text-sm font-bold text-[#1D1D1F] mt-2">Falha ao carregar fontes</h3>
+            <p className="text-xs text-[#86868B] max-w-[250px] text-center mt-1">
+              {error}
+            </p>
+            <button
+              type="button"
+              onClick={loadSources}
+              className="btn btn-primary w-auto px-5 mt-3"
+            >
+              Tentar novamente
+            </button>
+          </div>
+        ) : loading ? (
           <div className="empty-state">
             <span className="spinner text-[#86868B]" />
             <span className="text-sm text-[#86868B]">Carregando fontes…</span>
@@ -273,6 +316,7 @@ export default function SourcesScreen({
               const sentences = sentencesBySource[source.id] || [];
               const readCount = sentences.filter((s) => s.status !== "raw").length;
               const sourceGroupIds = membershipsBySource.get(source.id) || [];
+              const sentencesFailed = failedSentenceLoads[source.id];
               return (
                 <div key={source.id} className="card flex flex-col gap-4">
                   <div className="flex items-start gap-3">
@@ -297,13 +341,21 @@ export default function SourcesScreen({
                         <span className="text-[10px] font-mono font-bold text-[#86868B] bg-[#F5F5F7] px-1.5 py-0.5 rounded">
                           {source.type.toUpperCase()}
                         </span>
-                        <span className="text-[10px] text-[#86868B] font-bold">
-                          {sentences.length} frases
-                        </span>
-                        <span className="text-[10px] text-[#86868B]">·</span>
-                        <span className="text-[10px] text-indigo-500 font-bold">
-                          {readCount} lidas
-                        </span>
+                        {sentencesFailed ? (
+                          <span className="text-[10px] text-rose-500 font-bold">
+                            contagem indisponível
+                          </span>
+                        ) : (
+                          <>
+                            <span className="text-[10px] text-[#86868B] font-bold">
+                              {sentences.length} frases
+                            </span>
+                            <span className="text-[10px] text-[#86868B]">·</span>
+                            <span className="text-[10px] text-indigo-500 font-bold">
+                              {readCount} lidas
+                            </span>
+                          </>
+                        )}
                       </div>
                       {sourceGroupIds.length > 0 && (
                         <div className="flex flex-wrap gap-1.5 mt-2">
