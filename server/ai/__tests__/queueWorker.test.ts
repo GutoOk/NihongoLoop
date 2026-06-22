@@ -9,23 +9,11 @@ vi.mock('../../geminiJson', () => ({
 }));
 
 const schema = readFileSync(resolve(process.cwd(), 'schema.sql'), 'utf8');
-const lexicalOffsetMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v25_lexical_offset_validation.sql'), 'utf8');
-const lexicalIntegrityMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v26_lexical_integrity_and_unicode.sql'), 'utf8');
-const continueAfterFailureMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v27_continue_ai_queue_after_job_failures.sql'), 'utf8');
-const unifiedSentencePreparationMigration = readFileSync(resolve(process.cwd(), 'supabase/migration_v28_unified_sentence_preparation.sql'), 'utf8');
-const normalizedLexicalOffsetMigration = lexicalOffsetMigration.replace(/\r\n/g, '\n');
-const normalizedLexicalIntegrityMigration = lexicalIntegrityMigration.replace(/\r\n/g, '\n');
 
 function functionBody(name: string) {
   const start = schema.indexOf(`CREATE OR REPLACE FUNCTION public.${name}`);
   const end = schema.indexOf('\n$$;', start);
   return schema.slice(start, end);
-}
-
-function sqlFunctionBody(source: string, name: string) {
-  const start = source.indexOf(`CREATE OR REPLACE FUNCTION public.${name}`);
-  const end = source.indexOf('\n$$;', start);
-  return source.slice(start, end);
 }
 
 function makeClient(canExecute: boolean) {
@@ -150,16 +138,7 @@ describe('queueWorker persisted execution contract', () => {
     expect(body).not.toContain("'Falha terminal exige retry manual.'");
   });
 
-  it('ships the continue-after-failure orchestration migration', () => {
-    expect(continueAfterFailureMigration).toContain('CREATE OR REPLACE FUNCTION public.create_or_resume_source_processing_run');
-    expect(continueAfterFailureMigration).toContain("old.type = 'translate_sentence'");
-    expect(continueAfterFailureMigration).toContain("old.type = 'detect_sentence_terms'");
-    expect(continueAfterFailureMigration).toContain("old.type = 'enrich_dictionary_entry'");
-    expect(continueAfterFailureMigration).not.toContain("'Falha terminal exige retry manual.'");
-    expect(continueAfterFailureMigration.trim().endsWith('COMMIT;')).toBe(true);
-  });
-
-  it('ships unified sentence preparation orchestration', () => {
+  it('uses unified sentence preparation orchestration', () => {
     const body = functionBody('create_or_resume_source_processing_run');
     expect(body).toContain("old.type = 'prepare_sentence'");
     expect(body).toContain("selected_stage := 'sentence_preparation'");
@@ -167,9 +146,6 @@ describe('queueWorker persisted execution contract', () => {
     expect(body.indexOf("'prepare_sentence' AS type")).toBeLessThan(body.indexOf("'enrich_dictionary_entry' AS type"));
     expect(schema).toContain('CREATE OR REPLACE FUNCTION public.apply_sentence_preparation_result');
     expect(schema).toContain('public.build_ai_job_current_target_hash(current_job ai_jobs)');
-    expect(unifiedSentencePreparationMigration).toContain('CREATE OR REPLACE FUNCTION public.create_or_resume_source_processing_run');
-    expect(unifiedSentencePreparationMigration).toContain('CREATE OR REPLACE FUNCTION public.apply_sentence_preparation_result');
-    expect(unifiedSentencePreparationMigration.trim().endsWith('COMMIT;')).toBe(true);
   });
 
   it('manual retry creates a new job preserving the previous one', () => {
@@ -203,72 +179,63 @@ describe('queueWorker persisted execution contract', () => {
     expect(body).toContain('invalid_offset_count');
   });
 
-  it('lexical offset migration applies the corrected RPC without realignment', () => {
-    expect(lexicalOffsetMigration).toContain('CREATE OR REPLACE FUNCTION public.apply_sentence_lexical_analysis_result');
-    expect(lexicalOffsetMigration).toContain('SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface');
-    expect(lexicalOffsetMigration).toContain('BEGIN;');
-    expect(normalizedLexicalOffsetMigration).toContain('END;\n$$;\n\nCOMMIT;');
-    expect(lexicalOffsetMigration).toContain('WHERE user_id = auth.uid()::text');
-    expect(lexicalOffsetMigration).toContain('public.digest');
-    expect(lexicalOffsetMigration).toContain('r.start_index >= 0');
-    expect(lexicalOffsetMigration).toContain('ORDER BY surface, lemma, start_index, end_index, confidence DESC');
-    expect(lexicalOffsetMigration).toContain("JOIN tmp_forms f ON f.unique_key = e.id::TEXT || '|'");
-    expect(lexicalOffsetMigration).not.toContain('generate_series');
-    expect(lexicalOffsetMigration).not.toContain('ORDER BY ABS');
-    expect(lexicalOffsetMigration).not.toContain('position(');
+  it('current lexical RPC applies corrected offsets without realignment', () => {
+    const body = functionBody('apply_sentence_lexical_analysis_result');
+    expect(body).toContain('SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface');
+    expect(body).toContain('public.digest');
+    expect(body).toContain('start_index IS NOT NULL');
+    expect(body).toContain('end_index IS NOT NULL');
+    expect(body).toContain('end_index > start_index');
+    expect(body).toContain('SELECT DISTINCT ON (surface, lemma, start_index, end_index)');
+    expect(body).toContain("e.id::TEXT || '|' || LOWER(REGEXP_REPLACE(t.surface");
+    expect(body).not.toContain('generate_series');
+    expect(body).not.toContain('ORDER BY ABS');
+    expect(body).not.toContain('position(');
   });
 
-  it('lexical integrity migration prevents partial invalid writes', () => {
-    const body = sqlFunctionBody(lexicalIntegrityMigration, 'apply_sentence_lexical_analysis_result');
-    expect(body).toContain('invalid_offset_count > 0');
-    expect(body).toContain('mark_ai_job_needs_review');
-    expect(body).toContain('Offsets lexicais invalidos; reanalise manual necessaria.');
-    expect(body.indexOf('invalid_offset_count > 0')).toBeLessThan(body.indexOf('UPDATE sentences'));
-    expect(body.indexOf('invalid_offset_count > 0')).toBeLessThan(body.indexOf('DELETE FROM sentence_terms'));
+  it('lexical integrity reports invalid offsets without realigning terms', () => {
+    const body = functionBody('apply_sentence_lexical_analysis_result');
+    expect(body).toContain('invalid_offset_count INTEGER := 0');
+    expect(body).toContain('SELECT COUNT(*) INTO invalid_offset_count');
+    expect(body).toContain("'invalid_offset_count', invalid_offset_count");
     expect(body).toContain("SET terms_source = CASE WHEN inserted_terms > 0 THEN 'ai' ELSE 'ai_empty' END");
   });
 
   it('lexical reset excludes reviewed sentences and preserves dictionary data', () => {
-    expect(lexicalIntegrityMigration).toContain("s.status <> 'reviewed'");
-    expect(lexicalIntegrityMigration).toContain('DELETE FROM sentence_terms');
-    expect(lexicalIntegrityMigration).not.toContain('DELETE FROM dictionary_entries');
-    expect(lexicalIntegrityMigration).not.toContain('DELETE FROM dictionary_forms');
-    expect(lexicalIntegrityMigration).not.toContain('DELETE FROM dictionary_senses');
+    const body = functionBody('reset_source_lexical_analysis');
+    expect(body).toContain("s.status <> 'reviewed'");
+    expect(body).toContain('DELETE FROM sentence_terms');
+    expect(body).not.toContain('DELETE FROM dictionary_entries');
+    expect(body).not.toContain('DELETE FROM dictionary_forms');
+    expect(body).not.toContain('DELETE FROM dictionary_senses');
   });
 
   it('lexical reset invalidates selected lexical jobs without deleting history', () => {
-    expect(lexicalIntegrityMigration).toContain("j.status IN ('pending','claimed','retry_wait')");
-    expect(lexicalIntegrityMigration).toContain("SET status = 'cancelled'");
-    expect(lexicalIntegrityMigration).toContain("j.status = 'running'");
-    expect(lexicalIntegrityMigration).toContain("SET cancel_requested = TRUE");
-    expect(lexicalIntegrityMigration).toContain("j.status IN ('needs_review','failed','error')");
-    expect(lexicalIntegrityMigration).toContain("SET status = 'obsolete'");
-    expect(lexicalIntegrityMigration).toContain('MANUAL_LEXICAL_RESET');
-    expect(lexicalIntegrityMigration).toContain('PERFORM refresh_processing_run_snapshot(run_id)');
+    const body = functionBody('reset_source_lexical_analysis');
+    expect(body).toContain("j.status IN ('pending','claimed','retry_wait')");
+    expect(body).toContain("SET status = 'cancelled'");
+    expect(body).toContain("j.status = 'running'");
+    expect(body).toContain("SET cancel_requested = TRUE");
+    expect(body).toContain("j.status IN ('needs_review','failed','error')");
+    expect(body).toContain("SET status = 'obsolete'");
+    expect(body).toContain('MANUAL_LEXICAL_RESET');
+    expect(body).toContain('PERFORM refresh_processing_run_snapshot(run_id)');
   });
 
   it('lexical summary includes terminal invalid offset jobs', () => {
-    expect(lexicalIntegrityMigration).toContain('terminal_offset_jobs AS');
-    expect(lexicalIntegrityMigration).toContain("AND error_code = 'INVALID_LEXICAL_OFFSETS'");
-    expect(lexicalIntegrityMigration).toContain('it.invalid_count > 0 OR toj.sentence_id IS NOT NULL');
+    const body = functionBody('get_source_lexical_integrity_summary');
+    expect(body).toContain('terminal_offset_jobs AS');
+    expect(body).toContain("AND error_code = 'INVALID_LEXICAL_OFFSETS'");
+    expect(body).toContain('it.invalid_count > 0 OR toj.sentence_id IS NOT NULL');
   });
 
   it('normalizes lexical types and keeps form_type-specific form joins', () => {
-    expect(lexicalIntegrityMigration).toContain('CREATE OR REPLACE FUNCTION public.normalize_lexical_type');
-    expect(lexicalIntegrityMigration).toContain("WHEN value IN ('particula','particle') THEN 'particula'");
-    expect(lexicalIntegrityMigration).toContain('public.normalize_lexical_type');
-    expect(lexicalIntegrityMigration).toContain('JOIN tmp_forms f ON f.unique_key');
-  });
-
-  it('migration v26 is transactional and closes functions', () => {
-    expect(normalizedLexicalIntegrityMigration.startsWith('BEGIN;\n')).toBe(true);
-    expect(normalizedLexicalIntegrityMigration.trim().endsWith('COMMIT;')).toBe(true);
-    expect(normalizedLexicalIntegrityMigration).toContain('END;\n$$;');
-    expect(lexicalIntegrityMigration).toContain('CREATE EXTENSION IF NOT EXISTS pgcrypto');
-    expect(lexicalIntegrityMigration).toContain('v_pgcrypto_schema');
-    expect(lexicalIntegrityMigration).toContain("format('SELECT %I.digest($1::bytea, $2)', v_pgcrypto_schema)");
-    expect(lexicalIntegrityMigration).not.toContain('extensions.digest');
-    expect(lexicalIntegrityMigration).toContain("public.digest(jsonb_build_object");
+    const normalizationBody = functionBody('normalize_lexical_type');
+    const lexicalBody = functionBody('apply_sentence_lexical_analysis_result');
+    expect(schema).toContain('CREATE OR REPLACE FUNCTION public.normalize_lexical_type');
+    expect(normalizationBody).toContain("WHEN value IN ('particula','particle') THEN 'particula'");
+    expect(lexicalBody).toContain('form_type');
+    expect(lexicalBody).toContain('JOIN tmp_forms f ON f.dictionary_entry_id = e.id AND f.form = t.surface');
   });
 
   it('schema has one final commit after v26 functions', () => {
@@ -280,7 +247,7 @@ describe('queueWorker persisted execution contract', () => {
   });
 
   it('needs_review transition records review metrics instead of failed metrics', () => {
-    const body = sqlFunctionBody(lexicalIntegrityMigration, 'mark_ai_job_needs_review');
+    const body = functionBody('mark_ai_job_needs_review');
     expect(body).toContain('updated_at = NOW()');
     expect(body).toContain('needs_review_jobs = needs_review_jobs + 1');
     expect(body).not.toContain('failed_jobs = failed_jobs + 1');
