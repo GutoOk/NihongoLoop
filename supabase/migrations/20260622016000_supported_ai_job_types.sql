@@ -252,8 +252,7 @@ END;
 $$;
 
 UPDATE schema_versions
-SET version = '2026-06-ai-queue-v36',
-    updated_at = NOW()
+SET version = '2026-06-ai-queue-v36'
 WHERE key = 'ai_queue';
 
 INSERT INTO schema_versions(key, version)
