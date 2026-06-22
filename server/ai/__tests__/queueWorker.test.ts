@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getErrorMessage, getJobInput, processPrepareSentenceJob, processTranslateSentenceJob } from '../queueWorker';
+import { AI_QUEUE_SCHEMA_VERSION, getErrorMessage, getJobInput, processPrepareSentenceJob, processTranslateSentenceJob } from '../queueWorker';
 import { generateStructuredJsonWithMeta } from '../../geminiJson';
 
 vi.mock('../../geminiJson', () => ({
@@ -322,6 +322,19 @@ describe('queueWorker persisted execution contract', () => {
     expect(normalizedSchema.endsWith('COMMIT;')).toBe(true);
     expect(normalizedSchema.indexOf('CREATE OR REPLACE FUNCTION public.mark_ai_job_needs_review')).toBeGreaterThan(normalizedSchema.indexOf('BEGIN;'));
     expect(normalizedSchema.indexOf('CREATE OR REPLACE FUNCTION public.mark_ai_job_needs_review')).toBeLessThan(normalizedSchema.lastIndexOf('COMMIT;'));
+  });
+
+  it('keeps worker schema version aligned with the database baseline', () => {
+    expect(schema).toContain(`VALUES ('ai_queue', '${AI_QUEUE_SCHEMA_VERSION}')`);
+  });
+
+  it('ignores expired or cancelled active jobs when calculating claim capacity', () => {
+    const body = functionBody('claim_ai_jobs');
+    expect(body).toContain("active_jobs.lease_expires_at");
+    expect(body).toContain("active_runs.status = 'running'");
+    expect(body).toContain("COALESCE(active_runs.cancel_requested, FALSE) = FALSE");
+    expect(body).toContain("active_user.lease_expires_at");
+    expect(body).toContain("active_type.lease_expires_at");
   });
 
   it('needs_review transition records review metrics instead of failed metrics', () => {

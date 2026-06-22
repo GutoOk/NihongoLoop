@@ -326,7 +326,7 @@ CREATE TABLE schema_versions (
   applied_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v34');
+INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v35');
 
 CREATE TABLE study_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -532,7 +532,11 @@ BEGIN
       p_limit - (
         SELECT COUNT(*)::INTEGER
         FROM ai_jobs active_jobs
+        LEFT JOIN processing_runs active_runs ON active_runs.id = active_jobs.run_id
         WHERE active_jobs.status IN ('claimed','running')
+          AND COALESCE(active_jobs.lease_expires_at, active_jobs.locked_until, active_jobs.last_heartbeat_at + interval '5 minutes', NOW()) >= NOW()
+          AND (active_jobs.run_id IS NULL OR active_runs.status = 'running')
+          AND COALESCE(active_runs.cancel_requested, FALSE) = FALSE
       )
     ) AS global_capacity
   ),
@@ -562,14 +566,22 @@ BEGIN
       COALESCE((
         SELECT COUNT(*)::INTEGER
         FROM ai_jobs active_user
+        LEFT JOIN processing_runs active_user_runs ON active_user_runs.id = active_user.run_id
         WHERE active_user.user_id = j.user_id
           AND active_user.status IN ('claimed','running')
+          AND COALESCE(active_user.lease_expires_at, active_user.locked_until, active_user.last_heartbeat_at + interval '5 minutes', NOW()) >= NOW()
+          AND (active_user.run_id IS NULL OR active_user_runs.status = 'running')
+          AND COALESCE(active_user_runs.cancel_requested, FALSE) = FALSE
       ), 0) AS active_user_count,
       COALESCE((
         SELECT COUNT(*)::INTEGER
         FROM ai_jobs active_type
+        LEFT JOIN processing_runs active_type_runs ON active_type_runs.id = active_type.run_id
         WHERE active_type.type = j.type
           AND active_type.status IN ('claimed','running')
+          AND COALESCE(active_type.lease_expires_at, active_type.locked_until, active_type.last_heartbeat_at + interval '5 minutes', NOW()) >= NOW()
+          AND (active_type.run_id IS NULL OR active_type_runs.status = 'running')
+          AND COALESCE(active_type_runs.cancel_requested, FALSE) = FALSE
       ), 0) AS active_type_count,
       ROW_NUMBER() OVER (PARTITION BY j.user_id ORDER BY j.priority DESC, j.created_at ASC) AS user_rank,
       ROW_NUMBER() OVER (PARTITION BY j.type ORDER BY j.priority DESC, j.created_at ASC) AS type_rank
