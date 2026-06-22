@@ -34,6 +34,27 @@ vi.mock('../../repositories', () => ({
   }
 }));
 
+vi.mock('../../repositories/flashcardRepository', () => ({
+  FlashcardRepository: {
+    getSnapshot: vi.fn().mockResolvedValue({
+      settings: {
+        dailyNewLimit: 20,
+        dailyReviewLimit: 0,
+        desiredRetention: 0.9,
+        autoplayAudio: false,
+        showExamples: true,
+        defaultMode: 'ja_pt',
+      },
+      decks: [],
+      activity: [],
+    }),
+    saveSettings: vi.fn(),
+    createDeck: vi.fn(),
+    deleteDeck: vi.fn(),
+    recordDailyActivity: vi.fn(),
+  },
+}));
+
 describe('FlashcardScreen', () => {
   beforeEach(() => {
     vi.clearAllMocks();

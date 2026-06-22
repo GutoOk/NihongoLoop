@@ -20,13 +20,6 @@ export type FlashcardRemoteSnapshot = {
   activity: FlashcardActivityRow[];
 };
 
-export type FlashcardLocalSnapshot = {
-  settings: FlashcardSettings;
-  decks: CustomDeck[];
-  dailyLog: Record<string, FlashcardDailyEntry>;
-  hourHistogram: number[];
-};
-
 const DEFAULT_TIMEZONE = 'America/Sao_Paulo';
 const DEFAULT_FLASHCARD_SETTINGS: FlashcardSettings = {
   dailyNewLimit: 20,
@@ -45,20 +38,6 @@ export class FlashcardRepository {
       this.getActivity(),
     ]);
     return { settings, decks, activity };
-  }
-
-  static async hasRemoteData(): Promise<boolean> {
-    if (!isSupabaseConfigured) return false;
-    const userId = getUserId();
-    const [settings, decks, activity] = await Promise.all([
-      supabase!.from('flashcard_settings').select('user_id', { count: 'exact', head: true }).eq('user_id', userId),
-      supabase!.from('flashcard_decks').select('id', { count: 'exact', head: true }).eq('user_id', userId),
-      supabase!.from('flashcard_daily_activity').select('activity_date', { count: 'exact', head: true }).eq('user_id', userId),
-    ]);
-    if (settings.error) throw new Error(`Erro do Supabase ao contar configuracoes de flashcards: ${settings.error.message}`);
-    if (decks.error) throw new Error(`Erro do Supabase ao contar baralhos: ${decks.error.message}`);
-    if (activity.error) throw new Error(`Erro do Supabase ao contar atividade de flashcards: ${activity.error.message}`);
-    return Boolean((settings.count || 0) + (decks.count || 0) + (activity.count || 0));
   }
 
   static async getSettings(): Promise<FlashcardSettings> {
@@ -87,13 +66,26 @@ export class FlashcardRepository {
 
   static async getDecks(): Promise<CustomDeck[]> {
     if (!isSupabaseConfigured) return [];
+    const userId = getUserId();
     const { data, error } = await supabase!
       .from('flashcard_decks')
       .select('id,name,color,config,created_at')
-      .eq('user_id', getUserId())
+      .eq('user_id', userId)
       .order('created_at', { ascending: true });
     if (error) throw new Error(`Erro do Supabase ao carregar baralhos: ${error.message}`);
-    return (data || []).map(mapDeckFromDb);
+    const decks = data || [];
+    if (decks.length === 0) return [];
+
+    const { data: itemRows, error: itemsError } = await supabase!
+      .from('flashcard_deck_items')
+      .select('deck_id,item_type,item_id,position')
+      .eq('user_id', userId)
+      .in('deck_id', decks.map((deck) => deck.id))
+      .order('position', { ascending: true });
+    if (itemsError) throw new Error(`Erro do Supabase ao carregar itens dos baralhos: ${itemsError.message}`);
+
+    const itemsByDeck = groupDeckItems(itemRows || []);
+    return decks.map((deck) => mapDeckFromDb(deck, itemsByDeck.get(deck.id)));
   }
 
   static async createDeck(name: string, config: SessionConfig, color: string): Promise<CustomDeck> {
@@ -105,37 +97,36 @@ export class FlashcardRepository {
       config,
       createdAt: new Date().toISOString(),
     };
-    const { data, error } = await supabase!
-      .from('flashcard_decks')
-      .insert({
-        id: deck.id,
-        user_id: getUserId(),
-        name: deck.name,
-        color: deck.color,
-        config: deck.config,
-        created_at: deck.createdAt,
-      })
-      .select('id,name,color,config,created_at')
-      .maybeSingle();
+    const { data, error } = await supabase!.rpc('save_flashcard_deck', {
+      p_deck_id: deck.id,
+      p_name: deck.name,
+      p_color: deck.color,
+      p_config: stripDeckItemIds(deck.config),
+      p_items: deckItemsFromConfig(deck.config),
+    });
     if (error) throw new Error(`Erro do Supabase ao criar baralho: ${error.message}`);
-    return data ? mapDeckFromDb(data) : deck;
+    return data ? mapDeckFromDb(data, deckItemsFromConfig(deck.config)) : deck;
   }
 
   static async updateDeck(id: string, updates: Partial<Pick<CustomDeck, 'name' | 'color' | 'config'>>): Promise<CustomDeck | null> {
     if (!isSupabaseConfigured) throw new Error('Supabase nao configurado.');
-    const payload: Record<string, unknown> = {};
-    if (updates.name !== undefined) payload.name = updates.name.trim() || 'Baralho';
-    if (updates.color !== undefined) payload.color = updates.color;
-    if (updates.config !== undefined) payload.config = updates.config;
-    const { data, error } = await supabase!
-      .from('flashcard_decks')
-      .update(payload)
-      .eq('id', id)
-      .eq('user_id', getUserId())
-      .select('id,name,color,config,created_at')
-      .maybeSingle();
+    const current = (await this.getDecks()).find((deck) => deck.id === id);
+    if (!current) return null;
+    const next: CustomDeck = {
+      ...current,
+      ...updates,
+      name: updates.name !== undefined ? updates.name.trim() || 'Baralho' : current.name,
+      config: updates.config || current.config,
+    };
+    const { data, error } = await supabase!.rpc('save_flashcard_deck', {
+      p_deck_id: next.id,
+      p_name: next.name,
+      p_color: next.color,
+      p_config: stripDeckItemIds(next.config),
+      p_items: deckItemsFromConfig(next.config),
+    });
     if (error) throw new Error(`Erro do Supabase ao atualizar baralho: ${error.message}`);
-    return data ? mapDeckFromDb(data) : null;
+    return data ? mapDeckFromDb(data, deckItemsFromConfig(next.config)) : next;
   }
 
   static async deleteDeck(id: string): Promise<void> {
@@ -173,40 +164,6 @@ export class FlashcardRepository {
     return mapActivityFromDb(data);
   }
 
-  static async importLocalSnapshotIfRemoteEmpty(snapshot: FlashcardLocalSnapshot): Promise<boolean> {
-    if (!isSupabaseConfigured) throw new Error('Supabase nao configurado.');
-    if (await this.hasRemoteData()) return false;
-    const userId = getUserId();
-
-    await this.saveSettings(snapshot.settings);
-
-    if (snapshot.decks.length > 0) {
-      const { error } = await supabase!
-        .from('flashcard_decks')
-        .upsert(
-          snapshot.decks.map((deck) => ({
-            id: deck.id,
-            user_id: userId,
-            name: deck.name,
-            color: deck.color,
-            config: deck.config,
-            created_at: deck.createdAt,
-          })),
-          { onConflict: 'id' },
-        );
-      if (error) throw new Error(`Erro do Supabase ao migrar baralhos locais: ${error.message}`);
-    }
-
-    const activityRows = buildActivityRowsForImport(userId, snapshot);
-    if (activityRows.length > 0) {
-      const { error } = await supabase!
-        .from('flashcard_daily_activity')
-        .upsert(activityRows, { onConflict: 'user_id,activity_date' });
-      if (error) throw new Error(`Erro do Supabase ao migrar atividade local: ${error.message}`);
-    }
-
-    return true;
-  }
 }
 
 function mapSettingsFromDb(row: any): FlashcardSettings {
@@ -231,12 +188,13 @@ function mapSettingsToDb(settings: FlashcardSettings) {
   };
 }
 
-function mapDeckFromDb(row: any): CustomDeck {
+function mapDeckFromDb(row: any, items: DeckItemPayload[] = []): CustomDeck {
+  const config = applyDeckItemsToConfig(row.config || {}, items);
   return {
     id: row.id,
     name: row.name,
     color: row.color,
-    config: row.config || {},
+    config,
     createdAt: row.created_at,
   };
 }
@@ -257,44 +215,44 @@ function normalizeHourHistogram(value: unknown): number[] {
   return Array.from({ length: 24 }, (_, index) => Math.max(0, Number(input[index] || 0)));
 }
 
-function buildActivityRowsForImport(userId: string, snapshot: FlashcardLocalSnapshot) {
-  const rows = Object.entries(snapshot.dailyLog).map(([date, entry]) => ({
-    user_id: userId,
-    activity_date: date,
-    reviews: Math.max(0, entry.reviews || 0),
-    new_cards: Math.max(0, entry.newCards || 0),
-    again: Math.max(0, entry.again || 0),
-    sessions_count: Math.max(0, entry.sessionsCount || 0),
-    hour_histogram: normalizeHourHistogram([]),
-  }));
-  const histogram = normalizeHourHistogram(snapshot.hourHistogram);
-  const hasHistogram = histogram.some((count) => count > 0);
-  if (hasHistogram) {
-    const today = todayKeyInTimeZone();
-    const existing = rows.find((row) => row.activity_date === today);
-    if (existing) {
-      existing.hour_histogram = histogram;
-      existing.sessions_count = Math.max(existing.sessions_count, histogram.reduce((sum, count) => sum + count, 0));
-    } else {
-      rows.push({
-        user_id: userId,
-        activity_date: today,
-        reviews: 0,
-        new_cards: 0,
-        again: 0,
-        sessions_count: histogram.reduce((sum, count) => sum + count, 0),
-        hour_histogram: histogram,
-      });
-    }
-  }
-  return rows;
+type DeckItemPayload = {
+  item_type: 'word' | 'sentence';
+  item_id: string;
+  position?: number;
+};
+
+function stripDeckItemIds(config: SessionConfig): SessionConfig {
+  const { entryIds, sentenceIds, ...rest } = config;
+  return rest;
 }
 
-function todayKeyInTimeZone(timeZone = DEFAULT_TIMEZONE): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date());
+function deckItemsFromConfig(config: SessionConfig): DeckItemPayload[] {
+  const ids = config.deckKind === 'sentences' ? config.sentenceIds || [] : config.entryIds || [];
+  const itemType = config.deckKind === 'sentences' ? 'sentence' : 'word';
+  return ids.map((id, position) => ({ item_type: itemType, item_id: id, position }));
+}
+
+function applyDeckItemsToConfig(config: SessionConfig, items: DeckItemPayload[]): SessionConfig {
+  const words = items.filter((item) => item.item_type === 'word').sort(sortDeckItems).map((item) => item.item_id);
+  const sentences = items.filter((item) => item.item_type === 'sentence').sort(sortDeckItems).map((item) => item.item_id);
+  if (sentences.length > 0) return { ...config, deckKind: 'sentences', sentenceIds: sentences, entryIds: undefined };
+  return { ...config, deckKind: config.deckKind || 'words', entryIds: words, sentenceIds: undefined };
+}
+
+function groupDeckItems(rows: any[]): Map<string, DeckItemPayload[]> {
+  const map = new Map<string, DeckItemPayload[]>();
+  for (const row of rows) {
+    const current = map.get(row.deck_id) || [];
+    current.push({
+      item_type: row.item_type === 'sentence' ? 'sentence' : 'word',
+      item_id: row.item_id,
+      position: Number(row.position || 0),
+    });
+    map.set(row.deck_id, current);
+  }
+  return map;
+}
+
+function sortDeckItems(a: DeckItemPayload, b: DeckItemPayload): number {
+  return (a.position || 0) - (b.position || 0);
 }
