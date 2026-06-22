@@ -11,7 +11,10 @@ vi.mock('../../repositories', () => ({
     getLatestRunBySource: vi.fn(),
     getSourceLexicalIntegritySummary: vi.fn(),
     resetSourceLexicalAnalysis: vi.fn(),
+    prepareSourceRun: vi.fn(),
     startSourceProcessingRun: vi.fn(),
+    resumeRun: vi.fn(),
+    pauseRun: vi.fn(),
     getRun: vi.fn(),
   },
   AiJobRepository: {
@@ -100,7 +103,7 @@ describe('SourcePreparationPanel audit controls', () => {
       stuck: 0,
       clearable: 0,
     });
-    vi.mocked(ProcessingRunRepository.startSourceProcessingRun).mockResolvedValue({ run_id: 'run-1', created_jobs: 0, status: 'running' });
+    vi.mocked(ProcessingRunRepository.prepareSourceRun).mockResolvedValue({ run_id: 'run-1', created_jobs: 0, status: 'paused' });
     vi.mocked(ProcessingRunRepository.getRun).mockResolvedValue(baseRun);
   });
 
@@ -176,9 +179,11 @@ describe('SourcePreparationPanel audit controls', () => {
     const user = userEvent.setup();
     render(<SourcePreparationPanel sourceId="source-1" onPreparationComplete={vi.fn()} />);
 
-    await user.click(await screen.findByRole('button', { name: /preparar\/retomar fonte/i }));
+    await user.click(await screen.findByRole('button', { name: /preparar fonte/i }));
 
-    expect(ProcessingRunRepository.startSourceProcessingRun).toHaveBeenCalledWith('source-1', 'all');
+    expect(ProcessingRunRepository.prepareSourceRun).toHaveBeenCalledWith('source-1', 'all');
+    expect(screen.getByRole('button', { name: /iniciar tarefas/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /parar tarefas/i })).toBeInTheDocument();
     expect(screen.queryByText('Gerar fila das pendencias reais')).not.toBeInTheDocument();
     expect(screen.queryByText('Criar/retomar execucao')).not.toBeInTheDocument();
   });

@@ -23,6 +23,7 @@ import {
   ProgressRepository,
   TermRepository,
   ProcessingRunRepository,
+  AiJobRepository,
 } from "../repositories";
 import {
   Sentence,
@@ -46,6 +47,65 @@ interface ReadingScreenProps {
   onNavigate?: AppNavigate;
 }
 
+type ReanalysisLogState = {
+  open: boolean;
+  title: string;
+  lines: string[];
+  runId?: string;
+  jobId?: string;
+  finished: boolean;
+};
+
+const REANALYSIS_TERMINAL_STATUSES = new Set([
+  "completed",
+  "failed",
+  "needs_review",
+  "cancelled",
+  "obsolete",
+  "error",
+  "rejected",
+]);
+
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const compactJobSnapshot = (job: any) => ({
+  id: job.id,
+  status: job.status,
+  type: job.type,
+  target_type: job.target_type,
+  target_id: job.target_id,
+  attempts: job.attempts,
+  retry_count: job.retry_count,
+  error: job.error,
+  error_code: job.error_code,
+  error_kind: job.error_kind,
+  error_structured: job.error_structured,
+  current_step: job.current_step,
+  input: job.input,
+  payload: job.payload,
+  result: job.result,
+  raw_result: job.raw_result,
+  logs: job.logs,
+  model: job.model,
+  model_version: job.model_version,
+  prompt_version: job.prompt_version,
+  input_tokens: job.input_tokens,
+  output_tokens: job.output_tokens,
+  latency_ai_ms: job.latency_ai_ms,
+  latency_persist_ms: job.latency_persist_ms,
+  created_at: job.created_at,
+  claimed_at: job.claimed_at,
+  started_at: job.started_at,
+  completed_at: job.completed_at,
+  updated_at: job.updated_at,
+});
+
+const formatLogEntry = (message: string, data?: unknown) => {
+  const head = `[${new Date().toISOString()}] ${message}`;
+  if (data === undefined) return head;
+  return `${head}\n${JSON.stringify(data, null, 2)}`;
+};
+
 export default function ReadingScreen({
   sourceId,
   onBack,
@@ -67,6 +127,12 @@ export default function ReadingScreen({
   const [showPrep, setShowPrep] = useState(false);
   const { showAlert, showConfirm } = useModal();
   const [reanalyzingId, setReanalyzingId] = useState<string | null>(null);
+  const [reanalysisLog, setReanalysisLog] = useState<ReanalysisLogState>({
+    open: false,
+    title: "",
+    lines: [],
+    finished: false,
+  });
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
@@ -78,6 +144,22 @@ export default function ReadingScreen({
   const [visibleCount, setVisibleCount] = useState(25);
   const [totalSentences, setTotalSentences] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  const appendReanalysisLog = (message: string, data?: unknown) => {
+    setReanalysisLog((current) => ({
+      ...current,
+      lines: [...current.lines, formatLogEntry(message, data)],
+    }));
+  };
+
+  const copyReanalysisLog = async () => {
+    const text = reanalysisLog.lines.join("\n\n");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      appendReanalysisLog("Nao foi possivel copiar automaticamente; selecione o texto do log e copie manualmente.");
+    }
+  };
 
   const handleEditClick = (sent: Sentence) => {
     setEditingSentenceId(sent.id);
@@ -138,12 +220,102 @@ export default function ReadingScreen({
   const handleReanalyzeSentence = async (sentence: Sentence) => {
     if (reanalyzingId || bulkProcessing) return;
     setReanalyzingId(sentence.id);
+    setReanalysisLog({
+      open: true,
+      title: `Reanalise da frase ${sentence.order_index + 1}`,
+      lines: [
+        formatLogEntry("Inicio da reanalise manual da frase.", {
+          sentence_id: sentence.id,
+          source_id: sentence.source_id,
+          order_index: sentence.order_index,
+          japanese: sentence.japanese,
+          previous: {
+            portuguese: sentence.portuguese,
+            kana: sentence.kana,
+            romaji: sentence.romaji,
+            status: sentence.status,
+            translation_source: sentence.translation_source,
+            reading_source: sentence.reading_source,
+            terms_source: sentence.terms_source,
+            prepared_at: sentence.prepared_at,
+            term_count: (termsMap[sentence.id] || []).length,
+            terms: termsMap[sentence.id] || [],
+          },
+        }),
+      ],
+      finished: false,
+    });
+
     try {
-      await ProcessingRunRepository.startSourceProcessingRun(sentence.source_id, "analyze");
+      const queued = await SentenceRepository.reanalyzeWithAi(sentence.id);
+      setReanalysisLog((current) => ({
+        ...current,
+        runId: queued.run_id,
+        jobId: queued.job_id,
+      }));
+      appendReanalysisLog("Job dedicado de reanalise enfileirado.", queued);
+
+      let lastSignature = "";
+      let reachedTerminalStatus = false;
+      for (let attempt = 0; attempt < 90; attempt++) {
+        const job = await AiJobRepository.getById(queued.job_id);
+        if (!job) {
+          appendReanalysisLog("Job ainda nao apareceu na consulta do cliente.", {
+            job_id: queued.job_id,
+            poll: attempt + 1,
+          });
+        } else {
+          const snapshot = compactJobSnapshot(job);
+          const signature = JSON.stringify({
+            status: job.status,
+            attempts: job.attempts,
+            retry_count: job.retry_count,
+            error: job.error,
+            result: job.result,
+            raw_result: job.raw_result,
+            logs: job.logs,
+            current_step: job.current_step,
+            completed_at: job.completed_at,
+            updated_at: job.updated_at,
+          });
+          if (signature !== lastSignature) {
+            appendReanalysisLog(`Job ${job.status}.`, snapshot);
+            lastSignature = signature;
+          }
+
+          if (REANALYSIS_TERMINAL_STATUSES.has(job.status)) {
+            reachedTerminalStatus = true;
+            break;
+          }
+        }
+
+        await wait(2000);
+      }
+
+      if (!reachedTerminalStatus) {
+        appendReanalysisLog("Acompanhamento encerrado por tempo limite; o job pode continuar rodando no worker.", {
+          job_id: queued.job_id,
+          polling_seconds: 180,
+        });
+      }
+
       await loadData(true);
-      showAlert("Leitura enfileirada", "A fonte foi retomada pelo worker persistente.");
+      const [updatedSentence, updatedTerms] = await Promise.all([
+        SentenceRepository.getById(sentence.id),
+        TermRepository.getBySentences([sentence.id]),
+      ]);
+      appendReanalysisLog("Dados atuais da frase apos reanalise.", {
+        sentence: updatedSentence,
+        terms: normalizeTermOffsets(updatedSentence?.japanese || sentence.japanese, updatedTerms),
+      });
+      setReanalysisLog((current) => ({ ...current, finished: true }));
     } catch (e: any) {
       console.error(e);
+      appendReanalysisLog("Falha ao reanalisar frase.", {
+        message: e?.message || String(e),
+        stack: e?.stack,
+      });
+      setReanalysisLog((current) => ({ ...current, finished: true }));
       showAlert("Erro", `Falha ao re-analisar frase: ${e.message || e}`);
     } finally {
       setReanalyzingId(null);
@@ -763,6 +935,67 @@ export default function ReadingScreen({
           ))
         )}
       </main>
+
+      {reanalysisLog.open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
+          onClick={() =>
+            setReanalysisLog((current) => ({ ...current, open: false }))
+          }
+        >
+          <div
+            className="bg-white rounded-2xl w-full max-w-3xl max-h-[85vh] shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
+              <div className="min-w-0">
+                <h3 className="text-sm font-black text-slate-900 truncate">
+                  {reanalysisLog.title || "Reanalise da frase"}
+                </h3>
+                <p className="text-[10px] text-slate-500 font-mono truncate">
+                  {reanalysisLog.jobId
+                    ? `job ${reanalysisLog.jobId}`
+                    : "Aguardando criacao do job"}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {!reanalysisLog.finished && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Rodando
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void copyReanalysisLog()}
+                  className="px-3 py-1.5 text-[10px] font-black uppercase rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50"
+                >
+                  Copiar log
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setReanalysisLog((current) => ({
+                      ...current,
+                      open: false,
+                    }))
+                  }
+                  className="p-2 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  aria-label="Fechar log"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <textarea
+              readOnly
+              value={reanalysisLog.lines.join("\n\n")}
+              className="w-full flex-1 min-h-[420px] resize-none bg-slate-950 text-slate-50 p-4 text-[11px] leading-relaxed font-mono outline-none"
+              spellCheck={false}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Mini Dictionary Modal */}
       {activeTermHover && (

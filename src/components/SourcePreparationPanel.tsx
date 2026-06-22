@@ -3,6 +3,7 @@ import {
   AlertCircle,
   Database,
   ListPlus,
+  Play,
   RefreshCw,
   RotateCcw,
   Square,
@@ -98,7 +99,7 @@ export default function SourcePreparationPanel({
   const queueRealGaps = async () => {
     setIsBusy(true);
     try {
-      const result = await ProcessingRunRepository.startSourceProcessingRun(sourceId, 'all');
+      const result = await ProcessingRunRepository.prepareSourceRun(sourceId, 'all');
       if (result?.run_id) {
         const latestRun = await ProcessingRunRepository.getRun(result.run_id);
         if (latestRun) setRun(latestRun);
@@ -141,6 +142,28 @@ export default function SourcePreparationPanel({
       } else {
         await AiJobRepository.cancelActiveJobsBySource(sourceId);
       }
+      await refresh();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const startTasks = async () => {
+    if (!run) return;
+    setIsBusy(true);
+    try {
+      await ProcessingRunRepository.resumeRun(run.id);
+      await refresh();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const stopTasks = async () => {
+    if (!run) return;
+    setIsBusy(true);
+    try {
+      await ProcessingRunRepository.pauseRun(run.id);
       await refresh();
     } finally {
       setIsBusy(false);
@@ -202,10 +225,24 @@ export default function SourcePreparationPanel({
               <ToolbarButton
                 onClick={queueRealGaps}
                 disabled={isBusy || isRefreshing}
-                title={busyTitle || 'Preparar ou retomar esta fonte.'}
+                title={busyTitle || 'Preparar a fonte sem iniciar o worker.'}
                 primary
                 icon={<ListPlus className="h-4 w-4" />}
-                label="Preparar/retomar fonte"
+                label="Preparar fonte"
+              />
+              <ToolbarButton
+                onClick={startTasks}
+                disabled={isBusy || isRefreshing || !run || run.status === 'running' || run.status === 'completed'}
+                title={!run ? 'Prepare a fonte antes de iniciar.' : busyTitle || 'Iniciar consumo dos jobs preparados.'}
+                icon={<Play className="h-4 w-4" />}
+                label="Iniciar tarefas"
+              />
+              <ToolbarButton
+                onClick={stopTasks}
+                disabled={isBusy || isRefreshing || !run || run.status !== 'running'}
+                title={!run ? 'Nenhuma execucao preparada.' : busyTitle || 'Pausar novas tarefas desta fonte.'}
+                icon={<Square className="h-4 w-4" />}
+                label="Parar tarefas"
               />
             </div>
           </div>

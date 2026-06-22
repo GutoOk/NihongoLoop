@@ -53,6 +53,19 @@ const PROCESSING_RUN_SELECT = [
 ].join(',');
 
 export class ProcessingRunRepository {
+  static async prepareSourceRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<{ run_id: string; stage?: string | null; created_jobs: number; status: string } | null> {
+    if (!isSupabaseConfigured) return null;
+    const { data, error } = await supabase!.rpc('prepare_source_run', {
+      p_source_id: sourceId,
+      p_run_mode: runMode,
+    });
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao preparar fonte: ${error.message}`);
+    }
+    return data as any;
+  }
+
   static async startSourceProcessingRun(sourceId: string, runMode: "all" | "translate" | "analyze" | "dictionary" = "all"): Promise<{ run_id: string; stage?: string | null; created_jobs: number; status: string } | null> {
     if (!isSupabaseConfigured) return null;
     const { data, error } = await supabase!.rpc('create_or_resume_source_run', {
@@ -141,6 +154,12 @@ export class ProcessingRunRepository {
     if (!isSupabaseConfigured) return;
     const { error } = await supabase!.rpc('advance_processing_run', { p_run_id: id });
     if (error) throw new Error(`Erro do Supabase ao retomar processamento: ${error.message}`);
+  }
+
+  static async pauseRun(id: string): Promise<void> {
+    if (!isSupabaseConfigured) return;
+    const { error } = await supabase!.rpc('pause_processing_run', { p_run_id: id });
+    if (error) throw new Error(`Erro do Supabase ao pausar processamento: ${error.message}`);
   }
 
   static async getSourceLexicalIntegritySummary(sourceId: string): Promise<SourceLexicalIntegritySummary | null> {

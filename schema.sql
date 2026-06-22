@@ -326,7 +326,7 @@ CREATE TABLE schema_versions (
   applied_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v31');
+INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v33');
 
 CREATE TABLE study_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -539,11 +539,14 @@ BEGIN
   locked_candidates AS (
     SELECT j.*
     FROM ai_jobs j
+    LEFT JOIN processing_runs pr ON pr.id = j.run_id
     WHERE
       j.status IN ('pending','retry_wait')
       AND j.type = ANY(p_job_types)
       AND (p_user_id IS NULL OR j.user_id = p_user_id)
       AND (p_run_id IS NULL OR j.run_id = p_run_id)
+      AND (j.run_id IS NULL OR pr.status = 'running')
+      AND COALESCE(pr.cancel_requested, FALSE) = FALSE
       AND (j.retry_at IS NULL OR j.retry_at <= NOW())
     ORDER BY j.priority DESC, j.created_at ASC
     FOR UPDATE SKIP LOCKED
@@ -1735,6 +1738,51 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.prepare_source_run(
+  p_source_id UUID,
+  p_run_mode TEXT DEFAULT 'all'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  result JSONB;
+  prepared_run_id UUID;
+  request_user TEXT;
+BEGIN
+  request_user := public.request_user_id(NULL);
+  result := public.create_or_resume_source_processing_run(p_source_id, request_user, p_run_mode);
+  prepared_run_id := (result->>'run_id')::UUID;
+
+  IF prepared_run_id IS NOT NULL THEN
+    UPDATE processing_runs
+    SET status = CASE WHEN status = 'completed' THEN status ELSE 'paused' END,
+        cancel_requested = FALSE,
+        current_step = CASE
+          WHEN status = 'completed' THEN current_step
+          ELSE 'Fonte preparada. Clique em Iniciar tarefas para executar.'
+        END,
+        updated_at = NOW()
+    WHERE id = prepared_run_id
+      AND user_id = request_user;
+
+    UPDATE processing_run_stages
+    SET status = CASE WHEN status = 'completed' THEN status ELSE 'pending' END,
+        updated_at = NOW()
+    WHERE run_id = prepared_run_id
+      AND user_id = request_user
+      AND status = 'running';
+
+    PERFORM refresh_processing_run_snapshot(prepared_run_id);
+    result := result || jsonb_build_object('status', (SELECT status FROM processing_runs WHERE id = prepared_run_id));
+  END IF;
+
+  RETURN result;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.advance_processing_run(
   p_run_id UUID
 )
@@ -1759,6 +1807,62 @@ BEGIN
   END IF;
 
   RETURN public.create_or_resume_source_processing_run(selected_run.source_id, request_user, selected_run.run_mode);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.pause_processing_run(
+  p_run_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  selected_run processing_runs;
+  request_user TEXT;
+BEGIN
+  request_user := public.request_user_id(NULL);
+
+  SELECT * INTO selected_run
+  FROM processing_runs
+  WHERE id = p_run_id AND user_id = request_user
+  FOR UPDATE;
+
+  IF selected_run.id IS NULL THEN
+    RAISE EXCEPTION 'Run nao encontrada para usuario.';
+  END IF;
+
+  UPDATE processing_runs
+  SET status = CASE WHEN status = 'completed' THEN status ELSE 'paused' END,
+      cancel_requested = FALSE,
+      current_step = CASE
+        WHEN status = 'completed' THEN current_step
+        ELSE 'Tarefas pausadas pelo usuario.'
+      END,
+      updated_at = NOW()
+  WHERE id = selected_run.id;
+
+  UPDATE processing_run_stages
+  SET status = CASE WHEN status = 'completed' THEN status ELSE 'pending' END,
+      updated_at = NOW()
+  WHERE run_id = selected_run.id
+    AND user_id = request_user
+    AND status = 'running';
+
+  UPDATE ai_jobs
+  SET status = 'pending',
+      locked_by = NULL,
+      worker_id = NULL,
+      locked_until = NULL,
+      lease_expires_at = NULL,
+      updated_at = NOW()
+  WHERE run_id = selected_run.id
+    AND user_id = request_user
+    AND status = 'claimed';
+
+  PERFORM refresh_processing_run_snapshot(selected_run.id);
+  RETURN jsonb_build_object('run_id', selected_run.id, 'status', 'paused');
 END;
 $$;
 
@@ -3094,7 +3198,7 @@ AS $$
   ),
   required_rpcs(name) AS (
     VALUES
-      ('create_or_resume_source_run'), ('advance_processing_run'), ('enqueue_ai_jobs_bulk'),
+      ('create_or_resume_source_run'), ('prepare_source_run'), ('advance_processing_run'), ('pause_processing_run'), ('reanalyze_sentence'), ('enqueue_ai_jobs_bulk'),
       ('cancel_processing_run'), ('retry_failed_run_jobs'), ('claim_ai_jobs'),
       ('validate_ai_job_for_execution'), ('build_ai_job_current_target_hash'),
       ('heartbeat_ai_job'), ('get_ai_queue_health')
@@ -3979,6 +4083,193 @@ $$;
 REVOKE ALL ON FUNCTION public.apply_sentence_preparation_result(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) FROM public;
 GRANT EXECUTE ON FUNCTION public.apply_sentence_preparation_result(UUID, TEXT, TEXT, TEXT, TEXT, JSONB, JSONB, JSONB, INTEGER, INTEGER, NUMERIC, INTEGER) TO service_role;
 
+CREATE OR REPLACE FUNCTION public.reanalyze_sentence(p_sentence_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  request_user TEXT;
+  current_sentence sentences;
+  selected_run processing_runs;
+  selected_stage_id UUID;
+  inserted_job ai_jobs;
+  p_model TEXT := 'gemini-2.5-flash-lite';
+  p_prompt_version TEXT := 'prepare_sentence:2026-06-cost-v1';
+  target_hash_value TEXT;
+  input_hash_value TEXT;
+  job_payload JSONB;
+BEGIN
+  request_user := public.request_user_id(NULL);
+
+  SELECT * INTO current_sentence
+  FROM sentences
+  WHERE id = p_sentence_id
+    AND user_id = request_user
+  FOR UPDATE;
+
+  IF current_sentence.id IS NULL THEN
+    RAISE EXCEPTION 'Frase nao encontrada para usuario.';
+  END IF;
+
+  UPDATE ai_jobs
+  SET
+    status = 'obsolete',
+    error = 'Substituido por reanalise manual da frase.',
+    error_code = 'MANUAL_REANALYSIS',
+    error_kind = 'permanent',
+    locked_by = NULL,
+    locked_until = NULL,
+    lease_expires_at = NULL,
+    worker_id = NULL,
+    cancel_requested = TRUE,
+    completed_at = COALESCE(completed_at, NOW()),
+    updated_at = NOW()
+  WHERE user_id = request_user
+    AND target_type = 'sentence'
+    AND target_id = current_sentence.id
+    AND status IN ('pending','claimed','retry_wait','failed','needs_review','error','rejected');
+
+  DELETE FROM sentence_terms
+  WHERE sentence_id = current_sentence.id
+    AND user_id = request_user;
+
+  UPDATE sentences
+  SET
+    portuguese = NULL,
+    kana = NULL,
+    romaji = NULL,
+    status = 'raw',
+    translation_source = NULL,
+    reading_source = NULL,
+    terms_source = NULL,
+    prepared_at = NULL,
+    updated_at = NOW()
+  WHERE id = current_sentence.id
+    AND user_id = request_user
+  RETURNING * INTO current_sentence;
+
+  INSERT INTO processing_runs(
+    user_id,
+    source_id,
+    status,
+    run_mode,
+    current_step,
+    started_at,
+    cancel_requested
+  )
+  VALUES (
+    request_user,
+    current_sentence.source_id,
+    'running',
+    'analyze',
+    'Reanalise manual da frase em andamento.',
+    NOW(),
+    FALSE
+  )
+  RETURNING * INTO selected_run;
+
+  INSERT INTO processing_run_stages(user_id, run_id, stage, status, started_at)
+  VALUES (request_user, selected_run.id, 'sentence_preparation', 'running', NOW())
+  RETURNING id INTO selected_stage_id;
+
+  job_payload := jsonb_build_object(
+    'id', current_sentence.id,
+    'sentence', current_sentence.japanese,
+    'japanese', current_sentence.japanese,
+    'portuguese', current_sentence.portuguese,
+    'kana', current_sentence.kana,
+    'romaji', current_sentence.romaji,
+    'sourceId', current_sentence.source_id,
+    'manualReanalysis', TRUE
+  );
+
+  target_hash_value := encode(public.digest(jsonb_build_object(
+    'targetType', 'sentence',
+    'targetId', current_sentence.id,
+    'payload', jsonb_build_object(
+      'id', current_sentence.id,
+      'sentence', current_sentence.japanese,
+      'japanese', current_sentence.japanese,
+      'portuguese', current_sentence.portuguese,
+      'kana', current_sentence.kana,
+      'romaji', current_sentence.romaji,
+      'sourceId', current_sentence.source_id
+    ),
+    'promptVersion', p_prompt_version,
+    'model', p_model
+  )::text, 'sha256'::text), 'hex');
+
+  input_hash_value := encode(public.digest(jsonb_build_object(
+    'type', 'prepare_sentence',
+    'targetType', 'sentence',
+    'targetId', current_sentence.id,
+    'japanese', current_sentence.japanese,
+    'portuguese', current_sentence.portuguese,
+    'kana', current_sentence.kana,
+    'romaji', current_sentence.romaji,
+    'runId', selected_run.id,
+    'manualReanalysis', TRUE,
+    'promptVersion', p_prompt_version,
+    'model', p_model
+  )::text, 'sha256'::text), 'hex');
+
+  INSERT INTO ai_jobs(
+    user_id,
+    run_id,
+    stage_id,
+    stage,
+    type,
+    target_type,
+    target_id,
+    status,
+    priority,
+    target_hash,
+    input_hash,
+    job_key,
+    prompt_version,
+    model_version,
+    model,
+    payload,
+    input,
+    max_attempts,
+    current_step
+  )
+  VALUES (
+    request_user,
+    selected_run.id,
+    selected_stage_id,
+    'sentence_preparation',
+    'prepare_sentence',
+    'sentence',
+    current_sentence.id,
+    'pending',
+    400,
+    target_hash_value,
+    input_hash_value,
+    'prepare_sentence:sentence:' || current_sentence.id || ':manual:' || input_hash_value,
+    p_prompt_version,
+    p_model,
+    p_model,
+    job_payload,
+    job_payload,
+    3,
+    'Aguardando worker para reanalise manual.'
+  )
+  RETURNING * INTO inserted_job;
+
+  PERFORM public.refresh_processing_run_snapshot(selected_run.id);
+
+  RETURN jsonb_build_object(
+    'run_id', selected_run.id,
+    'job_id', inserted_job.id,
+    'sentence_id', current_sentence.id,
+    'status', inserted_job.status
+  );
+END;
+$$;
+
 GRANT EXECUTE ON FUNCTION public.get_ai_queue_summary() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_source_lexical_integrity_summary(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.reset_source_lexical_analysis(UUID, TEXT) TO authenticated;
@@ -3997,7 +4288,10 @@ REVOKE ALL ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.cancel_ai_job(UUID, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) FROM public;
 REVOKE ALL ON FUNCTION public.create_or_resume_source_run(UUID, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.prepare_source_run(UUID, TEXT) FROM public;
 REVOKE ALL ON FUNCTION public.advance_processing_run(UUID) FROM public;
+REVOKE ALL ON FUNCTION public.pause_processing_run(UUID) FROM public;
+REVOKE ALL ON FUNCTION public.reanalyze_sentence(UUID) FROM public;
 REVOKE ALL ON FUNCTION public.cancel_processing_run(UUID) FROM public;
 REVOKE ALL ON FUNCTION public.retry_failed_run_jobs(UUID) FROM public;
 REVOKE ALL ON FUNCTION public.mark_ai_job_obsolete(UUID, TEXT, TEXT) FROM public;
@@ -4029,7 +4323,10 @@ GRANT EXECUTE ON FUNCTION public.cancel_all_ai_jobs_for_user(TEXT) TO authentica
 GRANT EXECUTE ON FUNCTION public.cancel_ai_job(UUID, TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.retry_ai_jobs(TEXT, UUID, UUID, UUID) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.create_or_resume_source_run(UUID, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.prepare_source_run(UUID, TEXT) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.advance_processing_run(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.pause_processing_run(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.reanalyze_sentence(UUID) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.cancel_processing_run(UUID) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.retry_failed_run_jobs(UUID) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.mark_ai_job_obsolete(UUID, TEXT, TEXT) TO service_role;

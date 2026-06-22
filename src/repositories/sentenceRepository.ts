@@ -5,6 +5,13 @@ import { chunkArray, getUserId, isE2EMockMode, normalizeTagsForUpdate } from './
 
 const SENTENCE_SELECT = 'id,source_id,user_id,order_index,start_time,end_time,japanese,japanese_key,portuguese,kana,romaji,status,tags,prepared_at,translation_source,reading_source,terms_source,created_at,updated_at';
 
+export type SentenceReanalysisResult = {
+  run_id: string;
+  job_id: string;
+  sentence_id: string;
+  status: string;
+};
+
 export class SentenceRepository {
   static async getById(id: string): Promise<Sentence | null> {
     if (isE2EMockMode()) return defaultMockSentences.find((s) => s.id === id) || null;
@@ -128,6 +135,20 @@ export class SentenceRepository {
       throw new Error(`Erro do Supabase ao atualizar frase: ${error.message}`);
     }
     return data;
+  }
+
+  static async reanalyzeWithAi(id: string): Promise<SentenceReanalysisResult> {
+    if (!isSupabaseConfigured) {
+      throw new Error('Supabase nao configurado.');
+    }
+    const { data, error } = await supabase!.rpc('reanalyze_sentence', {
+      p_sentence_id: id,
+    });
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao reanalisar frase: ${error.message}`);
+    }
+    return data as SentenceReanalysisResult;
   }
 
   static async delete(id: string): Promise<boolean> {

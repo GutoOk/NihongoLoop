@@ -27,10 +27,15 @@ const AI_JOB_LIST_SELECT = [
   'priority',
   'input',
   'payload',
+  'result',
+  'raw_result',
   'input_hash',
   'error',
   'error_code',
   'error_kind',
+  'error_structured',
+  'logs',
+  'current_step',
   'attempts',
   'max_attempts',
   'model',
@@ -88,6 +93,21 @@ export class AiJobRepository {
       throw new Error(`Erro do Supabase ao carregar jobs do processamento: ${error.message}`);
     }
     return (data || []) as unknown as AiJob[];
+  }
+
+  static async getById(id: string): Promise<AiJob | null> {
+    if (!isSupabaseConfigured) return null;
+    const { data, error } = await supabase!
+      .from('ai_jobs')
+      .select(AI_JOB_LIST_SELECT)
+      .eq('id', id)
+      .eq('user_id', getUserId())
+      .maybeSingle();
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao carregar job: ${error.message}`);
+    }
+    return (data || null) as unknown as AiJob | null;
   }
 
   static async getGlobalSummary(): Promise<AiQueueSummary> {
