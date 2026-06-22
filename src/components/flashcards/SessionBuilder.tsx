@@ -1,12 +1,14 @@
 import React, { useState } from "react";
-import { Zap, Save, Check } from "lucide-react";
-import { Source } from "../../types";
+import { Search, Zap, Save, Check } from "lucide-react";
+import { DictionaryEntry, Sentence, Source } from "../../types";
 import { CardState } from "../../repositories/utils";
 import { SessionConfig, CardMode, SessionOrder, FlashcardSettings } from "../../services/flashcardService";
 import { STATE_META } from "./FlashcardAtoms";
 
 interface BuilderProps {
   sources: Source[];
+  entries: DictionaryEntry[];
+  sentences: Sentence[];
   types: string[];
   levels: string[];
   settings: FlashcardSettings;
@@ -27,7 +29,8 @@ const ORDERS: { value: SessionOrder; label: string }[] = [
   { value: "random", label: "Aleatório" },
 ];
 
-export default function SessionBuilder({ sources, types, levels, settings, onStart, onSaveDeck }: BuilderProps) {
+export default function SessionBuilder({ sources, entries, sentences, types, levels, settings, onStart, onSaveDeck }: BuilderProps) {
+  const [deckKind, setDeckKind] = useState<"words" | "sentences">("words");
   const [filterBy, setFilterBy] = useState<"all" | "source" | "type" | "level">("all");
   const [sourceId, setSourceId] = useState("");
   const [type, setType] = useState("");
@@ -42,8 +45,14 @@ export default function SessionBuilder({ sources, types, levels, settings, onSta
   const [showSave, setShowSave] = useState(false);
   const [deckName, setDeckName] = useState("");
   const [savedFlash, setSavedFlash] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selectedEntryIds, setSelectedEntryIds] = useState<string[]>([]);
+  const [selectedSentenceIds, setSelectedSentenceIds] = useState<string[]>([]);
 
   const buildConfig = (): SessionConfig => ({
+    deckKind,
+    entryIds: deckKind === "words" && selectedEntryIds.length ? selectedEntryIds : undefined,
+    sentenceIds: deckKind === "sentences" && selectedSentenceIds.length ? selectedSentenceIds : undefined,
     sourceId: filterBy === "source" ? sourceId || undefined : undefined,
     type: filterBy === "type" ? type || undefined : undefined,
     jlpt_level: filterBy === "level" ? level || undefined : undefined,
@@ -57,6 +66,8 @@ export default function SessionBuilder({ sources, types, levels, settings, onSta
 
   const handleSave = () => {
     if (!deckName.trim()) return;
+    if (deckKind === "words" && selectedEntryIds.length === 0) return;
+    if (deckKind === "sentences" && selectedSentenceIds.length === 0) return;
     onSaveDeck(deckName.trim(), buildConfig());
     setSavedFlash(true);
     setShowSave(false);
@@ -64,9 +75,103 @@ export default function SessionBuilder({ sources, types, levels, settings, onSta
     setTimeout(() => setSavedFlash(false), 1800);
   };
 
+  const filteredEntries = entries
+    .filter((entry) => {
+      const q = search.trim().toLowerCase();
+      if (!q) return true;
+      return [entry.lemma, entry.kana, entry.romaji, entry.main_meaning, entry.type, entry.jlpt_level]
+        .some((value) => String(value || "").toLowerCase().includes(q));
+    })
+    .slice(0, 80);
+  const filteredSentences = sentences
+    .filter((sentence) => {
+      const q = search.trim().toLowerCase();
+      if (!q) return true;
+      return [sentence.japanese, sentence.kana, sentence.romaji, sentence.portuguese]
+        .some((value) => String(value || "").toLowerCase().includes(q));
+    })
+    .slice(0, 80);
+  const selectedCount = deckKind === "words" ? selectedEntryIds.length : selectedSentenceIds.length;
+  const toggleSelected = (id: string) => {
+    if (deckKind === "words") {
+      setSelectedEntryIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+    } else {
+      setSelectedSentenceIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+    }
+  };
+
   return (
     <div className="flex-1 overflow-auto p-4 space-y-4">
+      <div className="bg-white rounded-2xl border border-[#E5E5E7] p-4 space-y-3">
+        <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Tipo de baralho</span>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setDeckKind("words")}
+            className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-wide border-2 transition-all ${deckKind === "words" ? "border-indigo-500 bg-indigo-50 text-indigo-700" : "border-gray-200 text-gray-500 bg-white"}`}
+          >
+            Palavras
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeckKind("sentences")}
+            className={`py-2.5 rounded-xl text-xs font-black uppercase tracking-wide border-2 transition-all ${deckKind === "sentences" ? "border-indigo-500 bg-indigo-50 text-indigo-700" : "border-gray-200 text-gray-500 bg-white"}`}
+          >
+            Frases
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-[#E5E5E7] p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+            {deckKind === "words" ? "Palavras do baralho" : "Frases do baralho"}
+          </span>
+          <span className="text-[10px] font-black text-indigo-600">{selectedCount} selecionada(s)</span>
+        </div>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-300" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={deckKind === "words" ? "Buscar palavra, leitura ou significado" : "Buscar frase ou tradução"}
+            className="form-input pl-9"
+          />
+        </div>
+        <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+          {deckKind === "words" ? (
+            filteredEntries.map((entry) => {
+              const checked = selectedEntryIds.includes(entry.id);
+              return (
+                <label key={entry.id} className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer ${checked ? "border-indigo-200 bg-indigo-50" : "border-gray-100 bg-white"}`}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleSelected(entry.id)} className="mt-1 h-4 w-4 rounded text-indigo-600" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-black text-slate-900">{entry.lemma}</span>
+                    <span className="block text-[10px] font-bold text-slate-400">{entry.kana || entry.romaji || entry.type}</span>
+                    <span className="block text-xs text-slate-600 truncate">{entry.main_meaning || "Sem significado"}</span>
+                  </span>
+                </label>
+              );
+            })
+          ) : (
+            filteredSentences.map((sentence) => {
+              const checked = selectedSentenceIds.includes(sentence.id);
+              return (
+                <label key={sentence.id} className={`flex items-start gap-3 rounded-xl border p-3 cursor-pointer ${checked ? "border-indigo-200 bg-indigo-50" : "border-gray-100 bg-white"}`}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleSelected(sentence.id)} className="mt-1 h-4 w-4 rounded text-indigo-600" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-black text-slate-900">{sentence.japanese}</span>
+                    <span className="block text-xs text-slate-600 truncate">{sentence.portuguese || "Sem tradução"}</span>
+                  </span>
+                </label>
+              );
+            })
+          )}
+        </div>
+      </div>
+
       {/* Filter scope */}
+      {deckKind === "words" && (
       <div className="bg-white rounded-2xl border border-[#E5E5E7] p-4 space-y-3">
         <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Escopo</span>
         <select className="form-select" value={filterBy} onChange={(e) => setFilterBy(e.target.value as any)}>
@@ -94,8 +199,10 @@ export default function SessionBuilder({ sources, types, levels, settings, onSta
           </select>
         )}
       </div>
+      )}
 
       {/* States */}
+      {deckKind === "words" && (
       <div className="bg-white rounded-2xl border border-[#E5E5E7] p-4 space-y-3">
         <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Estados dos cards</span>
         <p className="text-[10px] text-gray-400 -mt-1">Vazio = todos os estados</p>
@@ -118,6 +225,7 @@ export default function SessionBuilder({ sources, types, levels, settings, onSta
           <span className="text-xs font-bold text-gray-700">Apenas favoritos</span>
         </label>
       </div>
+      )}
 
       {/* Direction */}
       <div className="bg-white rounded-2xl border border-[#E5E5E7] p-4 space-y-3">
@@ -178,7 +286,7 @@ export default function SessionBuilder({ sources, types, levels, settings, onSta
             onKeyDown={(e) => e.key === "Enter" && handleSave()} />
           <div className="flex gap-2">
             <button onClick={() => setShowSave(false)} className="flex-1 py-2.5 text-xs bg-gray-50 hover:bg-gray-100 font-bold border border-gray-200 text-slate-500 rounded-xl uppercase tracking-wide">Cancelar</button>
-            <button onClick={handleSave} disabled={!deckName.trim()}
+            <button onClick={handleSave} disabled={!deckName.trim() || selectedCount === 0}
               className="flex-1 py-2.5 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 font-bold text-white rounded-xl flex items-center justify-center gap-1 uppercase tracking-wide">
               <Save className="w-3.5 h-3.5" /> Salvar
             </button>

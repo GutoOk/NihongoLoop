@@ -20,7 +20,8 @@ vi.mock('../../repositories', () => ({
     deleteDictionaryProgress: vi.fn()
   },
   SentenceRepository: {
-    getBySourceId: vi.fn()
+    getBySourceId: vi.fn(),
+    getPage: vi.fn().mockResolvedValue([])
   },
   TermRepository: {
     getBySentences: vi.fn()

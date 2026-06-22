@@ -22,17 +22,19 @@ import SessionSummary from "./flashcards/SessionSummary";
 import FlashcardInsights from "./flashcards/FlashcardInsights";
 import TutorView from "./flashcards/TutorView";
 import { analyzeLearner, TutorAction } from "../services/tutorService";
+import { AppNavigate } from "../navigation";
 
 type View = "hub" | "builder" | "session" | "summary" | "insights" | "tutor";
 
 const RATING_KEYS = ["again", "hard", "good", "easy"] as const;
 
-export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
+export default function FlashcardScreen({ onBack, onNavigate }: { onBack: () => void; onNavigate?: AppNavigate }) {
   const { showAlert } = useModal();
 
   const [dictionary, setDictionary] = useState<DictionaryEntry[]>([]);
   const [allProgress, setAllProgress] = useState<DictionaryProgress[]>([]);
   const [sources, setSources] = useState<Source[]>([]);
+  const [sentences, setSentences] = useState<Sentence[]>([]);
   const [types, setTypes] = useState<string[]>([]);
   const [levels, setLevels] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,15 +55,17 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
 
   const loadData = async () => {
     setLoading(true);
-    const [entries, progress, srcs, flashcardData] = await Promise.all([
+    const [entries, progress, srcs, sents, flashcardData] = await Promise.all([
       DictionaryRepository.getAll(), // full deck (getPage is capped at 200)
       ProgressRepository.getAllDictionaryProgress(),
       SourceRepository.getAll(),
+      SentenceRepository.getPage(0, 500),
       FlashcardStore.hydrateRemote(),
     ]);
     setDictionary(entries);
     setAllProgress(progress);
     setSources(srcs);
+    setSentences(sents);
     setSettings(flashcardData.settings);
     setDecks(flashcardData.decks);
     setTypes(Array.from(new Set(entries.map((e) => e.type).filter(Boolean))) as string[]);
@@ -88,6 +92,7 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
 
   // ─── Queue construction ──────────────────────────────────────────────────────
   const resolveAllowedIds = async (config: SessionConfig): Promise<Set<string> | null> => {
+    if (config.entryIds?.length) return new Set(config.entryIds);
     if (!config.sourceId) return null;
     try {
       return new Set(await TermRepository.getDictionaryEntryIdsBySourceId(config.sourceId));
@@ -100,6 +105,27 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   };
 
   const startSession = useCallback(async (config: SessionConfig) => {
+    if (config.deckKind === "sentences") {
+      if (!config.sentenceIds?.length) {
+        showAlert("Baralho vazio", "Escolha ao menos uma frase para estudar.");
+        return;
+      }
+      if (!onNavigate) {
+        showAlert("Nao foi possivel iniciar", "Este baralho de frases precisa do reprodutor de estudo.");
+        return;
+      }
+      onNavigate("study_player", {
+        config: {
+          entityType: "sentence",
+          targetType: "custom_sentence_deck",
+          sentenceIds: config.sentenceIds,
+          limit: config.sentenceIds.length,
+          order: config.order || "original",
+          studyMode: "jp-pt",
+        },
+      });
+      return;
+    }
     const allowedEntryIds = await resolveAllowedIds(config);
     const newIntroducedToday = FlashcardStore.getTodayCounts().newCards;
     let queue = buildQueue({ entries: dictionary, progressMap, config, newIntroducedToday, allowedEntryIds });
@@ -121,11 +147,28 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
     setSessionMode(config.mode);
     setSessionNonce((n) => n + 1);
     setView("session");
-  }, [dictionary, progressMap, showAlert]);
+  }, [dictionary, onNavigate, progressMap, showAlert]);
 
   const handleQuickStart = useCallback((mode: QuickMode) => {
     startSession(quickModeConfig(mode, settings));
   }, [settings, startSession]);
+
+  const handleStartDeck = useCallback((deck: CustomDeck) => {
+    if (deck.config.deckKind === "sentences" && deck.config.sentenceIds?.length && onNavigate) {
+      onNavigate("study_player", {
+        config: {
+          entityType: "sentence",
+          targetType: "custom_sentence_deck",
+          sentenceIds: deck.config.sentenceIds,
+          limit: deck.config.sentenceIds.length,
+          order: deck.config.order || "original",
+          studyMode: "jp-pt",
+        },
+      });
+      return;
+    }
+    startSession(deck.config);
+  }, [onNavigate, startSession]);
 
   // ─── Runner callbacks ────────────────────────────────────────────────────────
   const onGrade = useCallback(async (item: CardItem, rating: FSRSRating) => {
@@ -298,7 +341,7 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
               decks={decks}
               tip={tip}
               onQuickStart={handleQuickStart}
-              onStartDeck={(deck) => startSession(deck.config)}
+              onStartDeck={handleStartDeck}
               onDeleteDeck={handleDeleteDeck}
               onCustomize={() => setView("builder")}
               onInsights={() => setView("insights")}
@@ -315,6 +358,8 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
           {view === "builder" && (
             <SessionBuilder
               sources={sources} types={types} levels={levels} settings={settings}
+              entries={dictionary}
+              sentences={sentences}
               onStart={startSession}
               onSaveDeck={handleSaveDeck}
             />

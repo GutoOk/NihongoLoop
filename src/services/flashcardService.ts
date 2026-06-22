@@ -30,6 +30,9 @@ export interface FlashcardSettings {
 
 export interface SessionConfig {
   // filtros
+  deckKind?: "words" | "sentences";
+  entryIds?: string[];
+  sentenceIds?: string[];
   sourceId?: string;
   type?: string;
   jlpt_level?: string;

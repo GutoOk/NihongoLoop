@@ -337,7 +337,10 @@ export default function StudyPlayerScreen({
     if (config.entityType === "word") {
       let entries = (await DictionaryRepository.getPage({ limit: Math.min(Math.max(config.limit || 1000, 100), 1000) })).entries;
       let limitForWords = config.limit;
-      if (config.targetType === "specific" && config.wordId) {
+      if (Array.isArray(config.entryIds) && config.entryIds.length > 0) {
+        entries = await DictionaryRepository.getByIds(config.entryIds);
+        limitForWords = config.entryIds.length;
+      } else if (config.targetType === "specific" && config.wordId) {
         entries = entries.filter((e) => e.id === config.wordId);
       } else {
         if (config.targetType === "pending")
@@ -490,7 +493,11 @@ export default function StudyPlayerScreen({
     } else {
       // sentences
       let sents: Sentence[] = [];
-      if (
+      if (Array.isArray(config.sentenceIds) && config.sentenceIds.length > 0) {
+        const orderedIds = config.sentenceIds as string[];
+        const byId = new Map((await SentenceRepository.getByIds(orderedIds)).map((sentence) => [sentence.id, sentence]));
+        sents = orderedIds.map((id) => byId.get(id)).filter((item): item is Sentence => Boolean(item));
+      } else if (
         (config.targetType === "source" ||
           config.targetType === "standard_flow") &&
         config.sourceId

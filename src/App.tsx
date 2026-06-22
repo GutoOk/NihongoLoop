@@ -341,7 +341,7 @@ export default function App() {
 
           {nav.screen === "flashcards" && (
             <div key="flashcards" className="flex-1 flex flex-col">
-              <FlashcardScreen onBack={handleGoBack} />
+              <FlashcardScreen onBack={handleGoBack} onNavigate={handleNavigate} />
             </div>
           )}
 

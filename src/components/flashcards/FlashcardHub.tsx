@@ -162,7 +162,7 @@ export default function FlashcardHub({
             className="w-full border-2 border-dashed border-gray-200 rounded-2xl p-4 text-center hover:border-indigo-300 hover:bg-indigo-50/30 transition-colors">
             <SlidersHorizontal className="w-5 h-5 text-gray-300 mx-auto mb-1" />
             <p className="text-xs font-bold text-gray-400">Crie baralhos personalizados</p>
-            <p className="text-[10px] text-gray-400 mt-0.5">Filtros, direção e limites salvos</p>
+            <p className="text-[10px] text-gray-400 mt-0.5">Escolha palavras ou frases para estudar depois</p>
           </button>
         ) : (
           <div className="space-y-2">
@@ -177,8 +177,10 @@ export default function FlashcardHub({
                     <div>
                       <p className="text-sm font-black text-gray-900 leading-tight">{deck.name}</p>
                       <p className="text-[10px] text-gray-400 font-medium">
-                        {deck.config.mode === "ja_pt" ? "JP→PT" : deck.config.mode === "pt_ja" ? "PT→JP" : "Áudio"}
-                        {" · "}{deck.config.order === "due" ? "por vencimento" : deck.config.order}
+                        {deck.config.deckKind === "sentences"
+                          ? `${deck.config.sentenceIds?.length || 0} frases`
+                          : `${deck.config.entryIds?.length || 0} palavras`}
+                        {" · "}{deck.config.deckKind === "sentences" ? "fonte de estudo" : deck.config.mode === "ja_pt" ? "JP→PT" : deck.config.mode === "pt_ja" ? "PT→JP" : "Áudio"}
                       </p>
                     </div>
                   </button>
