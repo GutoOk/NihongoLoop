@@ -141,6 +141,31 @@ export function MiniBars({ values, labels, color = "#6366f1" }: { values: number
   );
 }
 
+// ─── Competency bar ───────────────────────────────────────────────────────────
+
+const LEVEL_COLORS: Record<string, { bar: string; text: string; word: string }> = {
+  low:   { bar: "#ef4444", text: "text-rose-600",    word: "A desenvolver" },
+  mid:   { bar: "#f59e0b", text: "text-amber-600",   word: "Em progresso" },
+  good:  { bar: "#0ea5e9", text: "text-sky-600",     word: "Boa" },
+  great: { bar: "#10b981", text: "text-emerald-600", word: "Excelente" },
+};
+
+export function CompetencyBar({ label, score, level, hint }: { label: string; score: number; level: string; hint: string }) {
+  const c = LEVEL_COLORS[level] || LEVEL_COLORS.mid;
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between">
+        <span className="text-xs font-black text-gray-700">{label}</span>
+        <span className={`text-[10px] font-black uppercase tracking-wide ${c.text}`}>{c.word}</span>
+      </div>
+      <div className="h-2 w-full rounded-full bg-gray-100 overflow-hidden">
+        <div className="h-full rounded-full transition-all duration-700" style={{ width: `${score}%`, background: c.bar }} />
+      </div>
+      <p className="text-[10px] text-gray-400 leading-tight">{hint}</p>
+    </div>
+  );
+}
+
 // ─── Stat pill ─────────────────────────────────────────────────────────────────
 
 export function StatPill({ value, label, bg, text }: { value: number | string; label: string; bg: string; text: string }) {

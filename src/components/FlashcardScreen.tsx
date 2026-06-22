@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import { ArrowLeft, BarChart3, Settings2, X } from "lucide-react";
+import { ArrowLeft, BarChart3, Settings2, GraduationCap, X } from "lucide-react";
 import {
   DictionaryRepository,
   ProgressRepository,
@@ -19,8 +19,10 @@ import SessionBuilder from "./flashcards/SessionBuilder";
 import StudyRunner, { SessionResult } from "./flashcards/StudyRunner";
 import SessionSummary from "./flashcards/SessionSummary";
 import FlashcardInsights from "./flashcards/FlashcardInsights";
+import TutorView from "./flashcards/TutorView";
+import { analyzeLearner, TutorAction } from "../services/tutorService";
 
-type View = "hub" | "builder" | "session" | "summary" | "insights";
+type View = "hub" | "builder" | "session" | "summary" | "insights" | "tutor";
 
 const RATING_KEYS = ["again", "hard", "good", "easy"] as const;
 
@@ -47,8 +49,8 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
 
   const loadData = async () => {
     setLoading(true);
-    const [{ entries }, progress, srcs] = await Promise.all([
-      DictionaryRepository.getPage({ limit: 5000 }),
+    const [entries, progress, srcs] = await Promise.all([
+      DictionaryRepository.getAll(), // full deck (getPage is capped at 200)
       ProgressRepository.getAllDictionaryProgress(),
       SourceRepository.getAll(),
     ]);
@@ -87,7 +89,15 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   const startSession = useCallback(async (config: SessionConfig) => {
     const allowedEntryIds = await resolveAllowedIds(config);
     const newIntroducedToday = FlashcardStore.getTodayCounts().newCards;
-    const queue = buildQueue({ entries: dictionary, progressMap, config, newIntroducedToday, allowedEntryIds });
+    let queue = buildQueue({ entries: dictionary, progressMap, config, newIntroducedToday, allowedEntryIds });
+    // Smart study should never dead-end: if nothing is due/new, fall back to
+    // ahead-of-schedule practice so the user can always review something.
+    if (queue.length === 0 && config.quick === "smart") {
+      queue = buildQueue({
+        entries: dictionary, progressMap, allowedEntryIds, newIntroducedToday,
+        config: { ...config, onlyDue: false, newLimit: Math.max(config.newLimit, 10) },
+      });
+    }
     if (queue.length === 0) {
       showAlert("Nada para estudar", config.onlyDue
         ? "Nenhum card vencido com esses filtros. Tente desativar 'somente vencidas' ou escolher outro modo."
@@ -149,7 +159,7 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   }, []);
 
   const onFinish = useCallback((result: SessionResult) => {
-    FlashcardStore.recordSession(result.total, result.newCount);
+    FlashcardStore.recordSession(result.total, result.newCount, result.again);
     setLastResult(result);
     setView("summary");
   }, []);
@@ -170,8 +180,31 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   const tip = useMemo(() => getStudyTip(deckStats, FlashcardStore.getStreak()), [deckStats]);
   const upcomingTomorrow = useMemo(() => forecastDueReviews(allProgress, 2)[1] ?? 0, [allProgress]);
 
+  // ─── Tutor (rule-based pedagogical analysis) ─────────────────────────────────
+  const tutorProfile = useMemo(() => analyzeLearner({
+    entries: dictionary,
+    progress: allProgress,
+    stats: deckStats,
+    settings,
+    streak: FlashcardStore.getStreak(),
+    daysStudied7: FlashcardStore.getDaysStudied(7),
+    daysStudied30: FlashcardStore.getDaysStudied(30),
+    todayReviews: FlashcardStore.getTodayCounts().reviews,
+    todayNewCards: FlashcardStore.getTodayCounts().newCards,
+    hourHistogram: FlashcardStore.getHourHistogram(),
+    recentAgainRate: FlashcardStore.getRecentAgainRate(),
+  }), [dictionary, allProgress, deckStats, settings, view]);
+
+  const handleTutorAction = useCallback((action?: TutorAction) => {
+    if (!action || action.kind === "none") return;
+    if (action.kind === "quick" && action.mode) handleQuickStart(action.mode);
+    else if (action.kind === "builder") setView("builder");
+    else if (action.kind === "settings") setShowSettings(true);
+    else if (action.kind === "insights") setView("insights");
+  }, [handleQuickStart]);
+
   const TITLES: Record<View, string> = {
-    hub: "Flashcards", builder: "Personalizar", session: "Revisão", summary: "Resumo", insights: "Progresso",
+    hub: "Flashcards", builder: "Personalizar", session: "Revisão", summary: "Resumo", insights: "Progresso", tutor: "Tutor",
   };
   const headerBack = view === "hub" ? onBack : () => setView("hub");
 
@@ -182,8 +215,9 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
         <h1 className="screen-title">{TITLES[view]}</h1>
         {view === "hub" && (
           <div className="ml-auto flex items-center gap-1">
-            <button onClick={() => setView("insights")} className="p-2 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"><BarChart3 className="w-4.5 h-4.5" /></button>
-            <button onClick={() => setShowSettings(true)} className="p-2 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors"><Settings2 className="w-4.5 h-4.5" /></button>
+            <button onClick={() => setView("tutor")} className="p-2 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors" aria-label="Tutor"><GraduationCap className="w-4.5 h-4.5" /></button>
+            <button onClick={() => setView("insights")} className="p-2 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors" aria-label="Progresso"><BarChart3 className="w-4.5 h-4.5" /></button>
+            <button onClick={() => setShowSettings(true)} className="p-2 text-gray-400 hover:text-indigo-600 rounded-lg transition-colors" aria-label="Preferências"><Settings2 className="w-4.5 h-4.5" /></button>
           </div>
         )}
       </header>
@@ -200,6 +234,7 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
               streak={FlashcardStore.getStreak()}
               todayReviews={FlashcardStore.getTodayCounts().reviews}
               dailyGoal={Math.max(1, settings.dailyNewLimit + Math.min(deckStats.due, 50))}
+              smartCount={deckStats.due + Math.min(deckStats.new, Math.max(0, settings.dailyNewLimit - FlashcardStore.getTodayCounts().newCards))}
               decks={decks}
               tip={tip}
               onQuickStart={handleQuickStart}
@@ -207,7 +242,14 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
               onDeleteDeck={handleDeleteDeck}
               onCustomize={() => setView("builder")}
               onInsights={() => setView("insights")}
+              tutorHeadline={tutorProfile.recommendations[0]?.title || tutorProfile.headline}
+              tutorTone={tutorProfile.recommendations[0]?.tone || "info"}
+              onOpenTutor={() => setView("tutor")}
             />
+          )}
+
+          {view === "tutor" && (
+            <TutorView profile={tutorProfile} onAction={handleTutorAction} />
           )}
 
           {view === "builder" && (

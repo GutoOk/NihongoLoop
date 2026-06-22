@@ -2,7 +2,9 @@ import React from "react";
 import {
   Zap, Flame, Clock, Sparkles, Star, AlertCircle, Plus, Trash2,
   SlidersHorizontal, BarChart3, Brain, BookOpen, Volume2, Moon, Shuffle, ChevronRight,
+  GraduationCap,
 } from "lucide-react";
+import { Tone } from "../../services/tutorService";
 import { CustomDeck, DeckStats, QuickMode } from "../../services/flashcardService";
 import { ProgressRing, StatPill, SegmentedBar } from "./FlashcardAtoms";
 
@@ -23,6 +25,7 @@ interface HubProps {
   streak: number;
   todayReviews: number;
   dailyGoal: number;
+  smartCount: number;
   decks: CustomDeck[];
   tip: { icon: string; title: string; text: string };
   onQuickStart: (mode: QuickMode) => void;
@@ -30,15 +33,26 @@ interface HubProps {
   onDeleteDeck: (id: string) => void;
   onCustomize: () => void;
   onInsights: () => void;
+  tutorHeadline: string;
+  tutorTone: Tone;
+  onOpenTutor: () => void;
 }
 
+const TUTOR_TONE: Record<Tone, string> = {
+  urgent: "from-rose-500 to-orange-500",
+  suggest: "from-indigo-500 to-violet-500",
+  celebrate: "from-emerald-500 to-teal-500",
+  info: "from-slate-600 to-slate-700",
+};
+
 export default function FlashcardHub({
-  stats, streak, todayReviews, dailyGoal, decks, tip,
+  stats, streak, todayReviews, dailyGoal, smartCount, decks, tip,
   onQuickStart, onStartDeck, onDeleteDeck, onCustomize, onInsights,
+  tutorHeadline, tutorTone, onOpenTutor,
 }: HubProps) {
   const TipIcon = TIP_ICONS[tip.icon] || Sparkles;
   const goalPct = dailyGoal > 0 ? Math.min(100, (todayReviews / dailyGoal) * 100) : 0;
-  const pendingTotal = stats.due + Math.min(stats.new, dailyGoal);
+  const pendingTotal = smartCount;
 
   const quickModes: { mode: QuickMode; label: string; count: number; Icon: any; cls: string }[] = [
     { mode: "due", label: "Vencidos", count: stats.due, Icon: Clock, cls: "text-amber-600 bg-amber-50 border-amber-100" },
@@ -75,6 +89,21 @@ export default function FlashcardHub({
           </div>
         </div>
       </div>
+
+      {/* Tutor banner */}
+      <button onClick={onOpenTutor}
+        className={`w-full bg-gradient-to-r ${TUTOR_TONE[tutorTone]} rounded-2xl p-0.5 shadow-sm active:scale-[0.99] transition-all`}>
+        <div className="bg-white rounded-[14px] p-3.5 flex items-center gap-3">
+          <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${TUTOR_TONE[tutorTone]} flex items-center justify-center shrink-0`}>
+            <GraduationCap className="w-4.5 h-4.5 text-white" />
+          </div>
+          <div className="flex-1 min-w-0 text-left">
+            <p className="text-[9px] font-black uppercase tracking-widest text-gray-400">Tutor inteligente</p>
+            <p className="text-xs font-black text-gray-800 leading-tight truncate">{tutorHeadline}</p>
+          </div>
+          <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
+        </div>
+      </button>
 
       {/* Smart study CTA */}
       <button onClick={() => onQuickStart("smart")}

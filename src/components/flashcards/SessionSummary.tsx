@@ -10,7 +10,6 @@ interface SummaryProps {
 }
 
 export default function SessionSummary({ result, upcomingTomorrow, onNewSession, onHome }: SummaryProps) {
-  const graded = result.again + result.hard + result.good + result.easy;
   const correct = result.hard + result.good + result.easy + result.learned;
   const accuracy = result.total > 0 ? Math.round((correct / result.total) * 100) : 0;
   const minutes = Math.floor(result.durationMs / 60000);

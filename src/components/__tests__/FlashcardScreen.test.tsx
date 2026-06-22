@@ -39,27 +39,33 @@ describe('FlashcardScreen', () => {
     { id: '3', lemma: '難しい', type: 'adjetivo_i', main_meaning: 'Difícil', jlpt_level: 'N4' }
   ];
 
-  it('filters by jlpt level', async () => {
-    vi.mocked(DictionaryRepository.getPage).mockResolvedValue({ entries: mockDictionary, total: mockDictionary.length } as any);
+  it('renders the flashcard hub with the smart-study CTA after loading', async () => {
+    vi.mocked(DictionaryRepository.getAll).mockResolvedValue(mockDictionary as any);
 
-    // Render with initially JLPT N5 selected
     render(
       <ModalProvider>
         <FlashcardScreen onBack={() => {}} />
       </ModalProvider>
     );
-    
-    // Simulate user choosing N5
+
     await waitFor(() => {
-      expect(screen.getByText(/Iniciar/i)).toBeInTheDocument();
+      expect(screen.getByText(/Estudo Rápido/i)).toBeInTheDocument();
     });
   });
 
-  it('filters globally by sourceId correctly', async () => {
-    vi.mocked(DictionaryRepository.getPage).mockResolvedValue({ entries: mockDictionary, total: mockDictionary.length } as any);
-    
-    // Simulating terms returned for a specific source
+  it('surfaces the intelligent tutor banner', async () => {
+    vi.mocked(DictionaryRepository.getAll).mockResolvedValue(mockDictionary as any);
     vi.mocked(SentenceRepository.getBySourceId).mockResolvedValue([{ id: 'sent-1' }] as any[]);
     vi.mocked(TermRepository.getBySentences).mockResolvedValue([{ dictionary_entry_id: '1' }] as any[]);
+
+    render(
+      <ModalProvider>
+        <FlashcardScreen onBack={() => {}} />
+      </ModalProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Tutor inteligente/i)).toBeInTheDocument();
+    });
   });
 });

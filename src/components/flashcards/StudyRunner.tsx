@@ -96,10 +96,18 @@ export default function StudyRunner({
     setNotesDraft(current.progress?.notes || "");
     setExample(null);
     if (settings.showExamples) loadExample(current.entry.id).then(setExample);
-    if (settings.autoplayAudio || mode === "audio_pt") {
-      setTimeout(() => SpeechService.speakJapaneseText(current.entry.lemma), 250);
-    }
+    // Speak on the front only when the Japanese is the prompt (ja_pt) or the
+    // card is audio-first. For pt_ja the Japanese is the answer → speak on flip.
+    const speakOnFront = mode === "audio_pt" || (settings.autoplayAudio && mode === "ja_pt");
+    if (speakOnFront) setTimeout(() => SpeechService.speakJapaneseText(current.entry.lemma), 250);
   }, [current?.entry.id]);
+
+  // Autoplay the answer audio after flipping in pt_ja mode (avoids spoiling it).
+  useEffect(() => {
+    if (flipped && settings.autoplayAudio && mode === "pt_ja" && current) {
+      SpeechService.speakJapaneseText(current.entry.lemma);
+    }
+  }, [flipped]);
 
   const finish = useCallback(() => {
     const s = statsRef.current;
@@ -163,6 +171,8 @@ export default function StudyRunner({
     onSetFields(current, { suspended: true });
     bumpStat("buried", 1);
     const wasLast = index >= queue.length - 1;
+    // Removing an item shifts indices, invalidating stored undo positions.
+    historyRef.current = [];
     setQueue((q) => q.filter((_, i) => i !== index));
     setFlipped(false);
     if (wasLast) setTimeout(finish, 0);

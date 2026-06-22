@@ -155,18 +155,20 @@ export function computeFSRSUpdate(existing: FSRSCardData | null, rating: FSRSRat
     }
 
   } else {
-    // Review card
+    // Review card. Guard against missing/zero stability (e.g. legacy data)
+    // so the card can't get stuck at a 1-day interval forever.
+    const S = stability > 0 ? stability : FSRS_W[2];
     const lastSeenMs = existing?.last_seen_at ? new Date(existing.last_seen_at).getTime() : now.getTime();
     const elapsedDays = (now.getTime() - lastSeenMs) / (1000 * 60 * 60 * 24);
-    const R = fsrsRetrievability(Math.max(elapsedDays, 0.001), stability || 1);
+    const R = fsrsRetrievability(Math.max(elapsedDays, 0.001), S);
 
     newDifficulty = fsrsUpdateDifficulty(difficulty, rating);
 
     if (rating === 1) {
-      newStability = fsrsForgetStability(difficulty, stability, R);
+      newStability = fsrsForgetStability(difficulty, S, R);
       newIntervalMinutes = 10;
     } else {
-      newStability = fsrsRecallStability(difficulty, stability, R, rating);
+      newStability = fsrsRecallStability(difficulty, S, R, rating);
       const days = fsrsNextIntervalDays(newStability);
       newIntervalMinutes = days * 1440;
     }

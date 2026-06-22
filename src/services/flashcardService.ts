@@ -61,7 +61,8 @@ export interface CardItem {
 
 const KEY_SETTINGS = "nihongo.fc.settings";
 const KEY_DECKS = "nihongo.fc.decks";
-const KEY_DAILY = "nihongo.fc.daily"; // { [dateISO]: { reviews: n, newCards: n } }
+const KEY_DAILY = "nihongo.fc.daily"; // { [dateISO]: { reviews, newCards, again } }
+const KEY_HOURS = "nihongo.fc.hours"; // number[24] — sessions started per hour
 
 export const DEFAULT_SETTINGS: FlashcardSettings = {
   dailyNewLimit: 20,
@@ -73,6 +74,8 @@ export const DEFAULT_SETTINGS: FlashcardSettings = {
 };
 
 const DECK_COLORS = ["indigo", "violet", "emerald", "sky", "amber", "rose", "teal", "fuchsia"];
+
+interface DailyEntry { reviews: number; newCards: number; again: number; }
 
 // ─── localStorage helpers ──────────────────────────────────────────────────────
 
@@ -139,21 +142,56 @@ export const FlashcardStore = {
     write(KEY_DECKS, this.getDecks().filter((d) => d.id !== id));
   },
 
-  // ─── Daily log (streak + heatmap + throttling) ───────────────────────────────
-  getDailyLog(): Record<string, { reviews: number; newCards: number }> {
-    return readRaw(KEY_DAILY, {} as Record<string, { reviews: number; newCards: number }>);
+  // ─── Daily log (streak + heatmap + throttling + tutor signals) ────────────────
+  getDailyLog(): Record<string, DailyEntry> {
+    return readRaw(KEY_DAILY, {} as Record<string, DailyEntry>);
   },
-  recordSession(reviews: number, newCards: number): void {
+  recordSession(reviews: number, newCards: number, again = 0): void {
     const log = this.getDailyLog();
     const k = todayKey();
-    const entry = log[k] || { reviews: 0, newCards: 0 };
+    const entry = log[k] || { reviews: 0, newCards: 0, again: 0 };
     entry.reviews += reviews;
     entry.newCards += newCards;
+    entry.again = (entry.again || 0) + again;
     log[k] = entry;
     write(KEY_DAILY, log);
+    // Hour-of-day histogram for "quando estudar".
+    const hours = this.getHourHistogram();
+    hours[new Date().getHours()] += 1;
+    write(KEY_HOURS, hours);
   },
   getTodayCounts(): { reviews: number; newCards: number } {
-    return this.getDailyLog()[todayKey()] || { reviews: 0, newCards: 0 };
+    const e = this.getDailyLog()[todayKey()];
+    return { reviews: e?.reviews || 0, newCards: e?.newCards || 0 };
+  },
+  getHourHistogram(): number[] {
+    const h = readRaw<number[]>(KEY_HOURS, []);
+    const out = new Array(24).fill(0);
+    for (let i = 0; i < 24; i++) out[i] = h[i] || 0;
+    return out;
+  },
+  /** Number of distinct days with ≥1 review within the last `days` days. */
+  getDaysStudied(days: number): number {
+    const log = this.getDailyLog();
+    let count = 0;
+    const cursor = new Date();
+    for (let i = 0; i < days; i++) {
+      if ((log[todayKey(cursor)]?.reviews || 0) > 0) count++;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+    return count;
+  },
+  /** Recent "again" rate (0-1) over the last `days` days, or null if no data. */
+  getRecentAgainRate(days = 14): number | null {
+    const log = this.getDailyLog();
+    let reviews = 0, again = 0;
+    const cursor = new Date();
+    for (let i = 0; i < days; i++) {
+      const e = log[todayKey(cursor)];
+      if (e) { reviews += e.reviews || 0; again += e.again || 0; }
+      cursor.setDate(cursor.getDate() - 1);
+    }
+    return reviews > 0 ? again / reviews : null;
   },
   /** Consecutive days (ending today or yesterday) with at least one review. */
   getStreak(): number {
@@ -283,10 +321,12 @@ export function buildQueue({
   let newItems = items.filter(isNewItem);
   let reviewItems = items.filter((i) => (config.onlyDue ? isDueItem(i) : i.state !== "new"));
 
-  // 5. Apply daily new-card throttle.
-  const remainingNewBudget = config.quick === "new"
-    ? config.newLimit
-    : Math.max(0, config.newLimit - newIntroducedToday);
+  // 5. Apply daily new-card throttle. Only the automatic "smart" session honors
+  //    the daily-introduced budget; explicit sessions (builder, quick modes) use
+  //    the configured limit directly so the user always gets what they asked for.
+  const remainingNewBudget = config.quick === "smart"
+    ? Math.max(0, config.newLimit - newIntroducedToday)
+    : config.newLimit;
   const newCap = Math.min(newItems.length, Math.max(0, remainingNewBudget));
 
   // 6. Order each bucket.
@@ -370,7 +410,8 @@ export function quickModeConfig(mode: QuickMode, settings: FlashcardSettings): S
     case "leech":
       return { ...base, newLimit: 0, onlyDue: false, reviewLimit: 0, label: "Palavras Difíceis" };
     case "favorite":
-      return { ...base, favoritesOnly: true, newLimit: 0, onlyDue: false, reviewLimit: 0, label: "Favoritos" };
+      // Show every favorite regardless of state (incl. brand-new ones) or due date.
+      return { ...base, favoritesOnly: true, newLimit: 9999, onlyDue: false, reviewLimit: 0, label: "Favoritos" };
     default:
       return base;
   }
