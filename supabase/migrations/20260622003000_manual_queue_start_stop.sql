@@ -42,7 +42,7 @@ BEGIN
       AND COALESCE(pr.cancel_requested, FALSE) = FALSE
       AND (j.retry_at IS NULL OR j.retry_at <= NOW())
     ORDER BY j.priority DESC, j.created_at ASC
-    FOR UPDATE SKIP LOCKED
+    FOR UPDATE OF j SKIP LOCKED
   ),
   candidates AS (
     SELECT

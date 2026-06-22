@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Play,
@@ -144,11 +144,16 @@ export default function ReadingScreen({
   const [visibleCount, setVisibleCount] = useState(25);
   const [totalSentences, setTotalSentences] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const reanalysisSessionRef = useRef(0);
+  const reanalysisLogTextRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const appendReanalysisLog = (message: string, data?: unknown) => {
+  const appendReanalysisLog = (message: string, data?: unknown, sessionId = reanalysisSessionRef.current) => {
     setReanalysisLog((current) => ({
       ...current,
-      lines: [...current.lines, formatLogEntry(message, data)],
+      lines:
+        sessionId === reanalysisSessionRef.current
+          ? [...current.lines, formatLogEntry(message, data)]
+          : current.lines,
     }));
   };
 
@@ -157,8 +162,28 @@ export default function ReadingScreen({
     try {
       await navigator.clipboard.writeText(text);
     } catch {
-      appendReanalysisLog("Nao foi possivel copiar automaticamente; selecione o texto do log e copie manualmente.");
+      const textarea = reanalysisLogTextRef.current;
+      if (!textarea) {
+        appendReanalysisLog("Nao foi possivel copiar automaticamente; selecione o texto do log e copie manualmente.");
+        return;
+      }
+      textarea.focus();
+      textarea.select();
+      const copied = document.execCommand("copy");
+      if (!copied) {
+        appendReanalysisLog("Nao foi possivel copiar automaticamente; selecione o texto do log e copie manualmente.");
+      }
     }
+  };
+
+  const closeReanalysisLog = () => {
+    reanalysisSessionRef.current += 1;
+    setReanalyzingId(null);
+    setReanalysisLog((current) => ({
+      ...current,
+      open: false,
+      finished: true,
+    }));
   };
 
   const handleEditClick = (sent: Sentence) => {
@@ -218,7 +243,9 @@ export default function ReadingScreen({
   };
 
   const handleReanalyzeSentence = async (sentence: Sentence) => {
-    if (reanalyzingId || bulkProcessing) return;
+    if (bulkProcessing) return;
+    const sessionId = reanalysisSessionRef.current + 1;
+    reanalysisSessionRef.current = sessionId;
     setReanalyzingId(sentence.id);
     setReanalysisLog({
       open: true,
@@ -248,22 +275,25 @@ export default function ReadingScreen({
 
     try {
       const queued = await SentenceRepository.reanalyzeWithAi(sentence.id);
+      if (sessionId !== reanalysisSessionRef.current) return;
       setReanalysisLog((current) => ({
         ...current,
         runId: queued.run_id,
         jobId: queued.job_id,
       }));
-      appendReanalysisLog("Job dedicado de reanalise enfileirado.", queued);
+      appendReanalysisLog("Job dedicado de reanalise enfileirado.", queued, sessionId);
 
       let lastSignature = "";
       let reachedTerminalStatus = false;
-      for (let attempt = 0; attempt < 90; attempt++) {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        if (sessionId !== reanalysisSessionRef.current) return;
         const job = await AiJobRepository.getById(queued.job_id);
+        if (sessionId !== reanalysisSessionRef.current) return;
         if (!job) {
           appendReanalysisLog("Job ainda nao apareceu na consulta do cliente.", {
             job_id: queued.job_id,
             poll: attempt + 1,
-          });
+          }, sessionId);
         } else {
           const snapshot = compactJobSnapshot(job);
           const signature = JSON.stringify({
@@ -279,8 +309,18 @@ export default function ReadingScreen({
             updated_at: job.updated_at,
           });
           if (signature !== lastSignature) {
-            appendReanalysisLog(`Job ${job.status}.`, snapshot);
+            appendReanalysisLog(`Job ${job.status}.`, snapshot, sessionId);
             lastSignature = signature;
+          }
+
+          if (job.status === "pending" && attempt > 0 && attempt % 5 === 0) {
+            const run = await ProcessingRunRepository.getRun(queued.run_id);
+            if (sessionId !== reanalysisSessionRef.current) return;
+            appendReanalysisLog("Job ainda pending; aguardando worker consumir a fila.", {
+              poll: attempt + 1,
+              run,
+              diagnostico: "Se continuar pending, verifique se o worker esta ativo/deployado com a schema version atual.",
+            }, sessionId);
           }
 
           if (REANALYSIS_TERMINAL_STATUSES.has(job.status)) {
@@ -295,30 +335,42 @@ export default function ReadingScreen({
       if (!reachedTerminalStatus) {
         appendReanalysisLog("Acompanhamento encerrado por tempo limite; o job pode continuar rodando no worker.", {
           job_id: queued.job_id,
-          polling_seconds: 180,
-        });
+          polling_seconds: 120,
+        }, sessionId);
       }
 
+      if (sessionId !== reanalysisSessionRef.current) return;
       await loadData(true);
       const [updatedSentence, updatedTerms] = await Promise.all([
         SentenceRepository.getById(sentence.id),
         TermRepository.getBySentences([sentence.id]),
       ]);
+      if (sessionId !== reanalysisSessionRef.current) return;
       appendReanalysisLog("Dados atuais da frase apos reanalise.", {
         sentence: updatedSentence,
         terms: normalizeTermOffsets(updatedSentence?.japanese || sentence.japanese, updatedTerms),
-      });
-      setReanalysisLog((current) => ({ ...current, finished: true }));
+      }, sessionId);
+      setReanalysisLog((current) => (
+        sessionId === reanalysisSessionRef.current
+          ? { ...current, finished: true }
+          : current
+      ));
     } catch (e: any) {
       console.error(e);
       appendReanalysisLog("Falha ao reanalisar frase.", {
         message: e?.message || String(e),
         stack: e?.stack,
-      });
-      setReanalysisLog((current) => ({ ...current, finished: true }));
+      }, sessionId);
+      setReanalysisLog((current) => (
+        sessionId === reanalysisSessionRef.current
+          ? { ...current, finished: true }
+          : current
+      ));
       showAlert("Erro", `Falha ao re-analisar frase: ${e.message || e}`);
     } finally {
-      setReanalyzingId(null);
+      if (sessionId === reanalysisSessionRef.current) {
+        setReanalyzingId(null);
+      }
     }
   };
 
@@ -793,7 +845,7 @@ export default function ReadingScreen({
                 <div className="flex gap-1">
                   <button
                     onClick={() => handleReanalyzeSentence(sent)}
-                    disabled={reanalyzingId !== null}
+                    disabled={bulkProcessing}
                     className={`p-1.5 rounded-full ${reanalyzingId === sent.id ? "bg-indigo-50 text-indigo-600" : "text-gray-300 hover:bg-gray-50"}`}
                     style={{ transition: "all 0.2s" }}
                     title="Re-analisar e Corrigir Card com IA"
@@ -939,9 +991,7 @@ export default function ReadingScreen({
       {reanalysisLog.open && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
-          onClick={() =>
-            setReanalysisLog((current) => ({ ...current, open: false }))
-          }
+          onClick={closeReanalysisLog}
         >
           <div
             className="bg-white rounded-2xl w-full max-w-3xl max-h-[85vh] shadow-2xl flex flex-col overflow-hidden"
@@ -974,12 +1024,7 @@ export default function ReadingScreen({
                 </button>
                 <button
                   type="button"
-                  onClick={() =>
-                    setReanalysisLog((current) => ({
-                      ...current,
-                      open: false,
-                    }))
-                  }
+                  onClick={closeReanalysisLog}
                   className="p-2 rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700"
                   aria-label="Fechar log"
                 >
@@ -988,6 +1033,7 @@ export default function ReadingScreen({
               </div>
             </div>
             <textarea
+              ref={reanalysisLogTextRef}
               readOnly
               value={reanalysisLog.lines.join("\n\n")}
               className="w-full flex-1 min-h-[420px] resize-none bg-slate-950 text-slate-50 p-4 text-[11px] leading-relaxed font-mono outline-none"
