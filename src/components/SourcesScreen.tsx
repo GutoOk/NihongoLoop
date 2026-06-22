@@ -146,8 +146,12 @@ export default function SourcesScreen({
   };
 
   const openSourceGroups = (source: Source) => {
-    setEditingSource(source);
-    setDraftGroupIds(membershipsBySource.get(source.id) || []);
+    if (editingSource?.id === source.id) {
+      setEditingSource(null);
+    } else {
+      setEditingSource(source);
+      setDraftGroupIds(membershipsBySource.get(source.id) || []);
+    }
   };
 
   const saveSourceGroups = async () => {
@@ -376,7 +380,7 @@ export default function SourcesScreen({
                     <button
                       type="button"
                       onClick={() => openSourceGroups(source)}
-                      className="w-full flex items-center justify-center gap-2 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-black uppercase tracking-widest py-3 rounded-xl transition-colors"
+                      className={`w-full flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest py-3 rounded-xl transition-colors ${editingSource?.id === source.id ? "bg-indigo-600 text-white" : "bg-slate-50 hover:bg-slate-100 text-slate-600"}`}
                     >
                       <Folder className="w-4 h-4" /> Organizar
                     </button>
@@ -388,6 +392,43 @@ export default function SourcesScreen({
                       <BookOpen className="w-4 h-4" /> Abrir
                     </button>
                   </div>
+
+                  {editingSource?.id === source.id && (
+                    <div className="border-t border-slate-100 pt-3 mt-1 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Grupos de estudo</span>
+                      </div>
+                      <div className="max-h-60 overflow-auto space-y-1.5 pr-1">
+                        {flattenedGroups.length === 0 ? (
+                          <p className="rounded-xl bg-slate-50 p-3 text-xs font-bold text-slate-500">Crie um grupo para organizar esta fonte.</p>
+                        ) : flattenedGroups.map(({ group, depth }) => {
+                          const checked = draftGroupIds.includes(group.id);
+                          return (
+                            <label
+                              key={group.id}
+                              className={`flex items-center gap-3 rounded-xl border p-2.5 cursor-pointer transition-colors ${checked ? "border-indigo-200 bg-indigo-50/40" : "border-slate-100 bg-white hover:bg-slate-50/50"}`}
+                              style={{ marginLeft: depth * 12 }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => setDraftGroupIds((current) => checked ? current.filter((id) => id !== group.id) : [...current, group.id])}
+                                className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500"
+                              />
+                              <span className="text-xs font-bold text-slate-700">{group.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={saveSourceGroups}
+                        className="btn btn-primary w-full py-2.5 text-xs uppercase tracking-wider font-bold"
+                      >
+                        Salvar Organização
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -395,40 +436,7 @@ export default function SourcesScreen({
         )}
       </main>
 
-      {editingSource && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setEditingSource(null)}>
-          <div className="w-full max-w-md rounded-t-3xl bg-white p-5 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Organizar texto</p>
-                <h3 className="text-sm font-black text-slate-900">{editingSource.title}</h3>
-              </div>
-              <button type="button" onClick={() => setEditingSource(null)} className="p-1 text-slate-400">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="max-h-80 overflow-auto space-y-2">
-              {flattenedGroups.length === 0 ? (
-                <p className="rounded-xl bg-slate-50 p-3 text-xs font-bold text-slate-500">Crie um grupo para organizar este texto.</p>
-              ) : flattenedGroups.map(({ group, depth }) => {
-                const checked = draftGroupIds.includes(group.id);
-                return (
-                  <label key={group.id} className={`flex items-center gap-3 rounded-xl border p-3 ${checked ? "border-indigo-200 bg-indigo-50" : "border-slate-100 bg-white"}`} style={{ marginLeft: depth * 12 }}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => setDraftGroupIds((current) => checked ? current.filter((id) => id !== group.id) : [...current, group.id])}
-                      className="h-4 w-4 rounded text-indigo-600"
-                    />
-                    <span className="text-xs font-black text-slate-700">{group.name}</span>
-                  </label>
-                );
-              })}
-            </div>
-            <button type="button" onClick={saveSourceGroups} className="btn btn-primary">Salvar organização</button>
-          </div>
-        </div>
-      )}
+
     </div>
   );
 }
