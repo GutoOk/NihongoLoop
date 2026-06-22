@@ -1,6 +1,6 @@
 import { supabase, isSupabaseConfigured } from '../core/supabaseClient';
 import { DictionaryProgress, SentenceProgress } from '../types';
-import { chunkArray, computeSrsUpdate, getUserId } from './utils';
+import { chunkArray, computeSrsUpdate, computeFSRSUpdate, FSRSRating, getUserId } from './utils';
 
 export class ProgressRepository {
   static async getSentenceProgress(sentenceId: string): Promise<SentenceProgress | null> {
@@ -77,57 +77,35 @@ export class ProgressRepository {
     });
   }
 
-  static async applyFlashcardFeedback(dictionaryEntryId: string, feedback: 'again' | 'hard' | 'good' | 'easy'): Promise<DictionaryProgress | null> {
+  static async setDictionaryProgressFields(dictionaryEntryId: string, fields: Partial<DictionaryProgress>): Promise<DictionaryProgress | null> {
     const existing = await this.getDictionaryProgress(dictionaryEntryId);
-    let interval = existing?.srs_interval_minutes ?? 0;
-    let easeFactor = existing?.srs_ease_factor ?? 2.5;
-    let seenCount = (existing?.seen_count ?? 0) + 1;
-    let correctCount = existing?.correct_count ?? 0;
-    let wrongCount = existing?.wrong_count ?? 0;
+    return this.upsertDictionaryProgress({
+      ...(existing ? { id: existing.id } : {}),
+      dictionary_entry_id: dictionaryEntryId,
+      user_id: getUserId(),
+      ...fields,
+    });
+  }
 
-    if (feedback === 'again') {
-      interval = 1;
-      easeFactor = Math.max(1.3, easeFactor - 0.2);
-      wrongCount++;
-    } else {
-      correctCount++;
-      if (interval <= 0) {
-        interval = 10;
-      } else if (interval === 10) {
-        interval = 60 * 24;
-      } else {
-        let easeMultiplier = 1.0;
-        if (feedback === 'hard') {
-          easeFactor = Math.max(1.3, easeFactor - 0.15);
-          easeMultiplier = 1.2;
-        } else if (feedback === 'good') {
-          easeMultiplier = easeFactor;
-        } else {
-          easeFactor = easeFactor + 0.15;
-          easeMultiplier = easeFactor * 1.3;
-        }
-        interval = Math.round(interval * easeMultiplier);
-      }
-    }
+  static async deleteDictionaryProgress(dictionaryEntryId: string): Promise<void> {
+    if (!isSupabaseConfigured) return;
+    await supabase!.from('dictionary_progress').delete().eq('dictionary_entry_id', dictionaryEntryId).eq('user_id', getUserId());
+  }
 
-    let mastery = existing?.mastery ?? 0;
-    if (feedback === 'again') mastery = Math.max(0, mastery - 15);
-    else if (feedback === 'hard') mastery = Math.min(100, mastery + 5);
-    else if (feedback === 'good') mastery = Math.min(100, mastery + 12);
-    else mastery = Math.min(100, mastery + 20);
+  static async restoreDictionaryProgress(progress: DictionaryProgress): Promise<DictionaryProgress | null> {
+    return this.upsertDictionaryProgress(progress);
+  }
 
-    const now = new Date();
+  static async applyFlashcardFeedback(dictionaryEntryId: string, feedback: 'again' | 'hard' | 'good' | 'easy'): Promise<DictionaryProgress | null> {
+    const ratingMap: Record<string, FSRSRating> = { again: 1, hard: 2, good: 3, easy: 4 };
+    const rating = ratingMap[feedback];
+    const existing = await this.getDictionaryProgress(dictionaryEntryId);
+    const update = computeFSRSUpdate(existing, rating);
+
     const payload = {
       dictionary_entry_id: dictionaryEntryId,
       user_id: getUserId(),
-      seen_count: seenCount,
-      correct_count: correctCount,
-      wrong_count: wrongCount,
-      last_seen_at: now.toISOString(),
-      mastery,
-      srs_interval_minutes: interval,
-      srs_ease_factor: parseFloat(easeFactor.toFixed(2)),
-      due_at: new Date(now.getTime() + interval * 60000).toISOString()
+      ...update,
     };
 
     return this.upsertDictionaryProgress(existing ? { id: existing.id, ...payload } : payload);
