@@ -12,11 +12,17 @@ interface InsightsProps {
   progressList: DictionaryProgress[];
   entries: DictionaryEntry[];
   onStudyLeeches: () => void;
+  onReactivateCard: (entryId: string) => void;
+  onReturnToReview: (entryId: string) => void;
+  onResetProgress: (entryId: string) => void;
 }
 
 const DAY_LABELS = ["Hoje", "+1", "+2", "+3", "+4", "+5", "+6"];
 
-export default function FlashcardInsights({ stats, streak, heatmap, progressList, entries, onStudyLeeches }: InsightsProps) {
+export default function FlashcardInsights({
+  stats, streak, heatmap, progressList, entries, onStudyLeeches,
+  onReactivateCard, onReturnToReview, onResetProgress,
+}: InsightsProps) {
   const forecast = useMemo(() => forecastDueReviews(progressList, 7), [progressList]);
 
   const trueRetention = useMemo(() => {
@@ -41,6 +47,15 @@ export default function FlashcardInsights({ stats, streak, heatmap, progressList
 
   const masteredPct = stats.total + stats.mastered > 0
     ? Math.round((stats.mastered / (stats.total + stats.mastered)) * 100) : 0;
+
+  const hiddenCards = useMemo(() => {
+    const map = new Map(entries.map((e) => [e.id, e]));
+    return progressList
+      .filter((p) => p.suspended || (p.mastery ?? 0) >= 999999)
+      .map((p) => ({ progress: p, entry: map.get(p.dictionary_entry_id) }))
+      .filter((x) => x.entry)
+      .slice(0, 12);
+  }, [progressList, entries]);
 
   return (
     <div className="flex-1 overflow-auto p-4 space-y-4">
@@ -117,6 +132,37 @@ export default function FlashcardInsights({ stats, streak, heatmap, progressList
                 <span className="text-[10px] font-black text-rose-600">{wrong} erros</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {hiddenCards.length > 0 && (
+        <div className="bg-white rounded-2xl border border-[#E5E5E7] p-4 space-y-3">
+          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Cards ocultos</span>
+          <div className="space-y-1.5">
+            {hiddenCards.map(({ entry, progress }) => {
+              const mastered = (progress.mastery ?? 0) >= 999999;
+              return (
+                <div key={entry!.id} className="bg-slate-50 rounded-xl px-3 py-2 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-black text-gray-900 truncate">{entry!.lemma}</p>
+                      <p className="text-[11px] text-gray-500 truncate">{entry!.main_meaning}</p>
+                    </div>
+                    <span className="text-[9px] font-black uppercase text-slate-500">{progress.suspended ? "Suspenso" : "Dominado"}</span>
+                  </div>
+                  <div className="flex gap-1.5">
+                    {progress.suspended && (
+                      <button onClick={() => onReactivateCard(entry!.id)} className="flex-1 py-1.5 text-[10px] font-black uppercase rounded-lg bg-white border border-slate-200 text-slate-700">Reativar</button>
+                    )}
+                    {mastered && (
+                      <button onClick={() => onReturnToReview(entry!.id)} className="flex-1 py-1.5 text-[10px] font-black uppercase rounded-lg bg-white border border-slate-200 text-slate-700">Revisao</button>
+                    )}
+                    <button onClick={() => onResetProgress(entry!.id)} className="flex-1 py-1.5 text-[10px] font-black uppercase rounded-lg bg-rose-50 border border-rose-100 text-rose-700">Resetar</button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

@@ -107,7 +107,10 @@ function write(key: string, value: unknown): void {
 }
 
 function todayKey(d: Date = new Date()): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 // ─── Settings ──────────────────────────────────────────────────────────────────
@@ -284,7 +287,7 @@ export function buildQueue({
   let pool = entries.filter((e) => {
     if (!e.main_meaning) return false;
     const p = progressMap[e.id] ?? null;
-    if (isCardMastered(p)) return false;
+    if (isCardMastered(p) && !config.favoritesOnly) return false;
     if (p?.suspended) return false;
     if (allowedEntryIds && !allowedEntryIds.has(e.id)) return false;
     if (config.type && e.type !== config.type) return false;
@@ -321,17 +324,14 @@ export function buildQueue({
   let newItems = items.filter(isNewItem);
   let reviewItems = items.filter((i) => (config.onlyDue ? isDueItem(i) : i.state !== "new"));
 
-  // 5. Apply daily new-card throttle. Only the automatic "smart" session honors
-  //    the daily-introduced budget; explicit sessions (builder, quick modes) use
-  //    the configured limit directly so the user always gets what they asked for.
-  const remainingNewBudget = config.quick === "smart"
-    ? Math.max(0, config.newLimit - newIntroducedToday)
-    : config.newLimit;
+  // 5. Apply daily new-card throttle consistently across quick and custom modes.
+  const remainingNewBudget = Math.max(0, config.newLimit - newIntroducedToday);
   const newCap = Math.min(newItems.length, Math.max(0, remainingNewBudget));
 
   // 6. Order each bucket.
   const orderFn = getOrderComparator(config.order);
-  reviewItems.sort(orderFn);
+  if (config.order === "random") shuffle(reviewItems);
+  else reviewItems.sort(orderFn);
   // new cards: by jlpt then frequency-ish (keep stable / shuffle if random)
   if (config.order === "random") shuffle(newItems);
   else newItems.sort((a, b) => jlptRank(a.entry.jlpt_level) - jlptRank(b.entry.jlpt_level));
@@ -347,7 +347,7 @@ export function buildQueue({
 function getOrderComparator(order: SessionOrder): (a: CardItem, b: CardItem) => number {
   switch (order) {
     case "random":
-      return () => Math.random() - 0.5;
+      return (a, b) => a.entry.id.localeCompare(b.entry.id);
     case "difficulty":
       return (a, b) => (b.progress?.difficulty ?? 0) - (a.progress?.difficulty ?? 0);
     case "jlpt":

@@ -53,6 +53,8 @@ export default function StudyRunner({
   const [notesDraft, setNotesDraft] = useState("");
   const [editing, setEditing] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [stats, setStats] = useState({ again: 0, hard: 0, good: 0, easy: 0, learned: 0, buried: 0 });
   const statsRef = useRef(stats);
   const bumpStat = useCallback((key: keyof typeof stats, delta: number) => {
@@ -63,11 +65,6 @@ export default function StudyRunner({
 
   const historyRef = useRef<HistoryEntry[]>([]);
   const startRef = useRef<number>(Date.now());
-  const counts = useMemo(() => {
-    const newCount = initialQueue.filter((i) => i.state === "new").length;
-    return { newCount, reviewCount: initialQueue.length - newCount };
-  }, [initialQueue]);
-
   const current = queue[index];
 
   // Remaining counters (new / learning / review) from current position.
@@ -92,14 +89,21 @@ export default function StudyRunner({
   // Load example + autoplay when card changes.
   useEffect(() => {
     if (!current) return;
+    let cancelled = false;
     setFlipped(false); setAnim(false); setShowNotes(false);
     setNotesDraft(current.progress?.notes || "");
     setExample(null);
-    if (settings.showExamples) loadExample(current.entry.id).then(setExample);
+    setSaveError("");
+    if (settings.showExamples) {
+      loadExample(current.entry.id).then((sentence) => {
+        if (!cancelled) setExample(sentence);
+      });
+    }
     // Speak on the front only when the Japanese is the prompt (ja_pt) or the
     // card is audio-first. For pt_ja the Japanese is the answer → speak on flip.
     const speakOnFront = mode === "audio_pt" || (settings.autoplayAudio && mode === "ja_pt");
     if (speakOnFront) setTimeout(() => SpeechService.speakJapaneseText(current.entry.lemma), 250);
+    return () => { cancelled = true; };
   }, [current?.entry.id]);
 
   // Autoplay the answer audio after flipping in pt_ja mode (avoids spoiling it).
@@ -111,12 +115,16 @@ export default function StudyRunner({
 
   const finish = useCallback(() => {
     const s = statsRef.current;
+    const answered = historyRef.current.filter((h) => h.kind !== "learned");
+    const learned = historyRef.current.filter((h) => h.kind === "learned");
+    const newCount = historyRef.current.filter((h) => h.item.state === "new").length;
     onFinish({
       ...s, total: s.again + s.hard + s.good + s.easy + s.learned,
       durationMs: Date.now() - startRef.current,
-      newCount: counts.newCount, reviewCount: counts.reviewCount,
+      newCount,
+      reviewCount: answered.length + learned.length - newCount,
     });
-  }, [counts, onFinish]);
+  }, [onFinish]);
 
   const advance = useCallback(() => {
     if (index + 1 >= queue.length) finish();
@@ -129,54 +137,87 @@ export default function StudyRunner({
     setTimeout(() => { setAnim(false); setFlipped(true); }, 140);
   }, [flipped]);
 
-  const grade = useCallback((rating: FSRSRating) => {
-    if (!current || !flipped) return;
-    historyRef.current.push({ index, item: current, prev: current.progress, kind: RATING_KEYS[rating - 1] });
+  const grade = useCallback(async (rating: FSRSRating) => {
+    if (!current || !flipped || isSaving) return;
     const key = RATING_KEYS[rating - 1];
-    bumpStat(key, 1);
-    // Persist in the background; advance immediately (optimistic UI).
-    onGrade(current, rating).then((updated) => {
+    setIsSaving(true);
+    setSaveError("");
+    try {
+      const updated = await onGrade(current, rating);
       if (updated) setQueue((q) => q.map((it, i) => i === index ? { ...it, progress: updated } : it));
-    });
-    advance();
-  }, [current, flipped, index, onGrade, advance, bumpStat]);
+      historyRef.current.push({ index, item: current, prev: current.progress, kind: key });
+      bumpStat(key, 1);
+      advance();
+    } catch (err: any) {
+      setSaveError(err?.message || "Nao foi possivel salvar a resposta. Tente novamente.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [current, flipped, isSaving, index, onGrade, advance, bumpStat]);
 
-  const markLearned = useCallback(() => {
-    if (!current || !flipped) return;
-    historyRef.current.push({ index, item: current, prev: current.progress, kind: "learned" });
-    bumpStat("learned", 1);
-    onMarkLearned(current);
-    advance();
-  }, [current, flipped, index, onMarkLearned, advance, bumpStat]);
+  const markLearned = useCallback(async () => {
+    if (!current || !flipped || isSaving) return;
+    if (!window.confirm("Marcar este card como dominado? Voce podera reativar em Progresso.")) return;
+    setIsSaving(true);
+    setSaveError("");
+    try {
+      await onMarkLearned(current);
+      historyRef.current.push({ index, item: current, prev: current.progress, kind: "learned" });
+      bumpStat("learned", 1);
+      advance();
+    } catch (err: any) {
+      setSaveError(err?.message || "Nao foi possivel marcar como dominado.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [current, flipped, isSaving, index, onMarkLearned, advance, bumpStat]);
 
   const undo = useCallback(async () => {
+    if (isSaving) return;
     const last = historyRef.current.pop();
     if (!last) return;
-    await onUndo(last.item, last.prev);
-    bumpStat(last.kind, -1);
-    setQueue((q) => q.map((it, i) => i === last.index ? { ...it, progress: last.prev } : it));
-    setIndex(last.index);
-    setFlipped(true);
-  }, [onUndo, bumpStat]);
+    setIsSaving(true);
+    setSaveError("");
+    try {
+      await onUndo(last.item, last.prev);
+      bumpStat(last.kind, -1);
+      setQueue((q) => q.map((it, i) => i === last.index ? { ...it, progress: last.prev } : it));
+      setIndex(last.index);
+      setFlipped(true);
+    } catch (err: any) {
+      historyRef.current.push(last);
+      setSaveError(err?.message || "Nao foi possivel desfazer.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [isSaving, onUndo, bumpStat]);
 
   const toggleFavorite = useCallback(async () => {
-    if (!current) return;
+    if (!current || isSaving) return;
     const next = !current.isFavorite;
     setQueue((q) => q.map((it, i) => i === index ? { ...it, isFavorite: next } : it));
     await onSetFields(current, { favorite: next });
-  }, [current, index, onSetFields]);
+  }, [current, isSaving, index, onSetFields]);
 
-  const suspend = useCallback(() => {
-    if (!current) return;
-    onSetFields(current, { suspended: true });
-    bumpStat("buried", 1);
-    const wasLast = index >= queue.length - 1;
-    // Removing an item shifts indices, invalidating stored undo positions.
-    historyRef.current = [];
-    setQueue((q) => q.filter((_, i) => i !== index));
-    setFlipped(false);
-    if (wasLast) setTimeout(finish, 0);
-  }, [current, index, queue.length, onSetFields, finish]);
+  const suspend = useCallback(async () => {
+    if (!current || isSaving) return;
+    if (!window.confirm("Suspender este card? Voce podera reativar em Progresso.")) return;
+    setIsSaving(true);
+    setSaveError("");
+    try {
+      await onSetFields(current, { suspended: true });
+      bumpStat("buried", 1);
+      const wasLast = index >= queue.length - 1;
+      historyRef.current = [];
+      setQueue((q) => q.filter((_, i) => i !== index));
+      setFlipped(false);
+      if (wasLast) setTimeout(finish, 0);
+    } catch (err: any) {
+      setSaveError(err?.message || "Nao foi possivel suspender o card.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [current, isSaving, index, queue.length, onSetFields, finish, bumpStat]);
 
   const playAudio = useCallback(() => {
     if (current) SpeechService.speakJapaneseText(current.entry.lemma);
@@ -192,11 +233,11 @@ export default function StudyRunner({
 
   // Keyboard shortcuts (kept fresh via ref).
   const handlersRef = useRef<any>({});
-  handlersRef.current = { flipped, doFlip, grade, undo, toggleFavorite, suspend, playAudio, markLearned, editing, showHelp, openEdit: () => setEditing(true) };
+  handlersRef.current = { flipped, doFlip, grade, undo, toggleFavorite, suspend, playAudio, markLearned, editing, showHelp, isSaving, openEdit: () => setEditing(true) };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const h = handlersRef.current;
-      if (h.editing) return;
+      if (h.editing || h.isSaving) return;
       const t = e.target as HTMLElement;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
       if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!h.flipped) h.doFlip(); }
@@ -235,12 +276,12 @@ export default function StudyRunner({
           {entry.jlpt_level && <span className="px-1.5 py-0.5 text-[9px] font-black uppercase bg-purple-100 text-purple-700 rounded-md">{entry.jlpt_level}</span>}
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={toggleFavorite} title="Favoritar (F)"
+          <button onClick={toggleFavorite} disabled={isSaving} title="Favoritar (F)"
             className={`p-1.5 rounded-lg transition-colors ${current.isFavorite ? "text-yellow-500" : "text-gray-300 hover:text-yellow-500"}`}>
             <Star className={`w-4 h-4 ${current.isFavorite ? "fill-yellow-500" : ""}`} />
           </button>
-          <button onClick={() => setEditing(true)} title="Editar (E)" className="p-1.5 text-gray-300 hover:text-indigo-500 rounded-lg transition-colors"><Edit2 className="w-4 h-4" /></button>
-          <button onClick={suspend} title="Suspender (S)" className="p-1.5 text-gray-300 hover:text-rose-500 rounded-lg transition-colors"><EyeOff className="w-4 h-4" /></button>
+          <button onClick={() => setEditing(true)} disabled={isSaving} title="Editar (E)" className="p-1.5 text-gray-300 hover:text-indigo-500 rounded-lg transition-colors disabled:opacity-50"><Edit2 className="w-4 h-4" /></button>
+          <button onClick={suspend} disabled={isSaving} title="Suspender (S)" className="p-1.5 text-gray-300 hover:text-rose-500 rounded-lg transition-colors disabled:opacity-50"><EyeOff className="w-4 h-4" /></button>
           <button onClick={() => setShowHelp((v) => !v)} title="Atalhos" className="p-1.5 text-gray-300 hover:text-gray-600 rounded-lg transition-colors"><Keyboard className="w-4 h-4" /></button>
         </div>
       </div>
@@ -264,6 +305,12 @@ export default function StudyRunner({
           <span><b>U</b> desfazer</span><span><b>F</b> favoritar</span>
           <span><b>S</b> suspender</span><span><b>A</b> áudio</span>
           <span><b>E</b> editar</span><span />
+        </div>
+      )}
+
+      {saveError && (
+        <div className="shrink-0 text-xs font-bold text-rose-700 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2">
+          {saveError}
         </div>
       )}
 
@@ -348,13 +395,13 @@ export default function StudyRunner({
       {!flipped ? (
         <div className="shrink-0 flex gap-2">
           {historyRef.current.length > 0 && (
-            <button onClick={undo} title="Desfazer (U)"
-              className="px-4 py-4 bg-white border-2 border-gray-200 hover:bg-gray-50 rounded-2xl text-gray-500 transition-all active:scale-95">
+            <button onClick={undo} disabled={isSaving} title="Desfazer (U)"
+              className="px-4 py-4 bg-white border-2 border-gray-200 hover:bg-gray-50 rounded-2xl text-gray-500 transition-all active:scale-95 disabled:opacity-50">
               <RotateCcw className="w-5 h-5" />
             </button>
           )}
-          <button onClick={doFlip}
-            className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black uppercase tracking-wider rounded-2xl text-sm transition-all shadow-lg shadow-indigo-100">
+          <button onClick={doFlip} disabled={isSaving}
+            className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-black uppercase tracking-wider rounded-2xl text-sm transition-all shadow-lg shadow-indigo-100 disabled:opacity-60">
             Mostrar Resposta
           </button>
         </div>
@@ -362,8 +409,8 @@ export default function StudyRunner({
         <div className="shrink-0 space-y-2">
           <div className="grid grid-cols-4 gap-1.5">
             {RATING_META.map(({ r, label, cls, txt }) => (
-              <button key={r} onClick={() => grade(r)}
-                className={`py-3.5 bg-white border-2 ${cls} active:scale-95 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all`}>
+              <button key={r} onClick={() => grade(r)} disabled={isSaving}
+                className={`py-3.5 bg-white border-2 ${cls} active:scale-95 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all disabled:opacity-60`}>
                 <span className={`${txt} font-black text-[10px] uppercase leading-tight`}>{label}</span>
                 <span className="text-[9px] text-gray-400 font-bold">{intervals[r]}</span>
               </button>
@@ -371,12 +418,12 @@ export default function StudyRunner({
           </div>
           <div className="flex gap-2">
             {historyRef.current.length > 0 && (
-              <button onClick={undo} className="px-4 py-3 bg-white border-2 border-gray-200 hover:bg-gray-50 rounded-2xl text-gray-500 transition-all active:scale-95">
+              <button onClick={undo} disabled={isSaving} className="px-4 py-3 bg-white border-2 border-gray-200 hover:bg-gray-50 rounded-2xl text-gray-500 transition-all active:scale-95 disabled:opacity-50">
                 <RotateCcw className="w-4 h-4" />
               </button>
             )}
-            <button onClick={markLearned}
-              className="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 active:scale-95 text-white font-black uppercase tracking-wider rounded-2xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all">
+            <button onClick={markLearned} disabled={isSaving}
+              className="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 active:scale-95 text-white font-black uppercase tracking-wider rounded-2xl text-xs flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-60">
               <Check className="w-4 h-4" /> Dominado
             </button>
           </div>

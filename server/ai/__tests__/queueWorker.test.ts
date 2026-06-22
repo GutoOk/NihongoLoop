@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AI_QUEUE_SCHEMA_VERSION, getErrorMessage, getJobInput, processPrepareSentenceJob, processTranslateSentenceJob } from '../queueWorker';
+import { AI_QUEUE_SCHEMA_VERSION, getErrorMessage, getJobInput, normalizeLexicalTermsForPersistence, processPrepareSentenceJob, processTranslateSentenceJob } from '../queueWorker';
 import { generateStructuredJsonWithMeta } from '../../geminiJson';
 
 vi.mock('../../geminiJson', () => ({
@@ -178,6 +178,27 @@ describe('queueWorker persisted execution contract', () => {
         expect.objectContaining({ surface: 'か', start_index: 16, end_index: 17 }),
       ],
     }));
+  });
+
+  it('normalizes lexical terms by repairing offsets and discarding unrecoverable terms', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const terms = normalizeLexicalTermsForPersistence('\u5f85\u3063\u3066', [
+      { surface: '\u5f85\u3063\u3066', lemma: '\u5f85\u3064', start_index: 0, end_index: 2, type: 'verbo' },
+      { surface: '\u306a\u3044', lemma: '\u306a\u3044', start_index: 0, end_index: 2, type: 'auxiliar' },
+      null,
+    ]);
+
+    expect(terms).toEqual([
+      expect.objectContaining({ surface: '\u5f85\u3063\u3066', start_index: 0, end_index: 3 }),
+    ]);
+    expect(info).toHaveBeenCalledWith('[ai-worker] lexical terms normalized', expect.objectContaining({
+      received: 3,
+      repaired: 1,
+      kept: 1,
+      discarded: 2,
+      discardedReasons: { invalid_offsets: 1, term_not_object: 1 },
+    }));
+    info.mockRestore();
   });
 
   it('rejects empty terms for normal Japanese sentence preparation', async () => {

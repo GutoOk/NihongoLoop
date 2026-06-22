@@ -15,7 +15,9 @@ vi.mock('../../repositories', () => ({
     applyFlashcardFeedback: vi.fn(),
     upsertDictionaryProgress: vi.fn(),
     getDictionaryProgress: vi.fn(),
-    updateDictionaryProgressLog: vi.fn()
+    updateDictionaryProgressLog: vi.fn(),
+    setDictionaryProgressFields: vi.fn(),
+    deleteDictionaryProgress: vi.fn()
   },
   SentenceRepository: {
     getBySourceId: vi.fn()
@@ -25,6 +27,9 @@ vi.mock('../../repositories', () => ({
   },
   SourceRepository: {
     getAll: vi.fn().mockResolvedValue([])
+  },
+  StudySessionRepository: {
+    saveSession: vi.fn().mockResolvedValue(null)
   }
 }));
 

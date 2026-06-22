@@ -226,7 +226,27 @@ export class DictionaryRepository {
     delete copy.meanings;
     delete copy.common_forms;
     normalizeTagsForUpdate(copy);
-    const { data, error } = await supabase!.from('dictionary_entries').update(copy).eq('id', id).eq('user_id', getUserId()).select().maybeSingle();
+    if ('lemma' in copy || 'kana' in copy || 'type' in copy) {
+      const current = await this.getById(id);
+      if (!current) return null;
+      const nextKey = this.makeEntryKey(
+        String(copy.lemma ?? current.lemma),
+        String(copy.kana ?? current.kana ?? ''),
+        String(copy.type ?? current.type ?? 'outro'),
+      );
+      const collision = await this.getByUniqueKey(nextKey);
+      if (collision && collision.id !== id) {
+        throw new Error('Ja existe um verbete com este lema, kana e tipo. Mescle os verbetes antes de salvar.');
+      }
+      copy.unique_key = nextKey;
+    }
+    const { data, error } = await supabase!
+      .from('dictionary_entries')
+      .update(copy)
+      .eq('id', id)
+      .eq('user_id', getUserId())
+      .select(DICTIONARY_ENTRY_SELECT)
+      .maybeSingle();
     if (error) {
       console.error(error);
       throw new Error(`Erro do Supabase ao atualizar verbete de dicionario: ${error.message}`);

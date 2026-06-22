@@ -53,7 +53,7 @@ export default function QuizScreen({ onBack }: QuizScreenProps) {
   }, []);
 
   const loadData = async () => {
-    const { entries: d } = await DictionaryRepository.getPage({ limit: 1000 });
+    const d = await DictionaryRepository.getAll();
     setDictionary(d);
     setTypes(
       Array.from(new Set(d.map((e) => e.type).filter(Boolean))) as string[],
@@ -139,12 +139,15 @@ export default function QuizScreen({ onBack }: QuizScreenProps) {
     pool = pool.filter((e) => !learnedIds.has(e.id));
 
     if (filters.sourceId) {
-      const sourceSentences = await SentenceRepository.getBySourceId(filters.sourceId);
-      const sourceSentenceIds = sourceSentences.map((s) => s.id);
-      const terms = await TermRepository.getBySentences(sourceSentenceIds);
-      const allowedEntryIds = new Set(
-        terms.map((t) => t.dictionary_entry_id).filter(Boolean),
-      );
+      let allowedEntryIds: Set<string>;
+      try {
+        allowedEntryIds = new Set(await TermRepository.getDictionaryEntryIdsBySourceId(filters.sourceId));
+      } catch {
+        const sourceSentences = await SentenceRepository.getBySourceId(filters.sourceId);
+        const sourceSentenceIds = sourceSentences.map((s) => s.id);
+        const terms = await TermRepository.getBySentences(sourceSentenceIds);
+        allowedEntryIds = new Set(terms.map((t) => t.dictionary_entry_id).filter(Boolean) as string[]);
+      }
       pool = pool.filter((e) => allowedEntryIds.has(e.id));
     }
     if (filters.type) pool = pool.filter((e) => e.type === filters.type);
@@ -152,7 +155,7 @@ export default function QuizScreen({ onBack }: QuizScreenProps) {
       pool = pool.filter((e) => e.jlpt_level === filters.jlpt_level);
 
     pool = pool.filter((e) => e.main_meaning);
-    const candidates = pool.sort(() => Math.random() - 0.5);
+    const candidates = shuffleArray(pool);
 
     const questions: Question[] = [];
     for (const c of candidates) {

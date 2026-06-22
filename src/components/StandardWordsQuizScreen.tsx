@@ -120,7 +120,7 @@ export default function StandardWordsQuizScreen({
       let distPool = entries.map(getOptionText).filter(Boolean);
 
       try {
-        const { entries: allDict } = await DictionaryRepository.getPage({ limit: 1000 });
+        const allDict = await DictionaryRepository.getAll();
         const globalPool = allDict
           .map((d) => {
             const val = reverseMode ? d.lemma : d.main_meaning;

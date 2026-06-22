@@ -114,7 +114,7 @@ export interface FSRSUpdate {
   due_at: string;
 }
 
-export function computeFSRSUpdate(existing: FSRSCardData | null, rating: FSRSRating): FSRSUpdate {
+export function computeFSRSUpdate(existing: FSRSCardData | null, rating: FSRSRating, desiredRetention = 0.9): FSRSUpdate {
   const now = new Date();
   const isNew = !existing || existing.seen_count === 0;
   const currentInterval = existing?.srs_interval_minutes ?? 0;
@@ -133,7 +133,7 @@ export function computeFSRSUpdate(existing: FSRSCardData | null, rating: FSRSRat
     if (rating === 1) newIntervalMinutes = 1;
     else if (rating === 2) newIntervalMinutes = 5;
     else if (rating === 3) newIntervalMinutes = 10;
-    else newIntervalMinutes = Math.max(1440, fsrsNextIntervalDays(newStability) * 1440);
+    else newIntervalMinutes = Math.max(1440, fsrsNextIntervalDays(newStability, desiredRetention) * 1440);
 
   } else if (isLearning) {
     newDifficulty = fsrsUpdateDifficulty(difficulty, rating);
@@ -146,11 +146,11 @@ export function computeFSRSUpdate(existing: FSRSCardData | null, rating: FSRSRat
       if (currentInterval < 10) newIntervalMinutes = 10;
       else if (currentInterval < 120) newIntervalMinutes = 240;
       else {
-        const days = fsrsNextIntervalDays(newStability);
+        const days = fsrsNextIntervalDays(newStability, desiredRetention);
         newIntervalMinutes = Math.max(1440, days * 1440);
       }
     } else {
-      const days = fsrsNextIntervalDays(newStability || FSRS_W[3]);
+      const days = fsrsNextIntervalDays(newStability || FSRS_W[3], desiredRetention);
       newIntervalMinutes = Math.max(1440, days * 1440);
     }
 
@@ -169,7 +169,7 @@ export function computeFSRSUpdate(existing: FSRSCardData | null, rating: FSRSRat
       newIntervalMinutes = 10;
     } else {
       newStability = fsrsRecallStability(difficulty, S, R, rating);
-      const days = fsrsNextIntervalDays(newStability);
+      const days = fsrsNextIntervalDays(newStability, desiredRetention);
       newIntervalMinutes = days * 1440;
     }
   }
@@ -275,7 +275,7 @@ export function formatIntervalLabel(intervalMinutes: number): string {
   return fsrsFormatInterval(intervalMinutes);
 }
 
-export function computeSrsUpdate(
+export function computeLegacySentenceSrsUpdate(
   existing: Pick<SentenceProgress | DictionaryProgress, 'srs_interval_minutes' | 'srs_ease_factor' | 'mastery' | 'seen_count' | 'correct_count' | 'wrong_count'> | null,
   isCorrect: boolean
 ) {

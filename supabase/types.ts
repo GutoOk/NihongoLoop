@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { AiJobType } from '../src/features/ai/jobTypes';
+
 export type SourceType = 'srt' | 'text' | 'manual';
 
 export interface Source {
@@ -171,17 +173,7 @@ export interface DictionaryProgress {
   updated_at: string;
 }
 
-export type AiJobType =
-  | 'prepare_sentence'
-  | 'translate_sentence'
-  | 'generate_sentence_reading'
-  | 'detect_sentence_terms'
-  | 'resolve_dictionary_form'
-  | 'enrich_dictionary_entry'
-  | 'generate_dictionary_senses'
-  | 'choose_sentence_term_sense'
-  | 'explain_sentence'
-  | 'repair_sentence';
+export type { AiJobType };
 export type AiJobStatus =
   | 'pending'
   | 'claimed'
@@ -249,7 +241,7 @@ export interface AiJob {
 export interface StudySession {
   id: string;
   user_id: string;
-  type: 'phrases' | 'words' | 'word_context' | 'source_offset';
+  type: 'phrases' | 'words' | 'word_context' | 'flashcards' | 'source_offset';
   source_id: string | null;
   config: any;
   started_at?: string | null;

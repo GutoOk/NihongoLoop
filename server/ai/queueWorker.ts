@@ -2,8 +2,9 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
 import { buildSingleAiRequest } from "./prompts";
 import { generateStructuredJsonWithMeta } from "../geminiJson";
+import { SUPPORTED_AI_JOB_TYPES, isSupportedAiJobType } from "../../src/features/ai/jobTypes";
 
-export const AI_QUEUE_SCHEMA_VERSION = "2026-06-ai-queue-v35";
+export const AI_QUEUE_SCHEMA_VERSION = "2026-06-ai-queue-v36";
 
 type QueueJob = {
   id: string;
@@ -188,7 +189,7 @@ function termHasValidOffsets(sentenceChars: string[], term: any): boolean {
   return sentenceChars.slice(term.start_index, term.end_index).join("") === term.surface;
 }
 
-function repairTermOffsets(sentenceText: string, terms: unknown[]): unknown[] {
+function repairTermOffsetsWithStats(sentenceText: string, terms: unknown[]): { terms: unknown[]; repairedCount: number } {
   const sentenceChars = Array.from(sentenceText);
   let cursor = 0;
   let repairedCount = 0;
@@ -215,7 +216,51 @@ function repairTermOffsets(sentenceText: string, terms: unknown[]): unknown[] {
     return { ...item, start_index: start, end_index: end };
   });
 
-  return repairedCount > 0 ? repaired : terms;
+  return { terms: repairedCount > 0 ? repaired : terms, repairedCount };
+}
+
+export function normalizeLexicalTermsForPersistence(sentenceText: string, terms: unknown): unknown[] {
+  if (!Array.isArray(terms)) {
+    console.warn("[ai-worker] lexical terms discarded", {
+      reason: "terms_not_array",
+      received: 0,
+      repaired: 0,
+      kept: 0,
+      discarded: 0,
+    });
+    throw new Error("Resultado invalido: lista de termos ausente.");
+  }
+
+  const sentenceChars = Array.from(sentenceText);
+  const { terms: repairedTerms, repairedCount } = repairTermOffsetsWithStats(sentenceText, terms);
+  const kept: unknown[] = [];
+  const discardedReasons: Record<string, number> = {};
+
+  for (const term of repairedTerms) {
+    let reason: string | null = null;
+    if (!term || typeof term !== "object") {
+      reason = "term_not_object";
+    } else if (!termHasValidOffsets(sentenceChars, term)) {
+      reason = "invalid_offsets";
+    }
+
+    if (reason) {
+      discardedReasons[reason] = (discardedReasons[reason] || 0) + 1;
+    } else {
+      kept.push(term);
+    }
+  }
+
+  const discarded = terms.length - kept.length;
+  console.info("[ai-worker] lexical terms normalized", {
+    received: terms.length,
+    repaired: repairedCount,
+    kept: kept.length,
+    discarded,
+    discardedReasons,
+  });
+
+  return kept;
 }
 
 function getTypeLimit(jobType: string): number {
@@ -379,7 +424,7 @@ async function claimCoordinatedJobs(
   workerId: string,
   leaseSeconds: number,
 ): Promise<QueueJob[]> {
-  const supportedTypes = ["prepare_sentence", "translate_sentence", "generate_sentence_reading", "detect_sentence_terms", "enrich_dictionary_entry"];
+  const supportedTypes = [...SUPPORTED_AI_JOB_TYPES];
   const globalLimit = getGlobalLimit();
   const userLimit = getUserLimit();
   const typeLimits = Object.fromEntries(supportedTypes.map((type) => [type, getTypeLimit(type)]));
@@ -668,14 +713,11 @@ export async function processPrepareSentenceJob(
   if (!data.kana || !data.romaji) {
     throw new Error("Resultado invalido: kana ou romaji ausente.");
   }
-  if (!Array.isArray(data.terms)) {
-    throw new Error("Resultado invalido: lista de termos ausente.");
-  }
-  if (shouldRejectEmptyTerms(String(sentenceText), data.terms)) {
+  const normalizedTerms = normalizeLexicalTermsForPersistence(String(sentenceText), data.terms);
+  if (shouldRejectEmptyTerms(String(sentenceText), normalizedTerms)) {
     throw new Error("Resultado invalido: lista de termos vazia para frase japonesa.");
   }
-  const termsWithRepairedOffsets = repairTermOffsets(String(sentenceText), data.terms);
-  const analysisForPersistence = { ...data, terms: termsWithRepairedOffsets };
+  const analysisForPersistence = { ...data, terms: normalizedTerms };
 
   await applySentencePreparationResultRpc(
     client,
@@ -687,7 +729,7 @@ export async function processPrepareSentenceJob(
       kana: data.kana,
       romaji: data.romaji,
       sentence_id: input.id || runningJob.target_id,
-      termCount: termsWithRepairedOffsets.length,
+      termCount: normalizedTerms.length,
       ai_meta: {
         job_type: runningJob.type,
         prompt_version: request.promptVersion,
@@ -788,7 +830,8 @@ export async function processDetectSentenceTermsJob(
   const runningJob = await validateJobForExecution(client, job.id, workerId);
   if (!runningJob) return;
   const input = getJobInput(runningJob);
-  if (!input.sentence && !input.japanese) throw new Error("Job sem texto japones para deteccao de termos.");
+  const sentenceText = input.sentence || input.japanese;
+  if (!sentenceText) throw new Error("Job sem texto japones para deteccao de termos.");
 
   const request = buildJobRequest(runningJob);
   const { data, meta } = await generateStructuredJsonWithMeta<{ kana?: string; romaji?: string; terms?: unknown[] }>({
@@ -799,18 +842,17 @@ export async function processDetectSentenceTermsJob(
     temperature: request.temperature,
   });
 
-  if (!Array.isArray(data.terms)) {
-    throw new Error("Resultado invalido: lista de termos ausente.");
-  }
+  const normalizedTerms = normalizeLexicalTermsForPersistence(String(sentenceText), data.terms);
+  const analysisForPersistence = { ...data, terms: normalizedTerms };
 
   await applyLexicalResultRpc(
     client,
     runningJob.id,
     workerId,
-    data,
+    analysisForPersistence,
     {
       sentence_id: input.id || runningJob.target_id,
-      termCount: Array.isArray(data.terms) ? data.terms.length : 0,
+      termCount: normalizedTerms.length,
       ai_meta: {
         job_type: runningJob.type,
         prompt_version: request.promptVersion,
@@ -923,7 +965,9 @@ export function startAiQueueWorker(options: AiQueueWorkerOptions): AiQueueWorker
           jobs.map(async (job) => {
             try {
               await withLeaseHeartbeat(client, job.id, workerId, leaseSeconds, async () => {
-                if (job.type === "prepare_sentence") {
+                if (!isSupportedAiJobType(job.type)) {
+                  throw new Error(`Tipo de job nao suportado pelo worker: ${job.type}`);
+                } else if (job.type === "prepare_sentence") {
                   await processPrepareSentenceJob(client, job, workerId, leaseSeconds, options.getAi);
                 } else if (job.type === "translate_sentence") {
                   await processTranslateSentenceJob(client, job, workerId, leaseSeconds, options.getAi);
@@ -976,7 +1020,7 @@ export function startAiQueueWorker(options: AiQueueWorkerOptions): AiQueueWorker
       detect_sentence_terms: getTypeLimit("detect_sentence_terms"),
       enrich_dictionary_entry: getTypeLimit("enrich_dictionary_entry"),
     },
-    jobTypes: ["prepare_sentence", "translate_sentence", "generate_sentence_reading", "detect_sentence_terms", "enrich_dictionary_entry"],
+    jobTypes: SUPPORTED_AI_JOB_TYPES,
   });
   timer = setTimeout(tick, 250);
 

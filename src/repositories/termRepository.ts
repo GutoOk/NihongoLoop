@@ -65,6 +65,30 @@ export class TermRepository {
     return allTermsData;
   }
 
+  static async getDictionaryEntryIdsBySourceId(sourceId: string): Promise<string[]> {
+    if (!isSupabaseConfigured) return [];
+    const ids = new Set<string>();
+    let offset = 0;
+    const limit = 1000;
+    for (;;) {
+      const { data, error } = await supabase!
+        .from('sentence_terms')
+        .select('form:dictionary_forms!inner(dictionary_entry_id), sentence:sentences!inner(source_id)')
+        .eq('user_id', getUserId())
+        .eq('sentence.source_id', sourceId)
+        .range(offset, offset + limit - 1);
+      if (error) throw new Error(`Erro do Supabase ao carregar verbetes da fonte: ${error.message}`);
+      const rows = data || [];
+      for (const row of rows as any[]) {
+        const id = row.form?.dictionary_entry_id;
+        if (id) ids.add(id);
+      }
+      if (rows.length < limit) break;
+      offset += limit;
+    }
+    return Array.from(ids);
+  }
+
   static async getByDictionaryEntry(entryId: string): Promise<SentenceTermWithDictionary[]> {
     if (isE2EMockMode()) return normalizeRichTerms(defaultMockTerms.filter((t) => t.dictionary_entry_id === entryId));
     if (!isSupabaseConfigured) return [];

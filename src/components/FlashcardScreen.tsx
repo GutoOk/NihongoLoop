@@ -6,6 +6,7 @@ import {
   TermRepository,
   SentenceRepository,
   SourceRepository,
+  StudySessionRepository,
 } from "../repositories";
 import { DictionaryEntry, DictionaryProgress, Sentence, Source } from "../types";
 import { FSRSRating, forecastDueReviews } from "../repositories/utils";
@@ -81,9 +82,14 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   // ─── Queue construction ──────────────────────────────────────────────────────
   const resolveAllowedIds = async (config: SessionConfig): Promise<Set<string> | null> => {
     if (!config.sourceId) return null;
-    const sentences = await SentenceRepository.getBySourceId(config.sourceId);
-    const terms = await TermRepository.getBySentences(sentences.map((s) => s.id));
-    return new Set(terms.map((t) => (t as { dictionary_entry_id?: string }).dictionary_entry_id).filter(Boolean) as string[]);
+    try {
+      return new Set(await TermRepository.getDictionaryEntryIdsBySourceId(config.sourceId));
+    } catch (err) {
+      console.warn("Falling back to client-side source filter", err);
+      const sentences = await SentenceRepository.getBySourceId(config.sourceId);
+      const terms = await TermRepository.getBySentences(sentences.map((s) => s.id));
+      return new Set(terms.map((t) => (t as { dictionary_entry_id?: string }).dictionary_entry_id).filter(Boolean) as string[]);
+    }
   };
 
   const startSession = useCallback(async (config: SessionConfig) => {
@@ -116,10 +122,10 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
 
   // ─── Runner callbacks ────────────────────────────────────────────────────────
   const onGrade = useCallback(async (item: CardItem, rating: FSRSRating) => {
-    const p = await ProgressRepository.applyFlashcardFeedback(item.entry.id, RATING_KEYS[rating - 1]);
+    const p = await ProgressRepository.applyFlashcardFeedback(item.entry.id, RATING_KEYS[rating - 1], item.progress, settings.desiredRetention);
     if (p) upsertLocalProgress(item.entry.id, p);
     return p;
-  }, [upsertLocalProgress]);
+  }, [settings.desiredRetention, upsertLocalProgress]);
 
   const onMarkLearned = useCallback(async (item: CardItem) => {
     const existing = item.progress;
@@ -129,12 +135,12 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
       wrong_count: existing?.wrong_count ?? 0,
       last_seen_at: new Date().toISOString(),
       mastery: 999999,
-    });
+    }, item.progress);
     if (p) upsertLocalProgress(item.entry.id, p);
   }, [upsertLocalProgress]);
 
   const onSetFields = useCallback(async (item: CardItem, fields: Partial<DictionaryProgress>) => {
-    const p = await ProgressRepository.setDictionaryProgressFields(item.entry.id, fields);
+    const p = await ProgressRepository.setDictionaryProgressFields(item.entry.id, fields, item.progress);
     if (p) upsertLocalProgress(item.entry.id, p);
     return p;
   }, [upsertLocalProgress]);
@@ -145,10 +151,15 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   }, [upsertLocalProgress]);
 
   const onSaveEdit = useCallback(async (entryId: string, updates: Partial<DictionaryEntry>) => {
-    const updated = await DictionaryRepository.update(entryId, updates);
-    if (updated) setDictionary((prev) => prev.map((e) => e.id === entryId ? { ...e, ...updates } : e));
-    return updated;
-  }, []);
+    try {
+      const updated = await DictionaryRepository.update(entryId, updates);
+      if (updated) setDictionary((prev) => prev.map((e) => e.id === entryId ? updated : e));
+      return updated;
+    } catch (err: any) {
+      showAlert("Nao foi possivel salvar", err?.message || "Verifique os dados do verbete.");
+      return null;
+    }
+  }, [showAlert]);
 
   const loadExample = useCallback(async (entryId: string): Promise<Sentence | null> => {
     try {
@@ -159,10 +170,41 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
   }, []);
 
   const onFinish = useCallback((result: SessionResult) => {
-    FlashcardStore.recordSession(result.total, result.newCount, result.again);
+    FlashcardStore.recordSession(result.reviewCount, result.newCount, result.again);
+    void StudySessionRepository.saveSession({
+      user_id: "",
+      type: "flashcards",
+      source_id: null,
+      started_at: new Date(Date.now() - result.durationMs).toISOString(),
+      completed_at: new Date().toISOString(),
+      config: { mode: sessionMode, ...result },
+    }).catch((err) => console.warn("Failed to save flashcard session", err));
     setLastResult(result);
     setView("summary");
-  }, []);
+  }, [sessionMode]);
+
+  const handleReactivateCard = useCallback((entryId: string) => {
+    void ProgressRepository.setDictionaryProgressFields(entryId, { suspended: false }, progressMap[entryId] || null)
+      .then((p) => { if (p) upsertLocalProgress(entryId, p); })
+      .catch((err) => showAlert("Nao foi possivel reativar", err?.message || "Tente novamente."));
+  }, [progressMap, showAlert, upsertLocalProgress]);
+
+  const handleReturnToReview = useCallback((entryId: string) => {
+    void ProgressRepository.setDictionaryProgressFields(entryId, {
+      suspended: false,
+      mastery: Math.min(progressMap[entryId]?.mastery ?? 80, 80),
+      due_at: new Date().toISOString(),
+    }, progressMap[entryId] || null)
+      .then((p) => { if (p) upsertLocalProgress(entryId, p); })
+      .catch((err) => showAlert("Nao foi possivel voltar para revisao", err?.message || "Tente novamente."));
+  }, [progressMap, showAlert, upsertLocalProgress]);
+
+  const handleResetProgress = useCallback((entryId: string) => {
+    if (!window.confirm("Apagar o historico de progresso deste card?")) return;
+    void ProgressRepository.deleteDictionaryProgress(entryId)
+      .then(() => upsertLocalProgress(entryId, null))
+      .catch((err) => showAlert("Nao foi possivel resetar", err?.message || "Tente novamente."));
+  }, [showAlert, upsertLocalProgress]);
 
   // ─── Settings ────────────────────────────────────────────────────────────────
   const updateSettings = (patch: Partial<FlashcardSettings>) => setSettings(FlashcardStore.saveSettings(patch));
@@ -294,6 +336,9 @@ export default function FlashcardScreen({ onBack }: { onBack: () => void }) {
               progressList={allProgress}
               entries={dictionary}
               onStudyLeeches={() => { setView("hub"); handleQuickStart("leech"); }}
+              onReactivateCard={handleReactivateCard}
+              onReturnToReview={handleReturnToReview}
+              onResetProgress={handleResetProgress}
             />
           )}
         </>

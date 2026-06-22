@@ -1,6 +1,6 @@
 import { supabase, isSupabaseConfigured } from '../core/supabaseClient';
 import { DictionaryProgress, SentenceProgress } from '../types';
-import { chunkArray, computeSrsUpdate, computeFSRSUpdate, FSRSRating, getUserId } from './utils';
+import { chunkArray, computeLegacySentenceSrsUpdate, computeFSRSUpdate, FSRSRating, getUserId } from './utils';
 
 export class ProgressRepository {
   static async getSentenceProgress(sentenceId: string): Promise<SentenceProgress | null> {
@@ -40,8 +40,22 @@ export class ProgressRepository {
   static async getAllDictionaryProgress(): Promise<DictionaryProgress[]> {
     if (!isSupabaseConfigured) return [];
     try {
-      const { data } = await supabase!.from('dictionary_progress').select('*').eq('user_id', getUserId());
-      return data || [];
+      let allData: DictionaryProgress[] = [];
+      let offset = 0;
+      const limit = 1000;
+      for (;;) {
+        const { data, error } = await supabase!
+          .from('dictionary_progress')
+          .select('*')
+          .eq('user_id', getUserId())
+          .range(offset, offset + limit - 1);
+        if (error) throw error;
+        const chunk = data || [];
+        allData = allData.concat(chunk);
+        if (chunk.length < limit) break;
+        offset += limit;
+      }
+      return allData;
     } catch {
       return [];
     }
@@ -51,13 +65,16 @@ export class ProgressRepository {
     if (!isSupabaseConfigured) return null;
     const enriched = { ...progress, user_id: progress.user_id || getUserId() };
     const { data, error } = await supabase!.from('dictionary_progress').upsert(enriched).select().maybeSingle();
-    if (error) console.error(error);
+    if (error) {
+      console.error(error);
+      throw new Error(`Erro do Supabase ao salvar progresso de dicionario: ${error.message}`);
+    }
     return data;
   }
 
   static async updateSentenceProgressLog(sentenceId: string, isCorrect: boolean): Promise<SentenceProgress | null> {
     const existing = await this.getSentenceProgress(sentenceId);
-    const srs = computeSrsUpdate(existing, isCorrect);
+    const srs = computeLegacySentenceSrsUpdate(existing, isCorrect);
     return this.upsertSentenceProgress({
       ...(existing ? { id: existing.id } : {}),
       sentence_id: sentenceId,
@@ -68,7 +85,7 @@ export class ProgressRepository {
 
   static async updateDictionaryProgressLog(dictionaryEntryId: string, isCorrect: boolean): Promise<DictionaryProgress | null> {
     const existing = await this.getDictionaryProgress(dictionaryEntryId);
-    const srs = computeSrsUpdate(existing, isCorrect);
+    const srs = computeFSRSUpdate(existing, isCorrect ? 3 : 1);
     return this.upsertDictionaryProgress({
       ...(existing ? { id: existing.id } : {}),
       dictionary_entry_id: dictionaryEntryId,
@@ -77,8 +94,12 @@ export class ProgressRepository {
     });
   }
 
-  static async setDictionaryProgressFields(dictionaryEntryId: string, fields: Partial<DictionaryProgress>): Promise<DictionaryProgress | null> {
-    const existing = await this.getDictionaryProgress(dictionaryEntryId);
+  static async setDictionaryProgressFields(
+    dictionaryEntryId: string,
+    fields: Partial<DictionaryProgress>,
+    current?: DictionaryProgress | null,
+  ): Promise<DictionaryProgress | null> {
+    const existing = current === undefined ? await this.getDictionaryProgress(dictionaryEntryId) : current;
     return this.upsertDictionaryProgress({
       ...(existing ? { id: existing.id } : {}),
       dictionary_entry_id: dictionaryEntryId,
@@ -96,11 +117,16 @@ export class ProgressRepository {
     return this.upsertDictionaryProgress(progress);
   }
 
-  static async applyFlashcardFeedback(dictionaryEntryId: string, feedback: 'again' | 'hard' | 'good' | 'easy'): Promise<DictionaryProgress | null> {
+  static async applyFlashcardFeedback(
+    dictionaryEntryId: string,
+    feedback: 'again' | 'hard' | 'good' | 'easy',
+    current?: DictionaryProgress | null,
+    desiredRetention = 0.9,
+  ): Promise<DictionaryProgress | null> {
     const ratingMap: Record<string, FSRSRating> = { again: 1, hard: 2, good: 3, easy: 4 };
     const rating = ratingMap[feedback];
-    const existing = await this.getDictionaryProgress(dictionaryEntryId);
-    const update = computeFSRSUpdate(existing, rating);
+    const existing = current === undefined ? await this.getDictionaryProgress(dictionaryEntryId) : current;
+    const update = computeFSRSUpdate(existing, rating, desiredRetention);
 
     const payload = {
       dictionary_entry_id: dictionaryEntryId,

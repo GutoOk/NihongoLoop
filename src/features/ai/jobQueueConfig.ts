@@ -1,4 +1,4 @@
-import { AiJobType } from '../../types';
+import type { AiJobType } from './jobTypes';
 
 export type AiJobConcurrencyMap = Partial<Record<AiJobType, number>>;
 
@@ -21,9 +21,6 @@ export const DEFAULT_AI_QUEUE_LIMITS: AiQueueLimits = {
     generate_sentence_reading: 2,
     detect_sentence_terms: 1,
     enrich_dictionary_entry: 1,
-    generate_dictionary_senses: 1,
-    explain_sentence: 2,
-    repair_sentence: 2,
   },
 };
 

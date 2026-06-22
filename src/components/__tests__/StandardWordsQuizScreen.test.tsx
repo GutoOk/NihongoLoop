@@ -25,7 +25,7 @@ describe('StandardWordsQuizScreen', () => {
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
       { id: '1', main_meaning: 'Carro', lemma: '車' } as any
     ]);
-    vi.mocked(DictionaryRepository.getPage).mockResolvedValue({ entries: [], total: 0 } as any);
+    vi.mocked(DictionaryRepository.getAll).mockResolvedValue([]);
 
     render(<StandardWordsQuizScreen entryIds={['1']} onBack={() => {}} />);
     
@@ -45,7 +45,7 @@ describe('StandardWordsQuizScreen', () => {
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
       { id: '1', main_meaning: 'Carro', lemma: '車' } as any
     ]);
-    vi.mocked(DictionaryRepository.getPage).mockRejectedValue(new Error('distractor query failed'));
+    vi.mocked(DictionaryRepository.getAll).mockRejectedValue(new Error('distractor query failed'));
 
     render(<StandardWordsQuizScreen entryIds={['1']} onBack={() => {}} />);
     
@@ -58,7 +58,7 @@ describe('StandardWordsQuizScreen', () => {
     vi.mocked(DictionaryRepository.getByIds).mockResolvedValue([
       { id: '1', main_meaning: 'Carro', lemma: '車' } as any
     ]);
-    vi.mocked(DictionaryRepository.getPage).mockResolvedValue({ entries: [], total: 0 } as any);
+    vi.mocked(DictionaryRepository.getAll).mockResolvedValue([]);
 
     render(<StandardWordsQuizScreen entryIds={['1']} onBack={() => {}} />);
     

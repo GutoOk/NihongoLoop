@@ -326,7 +326,7 @@ CREATE TABLE schema_versions (
   applied_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v35');
+INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v36');
 
 CREATE TABLE study_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -617,6 +617,20 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.is_supported_ai_job_type(p_type TEXT)
+RETURNS BOOLEAN
+LANGUAGE SQL
+IMMUTABLE
+AS $$
+  SELECT COALESCE(p_type = ANY(ARRAY[
+    'prepare_sentence',
+    'translate_sentence',
+    'generate_sentence_reading',
+    'detect_sentence_terms',
+    'enrich_dictionary_entry'
+  ]::TEXT[]), FALSE);
+$$;
+
 CREATE OR REPLACE FUNCTION public.enqueue_ai_jobs_bulk(p_jobs JSONB)
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -625,7 +639,18 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
   inserted_count INTEGER;
+  unsupported_job_type TEXT;
 BEGIN
+  SELECT COALESCE(incoming.type, '<null>') INTO unsupported_job_type
+  FROM jsonb_to_recordset(p_jobs) AS incoming(type TEXT)
+  WHERE NOT public.is_supported_ai_job_type(incoming.type)
+  LIMIT 1;
+
+  IF unsupported_job_type IS NOT NULL THEN
+    RAISE EXCEPTION 'Unsupported AI job type: %', unsupported_job_type
+      USING ERRCODE = '22023';
+  END IF;
+
   WITH incoming AS (
     SELECT *
     FROM jsonb_to_recordset(p_jobs) AS x(
@@ -1661,12 +1686,28 @@ AS $$
 DECLARE
   run_ids UUID[];
   retried_count INTEGER := 0;
+  unsupported_job_type TEXT;
 BEGIN
   p_user_id := public.request_user_id(p_user_id);
+
+  IF p_job_id IS NOT NULL THEN
+    SELECT type INTO unsupported_job_type
+    FROM ai_jobs
+    WHERE id = p_job_id
+      AND user_id = p_user_id
+      AND NOT public.is_supported_ai_job_type(type)
+    LIMIT 1;
+
+    IF unsupported_job_type IS NOT NULL THEN
+      RAISE EXCEPTION 'Unsupported AI job type: %', unsupported_job_type
+        USING ERRCODE = '22023';
+    END IF;
+  END IF;
 
   SELECT COALESCE(array_agg(DISTINCT run_id) FILTER (WHERE run_id IS NOT NULL), ARRAY[]::UUID[]) INTO run_ids
   FROM ai_jobs
   WHERE user_id = p_user_id
+    AND public.is_supported_ai_job_type(type)
     AND (p_run_id IS NULL OR run_id = p_run_id)
     AND (p_job_id IS NULL OR id = p_job_id)
     AND (
@@ -1685,6 +1726,7 @@ BEGIN
     FROM ai_jobs
     WHERE user_id = p_user_id
       AND status IN ('error','failed','retry_wait','needs_review')
+      AND public.is_supported_ai_job_type(type)
       AND (p_run_id IS NULL OR run_id = p_run_id)
       AND (p_job_id IS NULL OR id = p_job_id)
       AND (
