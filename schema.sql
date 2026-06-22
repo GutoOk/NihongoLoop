@@ -326,7 +326,7 @@ CREATE TABLE schema_versions (
   applied_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v30');
+INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v31');
 
 CREATE TABLE study_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -3870,16 +3870,6 @@ BEGIN
     AND SUBSTRING(current_sentence.japanese FROM r.start_index + 1 FOR r.end_index - r.start_index) = r.surface
   );
 
-  IF invalid_offset_count > 0 THEN
-    PERFORM mark_ai_job_needs_review(
-      p_job_id,
-      p_worker_id,
-      'Offsets lexicais invalidos; reanalise manual necessaria.',
-      jsonb_build_object('sentence_id', current_sentence.id, 'invalid_offset_count', invalid_offset_count)
-    );
-    RETURN jsonb_build_object('needs_review', true, 'sentence_id', current_sentence.id, 'invalid_offset_count', invalid_offset_count);
-  END IF;
-
   DROP TABLE IF EXISTS tmp_lexical_terms;
   CREATE TEMP TABLE tmp_lexical_terms ON COMMIT DROP AS
   SELECT DISTINCT ON (surface, lemma, start_index, end_index)
@@ -3889,6 +3879,10 @@ BEGIN
       LOWER(REGEXP_REPLACE(COALESCE(entry_kana, ''), '[[:space:]]+', '', 'g')) || '|' ||
       LOWER(REGEXP_REPLACE(term_type, '[[:space:]]+', '', 'g')) AS entry_key
   FROM tmp_raw_lexical_terms
+  WHERE start_index >= 0
+    AND end_index > start_index
+    AND end_index <= CHAR_LENGTH(current_sentence.japanese)
+    AND SUBSTRING(current_sentence.japanese FROM start_index + 1 FOR end_index - start_index) = surface
   ORDER BY surface, lemma, start_index, end_index, confidence DESC;
 
   WITH entry_rows AS (

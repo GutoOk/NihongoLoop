@@ -148,6 +148,17 @@ describe('queueWorker persisted execution contract', () => {
     expect(schema).toContain('public.build_ai_job_current_target_hash(current_job ai_jobs)');
   });
 
+  it('sentence preparation completes with valid terms when some AI offsets are invalid', () => {
+    const body = functionBody('apply_sentence_preparation_result');
+    expect(body).toContain('SELECT COUNT(*) INTO invalid_offset_count');
+    expect(body).toContain('CREATE TEMP TABLE tmp_lexical_terms ON COMMIT DROP AS');
+    expect(body).toContain('WHERE start_index >= 0');
+    expect(body).toContain('SUBSTRING(current_sentence.japanese FROM start_index + 1 FOR end_index - start_index) = surface');
+    expect(body).toContain("'invalid_offset_count', invalid_offset_count");
+    expect(body).not.toContain("'Offsets lexicais invalidos; reanalise manual necessaria.'");
+    expect(body).not.toContain("RETURN jsonb_build_object('needs_review'");
+  });
+
   it('manual retry creates a new job preserving the previous one', () => {
     const body = functionBody('retry_ai_jobs');
     expect(body).toContain('retry_of_job_id');
