@@ -18,9 +18,11 @@ import {
   SentenceRepository,
   ProgressRepository,
   DictionaryRepository,
+  DictionaryFormRepository,
+  DictionarySenseRepository,
   TermRepository,
 } from "../repositories";
-import { Sentence, DictionaryEntry } from "../types";
+import { Sentence, DictionaryEntry, DictionaryForm, DictionarySense } from "../types";
 import { SpeechService } from "../services/speechService";
 import { Database } from "../database/db"; // for TTS settings
 import { TERM_COLORS, getTermColor, isLowEmphasisTerm } from "../ui/termColors";
@@ -62,9 +64,12 @@ export default function StudyPlayerScreen({
   const [isPlaying, setIsPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [currentTerms, setCurrentTerms] = useState<any[]>([]);
-  const [activeDictionaryPopup, setActiveDictionaryPopup] = useState<
-    any | null
-  >(null);
+  const [activeDictionaryPopup, setActiveDictionaryPopup] = useState<{
+    term: any;
+    entry: DictionaryEntry | null;
+    forms?: DictionaryForm[];
+    senses?: DictionarySense[];
+  } | null>(null);
   const [showLegendModal, setShowLegendModal] = useState(false);
   const playActiveRef = useRef(false);
 
@@ -159,6 +164,26 @@ export default function StudyPlayerScreen({
       console.error(e);
       alert("Erro ao salvar alterações no banco de dados.");
     }
+  };
+
+  const openDictionaryPanel = async (term: any, entryHint?: DictionaryEntry | null) => {
+    const entryId = entryHint?.id || term?.dictionary_entry_id || term?.id;
+    let entry = entryHint || null;
+    let forms: DictionaryForm[] = [];
+    let senses: DictionarySense[] = [];
+
+    if (entryId) {
+      const [loadedEntry, loadedForms, loadedSenses] = await Promise.all([
+        entry ? Promise.resolve(entry) : DictionaryRepository.getById(entryId),
+        DictionaryFormRepository.getByEntryId(entryId),
+        DictionarySenseRepository.getByEntryId(entryId),
+      ]);
+      entry = loadedEntry;
+      forms = loadedForms;
+      senses = loadedSenses;
+    }
+
+    setActiveDictionaryPopup({ term, entry, forms, senses });
   };
 
   // Picture-in-Picture feature support
@@ -701,10 +726,10 @@ export default function StudyPlayerScreen({
                 playActiveRef.current = false;
                 setIsPlaying(false);
               }
-              setActiveDictionaryPopup({
-                term: { surface: itm.japanese, type: itm.rawRef.type },
-                entry: itm.rawRef,
-              });
+              void openDictionaryPanel(
+                { surface: itm.japanese, type: itm.rawRef.type },
+                itm.rawRef,
+              );
             }}
             className="hover:text-indigo-600 transition-colors cursor-pointer underline decoration-indigo-200 decoration-2 underline-offset-4"
           >
@@ -750,10 +775,7 @@ export default function StudyPlayerScreen({
               setIsPlaying(false);
             }
             if (term.dictionary_entry_id) {
-              const entry = await DictionaryRepository.getById(
-                term.dictionary_entry_id,
-              );
-              setActiveDictionaryPopup({ term, entry: entry || null });
+              await openDictionaryPanel(term);
             }
           }}
           className={termClassName}
@@ -921,21 +943,21 @@ export default function StudyPlayerScreen({
           )}
       </footer>
 
-      {/* Mini Dictionary Popup when clicked in Pause Mode */}
+      {/* Side dictionary panel when clicking a word */}
       {activeDictionaryPopup && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
-          onClick={() => setActiveDictionaryPopup(null)}
+          className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-slate-200 bg-white shadow-2xl"
         >
           <div
-            className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl space-y-4 text-gray-900"
-            onClick={(e) => e.stopPropagation()}
+            className="flex h-full flex-col overflow-y-auto text-gray-900"
           >
-            <div className="text-center space-y-1 relative">
+            <div className="relative shrink-0 border-b border-slate-100 p-4 text-center space-y-1">
               <button
                 onClick={() => setActiveDictionaryPopup(null)}
-                className="absolute -top-1 -right-1 text-slate-400 p-2 hover:bg-slate-100 rounded-full transition-colors"
+                className="absolute right-3 top-3 rounded-lg p-2 text-[0px] text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Fechar painel da palavra"
               >
+                <X className="h-4 w-4" />
                 ✕
               </button>
               {activeDictionaryPopup?.entry?.kana && (
@@ -944,7 +966,8 @@ export default function StudyPlayerScreen({
                 </p>
               )}
               <h3 className="text-3xl font-black text-slate-900">
-                {activeDictionaryPopup?.term?.surface ||
+                {activeDictionaryPopup?.entry?.lemma ||
+                  activeDictionaryPopup?.term?.surface ||
                   activeDictionaryPopup?.term?.japanese ||
                   ""}
               </h3>
@@ -955,8 +978,8 @@ export default function StudyPlayerScreen({
               )}
             </div>
 
-            <div className="space-y-3 pt-3">
-              <div className="bg-indigo-50/70 p-4 rounded-2xl text-center border border-indigo-100/30">
+            <div className="space-y-4 p-4">
+              <div className="bg-indigo-50/70 p-4 rounded-lg text-center border border-indigo-100/30">
                 {activeDictionaryPopup?.entry?.main_meaning ? (
                   <span className="text-sm font-bold text-indigo-900">
                     {activeDictionaryPopup.entry.main_meaning}
@@ -967,16 +990,135 @@ export default function StudyPlayerScreen({
                   </span>
                 )}
               </div>
-              <div className="flex justify-center gap-2">
+              <div className="flex flex-wrap justify-center gap-2">
                 <span className="bg-slate-100 px-3 py-1 rounded-full text-[10px] font-mono font-bold text-slate-500 uppercase">
                   {activeDictionaryPopup?.entry?.type ||
                     activeDictionaryPopup?.term?.type ||
                     "Outro"}
                 </span>
+                {activeDictionaryPopup?.entry?.subtype && (
+                  <span className="bg-indigo-50 px-3 py-1 rounded-full text-[10px] font-mono font-bold text-indigo-700 uppercase">
+                    {activeDictionaryPopup.entry.subtype}
+                  </span>
+                )}
+                {activeDictionaryPopup?.entry?.jlpt_level && (
+                  <span className="bg-emerald-50 px-3 py-1 rounded-full text-[10px] font-mono font-black text-emerald-800 uppercase">
+                    {activeDictionaryPopup.entry.jlpt_level}
+                  </span>
+                )}
               </div>
+
+              {getPanelMeanings(activeDictionaryPopup).length > 1 && (
+                <PanelSection title="Acepcoes">
+                  <ol className="space-y-2">
+                    {getPanelMeanings(activeDictionaryPopup).map((meaning, idx) => (
+                      <li key={`${meaning}-${idx}`} className="flex gap-2 text-xs font-semibold leading-relaxed text-slate-700">
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[10px] font-black text-indigo-700">
+                          {idx + 1}
+                        </span>
+                        <span>{meaning}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </PanelSection>
+              )}
+
+              {activeDictionaryPopup?.entry?.short_note && (
+                <PanelSection title="Nota rapida">
+                  <p className="text-xs font-semibold leading-relaxed text-amber-950">
+                    {activeDictionaryPopup.entry.short_note}
+                  </p>
+                </PanelSection>
+              )}
+
+              {(activeDictionaryPopup?.entry?.grammar_info || activeDictionaryPopup?.entry?.subtype) && (
+                <PanelSection title="Regras de uso e gramatica">
+                  {activeDictionaryPopup?.entry?.subtype && (
+                    <p className="text-xs font-bold text-indigo-800">
+                      {activeDictionaryPopup.entry.type} - {activeDictionaryPopup.entry.subtype}
+                    </p>
+                  )}
+                  {activeDictionaryPopup?.entry?.grammar_info && (
+                    <p className="whitespace-pre-wrap text-xs font-semibold leading-relaxed text-slate-700">
+                      {activeDictionaryPopup.entry.grammar_info}
+                    </p>
+                  )}
+                </PanelSection>
+              )}
+
+              {activeDictionaryPopup?.senses && activeDictionaryPopup.senses.length > 0 && (
+                <PanelSection title="Sentidos detalhados">
+                  {activeDictionaryPopup.senses.map((sense) => (
+                    <div key={sense.id} className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-left">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-black text-slate-900">{sense.meaning}</span>
+                        {sense.meaning_type && (
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-500">
+                            {sense.meaning_type}
+                          </span>
+                        )}
+                      </div>
+                      {sense.explanation && (
+                        <p className="mt-2 text-xs font-semibold leading-relaxed text-slate-600">
+                          {sense.explanation}
+                        </p>
+                      )}
+                      {(sense.example_japanese || sense.example_portuguese) && (
+                        <div className="mt-2 rounded-lg bg-white p-2 text-xs">
+                          {sense.example_japanese && <p className="font-black text-slate-900">{sense.example_japanese}</p>}
+                          {sense.example_portuguese && <p className="mt-1 font-medium text-slate-500">{sense.example_portuguese}</p>}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </PanelSection>
+              )}
+
+              {activeDictionaryPopup?.entry?.components &&
+                Array.isArray(activeDictionaryPopup.entry.components) &&
+                activeDictionaryPopup.entry.components.length > 0 && (
+                  <PanelSection title="Estrutura dos ideogramas">
+                    <div className="space-y-2">
+                      {activeDictionaryPopup.entry.components.map((component: any, idx: number) => (
+                        <div key={`${component.kanji || idx}`} className="flex items-center gap-3 rounded-lg border border-teal-100 bg-teal-50/50 p-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white text-2xl font-black text-teal-700">
+                            {component.kanji}
+                          </div>
+                          <div className="min-w-0">
+                            {component.reading && (
+                              <p className="text-[9px] font-bold uppercase tracking-wide text-teal-600">
+                                {component.reading}
+                              </p>
+                            )}
+                            <p className="truncate text-xs font-black text-slate-800">
+                              {component.meaning}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </PanelSection>
+                )}
+
+              {activeDictionaryPopup?.forms && activeDictionaryPopup.forms.length > 0 && (
+                <PanelSection title="Formas e inflexoes">
+                  <div className="flex flex-wrap gap-2">
+                    {activeDictionaryPopup.forms.map((form) => (
+                      <span
+                        key={form.id}
+                        className="rounded-lg border border-orange-100 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-950"
+                        title={form.grammar_note || undefined}
+                      >
+                        {form.form}
+                        {form.form_type && <span className="ml-1 text-[9px] uppercase text-orange-500">{form.form_type}</span>}
+                      </span>
+                    ))}
+                  </div>
+                </PanelSection>
+              )}
             </div>
 
-            <div className="pt-2 space-y-2">
+            <div className="p-4 pt-0 space-y-2">
               {activeDictionaryPopup?.entry && parentNavigate && (
                 <button
                   onClick={() => {
@@ -987,14 +1129,14 @@ export default function StudyPlayerScreen({
                   }}
                   className="w-full bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 text-xs font-bold py-3.5 rounded-xl uppercase tracking-widest transition-colors shadow-sm"
                 >
-                  Ver Ficha Completa
+                  Editar ficha
                 </button>
               )}
               <button
                 onClick={() => setActiveDictionaryPopup(null)}
                 className="w-full bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold py-3.5 rounded-xl uppercase tracking-widest transition-colors shadow-md"
               >
-                Continuar
+                Fechar painel
               </button>
             </div>
           </div>
@@ -1198,5 +1340,27 @@ export default function StudyPlayerScreen({
         </div>
       )}
     </div>
+  );
+}
+
+function getPanelMeanings(selection: {
+  entry: DictionaryEntry | null;
+  senses?: DictionarySense[];
+}) {
+  const values = [
+    selection.entry?.main_meaning,
+    ...(selection.senses || []).map((sense) => sense.meaning),
+  ].filter((value): value is string => Boolean(value && value.trim()));
+  return Array.from(new Set(values)).slice(0, 8);
+}
+
+function PanelSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4 text-left">
+      <h4 className="mb-3 text-[10px] font-black uppercase tracking-widest text-slate-400">
+        {title}
+      </h4>
+      <div className="space-y-3">{children}</div>
+    </section>
   );
 }
