@@ -338,7 +338,6 @@ export interface ProcessingRun {
   completed_jobs?: number;
   failed_jobs?: number;
   retry_jobs?: number;
-  review_jobs?: number;
   needs_review_jobs?: number;
   cancelled_jobs?: number;
   obsolete_jobs?: number;

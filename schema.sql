@@ -74,7 +74,6 @@ CREATE TABLE processing_runs (
   completed_jobs INTEGER DEFAULT 0,
   failed_jobs INTEGER DEFAULT 0,
   retry_jobs INTEGER DEFAULT 0,
-  review_jobs INTEGER DEFAULT 0,
   needs_review_jobs INTEGER DEFAULT 0,
   cancelled_jobs INTEGER DEFAULT 0,
   obsolete_jobs INTEGER DEFAULT 0,
@@ -327,7 +326,7 @@ CREATE TABLE schema_versions (
   applied_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v29');
+INSERT INTO schema_versions(key, version) VALUES ('ai_queue', '2026-06-ai-queue-v30');
 
 CREATE TABLE study_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1354,7 +1353,6 @@ BEGIN
     completed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'completed'), 0),
     failed_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'failed'), 0),
     retry_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'retry_wait'), 0),
-    review_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'needs_review'), 0),
     needs_review_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'needs_review'), 0),
     cancelled_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'cancelled'), 0),
     obsolete_jobs = COALESCE((SELECT COUNT(*) FROM ai_jobs WHERE run_id = p_run_id AND status = 'obsolete'), 0),
@@ -3277,7 +3275,6 @@ BEGIN
   IF current_stage_id IS NOT NULL THEN
     UPDATE processing_run_stages
     SET needs_review_jobs = needs_review_jobs + 1,
-        review_jobs = review_jobs + 1,
         status = 'needs_review',
         blocked_reason = p_error
     WHERE id = current_stage_id;

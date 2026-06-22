@@ -47,7 +47,6 @@ const baseRun = {
   completed_jobs: 190,
   failed_jobs: 4,
   retry_jobs: 5,
-  review_jobs: 1,
   needs_review_jobs: 1,
   cancelled_jobs: 0,
   failed_items: 4,

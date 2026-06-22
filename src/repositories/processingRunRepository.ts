@@ -32,7 +32,6 @@ const PROCESSING_RUN_SELECT = [
   'completed_jobs',
   'failed_jobs',
   'retry_jobs',
-  'review_jobs',
   'needs_review_jobs',
   'cancelled_jobs',
   'obsolete_jobs',

@@ -226,7 +226,7 @@ export default function SourcePreparationPanel({
                 <Metric label="Rodando" value={run.running_jobs || 0} />
                 <Metric label="Concluidos" value={run.completed_jobs || 0} />
                 <Metric label="Retry" value={run.retry_jobs || 0} />
-                <Metric label="Revisao" value={run.review_jobs || 0} />
+                <Metric label="Revisao" value={run.needs_review_jobs || 0} />
                 <Metric label="Falhas" value={run.failed_items || 0} />
                 <div className="sm:col-span-4 lg:col-span-8 rounded-lg bg-slate-50 p-3 text-xs font-semibold leading-relaxed text-slate-600">
                   {run.current_step || 'Execucao criada. O worker persistente consome os jobs sem depender desta tela.'}
@@ -415,12 +415,12 @@ function summarizeRun(run: ProcessingRun | null) {
     pending: run?.pending_jobs || 0,
     running: (run?.running_jobs || 0) + (run?.claimed_jobs || 0),
     retry: run?.retry_jobs || 0,
-    review: run?.review_jobs || run?.needs_review_jobs || 0,
+    review: run?.needs_review_jobs || 0,
     completed: run?.completed_jobs || 0,
     cancelled: run?.cancelled_jobs || 0,
     error: run?.failed_jobs || run?.failed_items || 0,
     stuck: 0,
-    clearable: (run?.pending_jobs || 0) + (run?.running_jobs || 0) + (run?.claimed_jobs || 0) + (run?.retry_jobs || 0) + (run?.review_jobs || run?.needs_review_jobs || 0) + (run?.failed_jobs || run?.failed_items || 0),
+    clearable: (run?.pending_jobs || 0) + (run?.running_jobs || 0) + (run?.claimed_jobs || 0) + (run?.retry_jobs || 0) + (run?.needs_review_jobs || 0) + (run?.failed_jobs || run?.failed_items || 0),
   };
 }
 

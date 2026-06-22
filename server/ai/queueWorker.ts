@@ -3,7 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import { buildSingleAiRequest } from "./prompts";
 import { generateStructuredJsonWithMeta } from "../geminiJson";
 
-export const AI_QUEUE_SCHEMA_VERSION = "2026-06-ai-queue-v29";
+export const AI_QUEUE_SCHEMA_VERSION = "2026-06-ai-queue-v30";
 
 type QueueJob = {
   id: string;
