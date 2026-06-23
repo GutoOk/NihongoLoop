@@ -57,10 +57,9 @@ CREATE POLICY "source_groups insert own" ON public.source_groups
     (user_id = auth.uid()::TEXT OR public.is_app_admin())
     AND (
       parent_id IS NULL
-      OR EXISTS (
-        SELECT 1 FROM public.source_groups parent
-        WHERE parent.id = source_groups.parent_id
-          AND (parent.user_id = auth.uid()::TEXT OR public.is_app_admin())
+      OR parent_id IN (
+        SELECT id FROM public.source_groups
+        WHERE user_id = auth.uid()::TEXT OR public.is_app_admin()
       )
     )
   );
@@ -70,10 +69,9 @@ CREATE POLICY "source_groups update own" ON public.source_groups
     (user_id = auth.uid()::TEXT OR public.is_app_admin())
     AND (
       parent_id IS NULL
-      OR EXISTS (
-        SELECT 1 FROM public.source_groups parent
-        WHERE parent.id = source_groups.parent_id
-          AND (parent.user_id = auth.uid()::TEXT OR public.is_app_admin())
+      OR parent_id IN (
+        SELECT id FROM public.source_groups
+        WHERE user_id = auth.uid()::TEXT OR public.is_app_admin()
       )
     )
   );
