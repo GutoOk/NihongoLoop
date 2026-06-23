@@ -342,17 +342,14 @@ export default function SourcesScreen({
         {/* Render sources */}
         {childSources.map((source) => {
           const sentences = sentencesBySource[source.id] || [];
-          const readCount = sentences.filter((s) => s.status !== "raw").length;
-          const sourceGroupIds = membershipsBySource.get(source.id) || [];
           const sentencesFailed = failedSentenceLoads[source.id];
-          const isCollapsed = collapsedItems[source.id] ?? true;
 
           return (
             <div
               key={source.id}
               draggable
               onDragStart={(e) => handleDragStart(e, source.id, 'source')}
-              className={`card flex flex-col gap-3 transition-all cursor-grab active:cursor-grabbing ${isCollapsed ? 'py-2.5 px-3' : 'py-3.5 px-4'}`}
+              className="card flex flex-col gap-3 transition-all cursor-grab active:cursor-grabbing py-2.5 px-3"
             >
               <div className="flex items-start gap-3">
                 <div className="flex items-center self-center text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing mr-0.5" title="Arraste para mover para uma pasta">
@@ -363,18 +360,13 @@ export default function SourcesScreen({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-start gap-2">
-                    <h3 className="text-xs font-black text-[#1D1D1F] line-clamp-1">
+                    <h3
+                      onClick={() => onSelectSource(source.id)}
+                      className="text-xs font-black text-[#1D1D1F] line-clamp-1 cursor-pointer hover:text-indigo-600 hover:underline"
+                    >
                       {source.title}
                     </h3>
                     <div className="flex items-center gap-1 shrink-0 -mt-1 -mr-1">
-                      <button
-                        type="button"
-                        onClick={() => setCollapsedItems((prev) => ({ ...prev, [source.id]: !isCollapsed }))}
-                        className="text-slate-400 hover:text-slate-600 p-1"
-                        aria-label={isCollapsed ? "Expandir" : "Recolher"}
-                      >
-                        {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-                      </button>
                       <button
                         type="button"
                         onClick={() => handleDeleteSource(source)}
@@ -387,65 +379,20 @@ export default function SourcesScreen({
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-[8px] font-mono font-bold text-[#86868B] bg-[#F5F5F7] px-1.5 py-0.5 rounded">
-                      {source.type.toUpperCase()}
+                      {source.type.toLowerCase() === "srt" ? "LEGENDA" : source.type.toUpperCase()}
                     </span>
                     {sentencesFailed ? (
                       <span className="text-[8px] text-rose-500 font-bold">
                         contagem indisponível
                       </span>
                     ) : (
-                      <>
-                        <span className="text-[8px] text-[#86868B] font-bold">
-                          {sentences.length} frases
-                        </span>
-                        <span className="text-[8px] text-[#86868B]">·</span>
-                        <span className="text-[8px] text-indigo-500 font-bold">
-                          {readCount} lidas
-                        </span>
-                      </>
+                      <span className="text-[8px] text-[#86868B] font-bold">
+                        {sentences.length} frases
+                      </span>
                     )}
                   </div>
                 </div>
               </div>
-
-              {!isCollapsed && (
-                <div className="space-y-3 border-t border-slate-100 pt-2.5 mt-0.5">
-                  <div className="space-y-1.5">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Organizar em Grupos</span>
-                    {flattenedGroups.length === 0 ? (
-                      <p className="text-[9px] font-medium text-slate-400">Crie um grupo acima para organizar.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {flattenedGroups.map(({ group }) => {
-                          const isMember = sourceGroupIds.includes(group.id);
-                          return (
-                            <button
-                              key={group.id}
-                              type="button"
-                              onClick={() => handleToggleGroupMembership(source.id, group.id, isMember)}
-                              className={`rounded-full px-2 py-0.5 text-[9px] font-bold transition-all ${
-                                isMember
-                                  ? "bg-indigo-600 text-white shadow-sm"
-                                  : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                              }`}
-                            >
-                              {group.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => onSelectSource(source.id)}
-                    className="w-full flex items-center justify-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[10px] font-black uppercase tracking-widest py-2.5 rounded-xl transition-colors"
-                  >
-                    <BookOpen className="w-3.5 h-3.5" /> Abrir Fonte
-                  </button>
-                </div>
-              )}
             </div>
           );
         })}
@@ -455,15 +402,13 @@ export default function SourcesScreen({
           const cardCount = deck.config.deckKind === "sentences"
             ? deck.config.sentenceIds?.length || 0
             : deck.config.entryIds?.length || 0;
-          const deckGroupIds = deck.config.groupIds || [];
-          const isCollapsed = collapsedItems[deck.id] ?? true;
 
           return (
             <div
               key={deck.id}
               draggable
               onDragStart={(e) => handleDragStart(e, deck.id, 'deck')}
-              className={`card flex flex-col gap-3 border-l-4 transition-all cursor-grab active:cursor-grabbing ${isCollapsed ? 'py-2.5 px-3' : 'py-3.5 px-4'} ${DECK_BORDER_CLASSES[deck.color] || 'border-l-indigo-500'}`}
+              className={`card flex flex-col gap-3 border-l-4 transition-all cursor-grab active:cursor-grabbing py-2.5 px-3 ${DECK_BORDER_CLASSES[deck.color] || 'border-l-indigo-500'}`}
             >
               <div className="flex items-start gap-3">
                 <div className="flex items-center self-center text-slate-300 hover:text-slate-500 cursor-grab active:cursor-grabbing mr-0.5" title="Arraste para mover para uma pasta">
@@ -474,18 +419,13 @@ export default function SourcesScreen({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-start gap-2">
-                    <h3 className="text-xs font-black text-[#1D1D1F] line-clamp-1">
+                    <h3
+                      onClick={() => onStudyDeck?.(deck)}
+                      className="text-xs font-black text-[#1D1D1F] line-clamp-1 cursor-pointer hover:text-indigo-600 hover:underline"
+                    >
                       {deck.name}
                     </h3>
                     <div className="flex items-center gap-1 shrink-0 -mt-1 -mr-1">
-                      <button
-                        type="button"
-                        onClick={() => setCollapsedItems((prev) => ({ ...prev, [deck.id]: !isCollapsed }))}
-                        className="text-slate-400 hover:text-slate-600 p-1"
-                        aria-label={isCollapsed ? "Expandir" : "Recolher"}
-                      >
-                        {isCollapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-                      </button>
                       <button
                         type="button"
                         onClick={() => handleDeleteDeck(deck.id)}
@@ -506,45 +446,6 @@ export default function SourcesScreen({
                   </div>
                 </div>
               </div>
-
-              {!isCollapsed && (
-                <div className="space-y-3 border-t border-slate-100 pt-2.5 mt-0.5">
-                  <div className="space-y-1.5">
-                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Organizar em Grupos</span>
-                    {flattenedGroups.length === 0 ? (
-                      <p className="text-[9px] font-medium text-slate-400">Crie um grupo acima para organizar.</p>
-                    ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {flattenedGroups.map(({ group }) => {
-                          const isMember = deckGroupIds.includes(group.id);
-                          return (
-                            <button
-                              key={group.id}
-                              type="button"
-                              onClick={() => handleToggleDeckGroupMembership(deck.id, group.id, isMember)}
-                              className={`rounded-full px-2 py-0.5 text-[9px] font-bold transition-all ${
-                                isMember
-                                  ? "bg-indigo-600 text-white shadow-sm"
-                                  : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                              }`}
-                            >
-                              {group.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => onStudyDeck?.(deck)}
-                    className="w-full flex items-center justify-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[10px] font-black uppercase tracking-widest py-2.5 rounded-xl transition-colors"
-                  >
-                    <BookOpen className="w-3.5 h-3.5" /> Estudar Baralho
-                  </button>
-                </div>
-              )}
             </div>
           );
         })}
