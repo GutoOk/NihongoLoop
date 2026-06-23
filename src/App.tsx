@@ -228,6 +228,22 @@ export default function App() {
                     },
                   })
                 }
+                onStudyDeck={(deck) => {
+                  if (deck.config.deckKind === "sentences") {
+                    handleNavigate("study_player", {
+                      config: {
+                        entityType: "sentence",
+                        targetType: "custom_sentence_deck",
+                        sentenceIds: deck.config.sentenceIds,
+                        limit: deck.config.sentenceIds?.length || 9999,
+                        order: deck.config.order || "original",
+                        studyMode: "jp-pt",
+                      },
+                    });
+                  } else {
+                    handleNavigate("flashcards");
+                  }
+                }}
               />
             </div>
           )}

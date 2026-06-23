@@ -46,6 +46,7 @@ export interface SessionConfig {
   onlyDue: boolean;
   quick?: QuickMode;
   label?: string;
+  groupIds?: string[];
 }
 
 export interface CustomDeck {
@@ -166,6 +167,16 @@ export const FlashcardStore = {
       ...flashcardSnapshot,
       decks: flashcardSnapshot.decks.filter((d) => d.id !== id),
     };
+  },
+  async updateDeckRemote(id: string, updates: Partial<Pick<CustomDeck, 'name' | 'color' | 'config'>>): Promise<CustomDeck | null> {
+    const updated = await FlashcardRepository.updateDeck(id, updates);
+    if (updated) {
+      flashcardSnapshot = {
+        ...flashcardSnapshot,
+        decks: flashcardSnapshot.decks.map((d) => (d.id === id ? updated : d)),
+      };
+    }
+    return updated;
   },
 
   // ─── Daily log (streak + heatmap + throttling + tutor signals) ────────────────
