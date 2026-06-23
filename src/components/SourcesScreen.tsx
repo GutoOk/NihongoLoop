@@ -25,8 +25,6 @@ export default function SourcesScreen({
   const [showGroupForm, setShowGroupForm] = useState(false);
   const [groupName, setGroupName] = useState("");
   const [parentGroupId, setParentGroupId] = useState("");
-  const [editingSource, setEditingSource] = useState<Source | null>(null);
-  const [draftGroupIds, setDraftGroupIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [groupsError, setGroupsError] = useState(false);
@@ -145,20 +143,13 @@ export default function SourcesScreen({
     );
   };
 
-  const openSourceGroups = (source: Source) => {
-    if (editingSource?.id === source.id) {
-      setEditingSource(null);
-    } else {
-      setEditingSource(source);
-      setDraftGroupIds(membershipsBySource.get(source.id) || []);
-    }
-  };
-
-  const saveSourceGroups = async () => {
-    if (!editingSource) return;
+  const handleToggleGroupMembership = async (sourceId: string, groupId: string, isCurrentlyMember: boolean) => {
     try {
-      await SourceRepository.setSourceGroups(editingSource.id, draftGroupIds);
-      setEditingSource(null);
+      const currentGroups = membershipsBySource.get(sourceId) || [];
+      const newGroups = isCurrentlyMember
+        ? currentGroups.filter((id) => id !== groupId)
+        : [...currentGroups, groupId];
+      await SourceRepository.setSourceGroups(sourceId, newGroups);
       await loadSources();
     } catch (err: any) {
       showAlert("Nao foi possivel organizar fonte", err?.message || "Tente novamente.");
@@ -376,59 +367,42 @@ export default function SourcesScreen({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openSourceGroups(source)}
-                      className={`w-full flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest py-3 rounded-xl transition-colors ${editingSource?.id === source.id ? "bg-indigo-600 text-white" : "bg-slate-50 hover:bg-slate-100 text-slate-600"}`}
-                    >
-                      <Folder className="w-4 h-4" /> Organizar
-                    </button>
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Organizar em Grupos</span>
+                      {flattenedGroups.length === 0 ? (
+                        <p className="text-[10px] font-medium text-slate-400">Crie um grupo acima para organizar.</p>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {flattenedGroups.map(({ group }) => {
+                            const isMember = sourceGroupIds.includes(group.id);
+                            return (
+                              <button
+                                key={group.id}
+                                type="button"
+                                onClick={() => handleToggleGroupMembership(source.id, group.id, isMember)}
+                                className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition-all ${
+                                  isMember
+                                    ? "bg-indigo-600 text-white shadow-sm"
+                                    : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                                }`}
+                              >
+                                {group.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => onSelectSource(source.id)}
                       className="w-full flex items-center justify-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-xs font-black uppercase tracking-widest py-3 rounded-xl transition-colors"
                     >
-                      <BookOpen className="w-4 h-4" /> Abrir
+                      <BookOpen className="w-4 h-4" /> Abrir Fonte
                     </button>
                   </div>
-
-                  {editingSource?.id === source.id && (
-                    <div className="border-t border-slate-100 pt-3 mt-1 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Grupos de estudo</span>
-                      </div>
-                      <div className="max-h-60 overflow-auto space-y-1.5 pr-1">
-                        {flattenedGroups.length === 0 ? (
-                          <p className="rounded-xl bg-slate-50 p-3 text-xs font-bold text-slate-500">Crie um grupo para organizar esta fonte.</p>
-                        ) : flattenedGroups.map(({ group, depth }) => {
-                          const checked = draftGroupIds.includes(group.id);
-                          return (
-                            <label
-                              key={group.id}
-                              className={`flex items-center gap-3 rounded-xl border p-2.5 cursor-pointer transition-colors ${checked ? "border-indigo-200 bg-indigo-50/40" : "border-slate-100 bg-white hover:bg-slate-50/50"}`}
-                              style={{ marginLeft: depth * 12 }}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() => setDraftGroupIds((current) => checked ? current.filter((id) => id !== group.id) : [...current, group.id])}
-                                className="h-4 w-4 rounded text-indigo-600 focus:ring-indigo-500"
-                              />
-                              <span className="text-xs font-bold text-slate-700">{group.name}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={saveSourceGroups}
-                        className="btn btn-primary w-full py-2.5 text-xs uppercase tracking-wider font-bold"
-                      >
-                        Salvar Organização
-                      </button>
-                    </div>
-                  )}
                 </div>
               );
             })}
