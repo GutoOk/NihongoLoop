@@ -965,9 +965,10 @@ export default function ReadingScreen({
                   <button
                     onClick={() => handleReanalyzeSentence(sent)}
                     disabled={bulkProcessing}
-                    className={`p-1.5 rounded-full ${reanalyzingId === sent.id ? "bg-indigo-50 text-indigo-600" : "text-gray-300 hover:bg-gray-50"}`}
+                    className={`tap-icon-sm rounded-full ${reanalyzingId === sent.id ? "bg-indigo-50 text-indigo-600" : "text-gray-300 hover:bg-gray-50"}`}
                     style={{ transition: "all 0.2s" }}
                     title="Re-analisar e Corrigir Card com IA"
+                    aria-label={`Re-analisar frase ${index + 1} com IA`}
                   >
                     <RefreshCw
                       className={`w-3.5 h-3.5 ${reanalyzingId === sent.id ? "animate-spin" : ""}`}
@@ -975,7 +976,9 @@ export default function ReadingScreen({
                   </button>
                   <button
                     onClick={() => handleToggleFavorite(sent)}
-                    className={`p-1.5 rounded-full ${sent.favorite ? "bg-amber-50 text-amber-500" : "text-gray-300 hover:bg-gray-50"}`}
+                    className={`tap-icon-sm rounded-full ${sent.favorite ? "bg-amber-50 text-amber-500" : "text-gray-300 hover:bg-gray-50"}`}
+                    aria-label={sent.favorite ? `Remover frase ${index + 1} dos favoritos` : `Marcar frase ${index + 1} como favorita`}
+                    aria-pressed={Boolean(sent.favorite)}
                   >
                     <Star
                       className={`w-3.5 h-3.5 ${sent.favorite ? "fill-current" : ""}`}
@@ -983,7 +986,9 @@ export default function ReadingScreen({
                   </button>
                   <button
                     onClick={() => handleToggleDifficulty(sent)}
-                    className={`p-1.5 rounded-full ${sent.difficulty && sent.difficulty > 0 ? "bg-rose-50 text-rose-500" : "text-gray-300 hover:bg-gray-50"}`}
+                    className={`tap-icon-sm rounded-full ${sent.difficulty && sent.difficulty > 0 ? "bg-rose-50 text-rose-500" : "text-gray-300 hover:bg-gray-50"}`}
+                    aria-label={sent.difficulty && sent.difficulty > 0 ? `Remover marcação difícil da frase ${index + 1}` : `Marcar frase ${index + 1} como difícil`}
+                    aria-pressed={Boolean(sent.difficulty && sent.difficulty > 0)}
                   >
                     <AlertCircle
                       className={`w-3.5 h-3.5 ${sent.difficulty && sent.difficulty > 0 ? "fill-current" : ""}`}
@@ -991,15 +996,17 @@ export default function ReadingScreen({
                   </button>
                   <button
                     onClick={() => handleEditClick(sent)}
-                    className={`p-1.5 rounded-full ${editingSentenceId === sent.id ? "bg-indigo-50 text-indigo-600 font-bold" : "text-gray-300 hover:text-indigo-600 hover:bg-gray-55"}`}
+                    className={`tap-icon-sm rounded-full ${editingSentenceId === sent.id ? "bg-indigo-50 text-indigo-600 font-bold" : "text-gray-300 hover:text-indigo-600 hover:bg-gray-50"}`}
                     title="Editar Card"
+                    aria-label={`Editar frase ${index + 1}`}
                   >
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => handleDeleteSentence(sent)}
-                    className="p-1.5 rounded-full text-gray-300 hover:text-rose-600 hover:bg-gray-50"
+                    className="tap-icon-sm rounded-full text-gray-300 hover:text-rose-600 hover:bg-rose-50"
                     title="Excluir Card"
+                    aria-label={`Excluir frase ${index + 1}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -1077,8 +1084,9 @@ export default function ReadingScreen({
                     </p>
                     <button
                       onClick={() => handleEditClick(sent)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-full opacity-0 group-hover:opacity-100 transition-all focus:opacity-100"
+                      className="tap-icon absolute right-1 top-1/2 -translate-y-1/2 text-gray-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-full opacity-0 group-hover:opacity-100 transition-all focus:opacity-100"
                       title="Editar Card"
+                      aria-label={`Editar tradução da frase ${index + 1}`}
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>

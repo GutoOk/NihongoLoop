@@ -89,7 +89,7 @@ export default function LoginScreen() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">
+            <label htmlFor="login-email" className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">
               E-mail
             </label>
             <div className="relative">
@@ -97,6 +97,7 @@ export default function LoginScreen() {
                 <Mail className="w-4 h-4" />
               </span>
               <input
+                id="login-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -108,7 +109,7 @@ export default function LoginScreen() {
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">
+            <label htmlFor="login-password" className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1">
               Senha
             </label>
             <div className="relative">
@@ -116,6 +117,7 @@ export default function LoginScreen() {
                 <Lock className="w-4 h-4" />
               </span>
               <input
+                id="login-password"
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -126,7 +128,9 @@ export default function LoginScreen() {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-slate-600 transition-colors"
+                aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                aria-pressed={showPassword}
+                className="tap-icon absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-slate-600 transition-colors"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>

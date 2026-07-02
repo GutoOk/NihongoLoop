@@ -22,8 +22,29 @@ body {
 /* ─── Design-system utilities ─────────────────────────────────────────────── */
 
 /* Screen layout */
-.screen       { display: flex; flex-direction: column; height: 100%; background: #fff; color: #1D1D1F; }
-.screen-gray  { display: flex; flex-direction: column; height: 100%; background: #F5F5F7; color: #1D1D1F; }
+.screen       { display: flex; flex-direction: column; height: 100%; min-height: 0; background: #fff; color: #1D1D1F; }
+.screen-gray  { display: flex; flex-direction: column; height: 100%; min-height: 0; background: #F5F5F7; color: #1D1D1F; }
+
+.app-bottom-nav {
+  min-height: calc(4rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.tap-icon {
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tap-icon-sm {
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 
 /* Sticky header shared by all sub-screens */
 .screen-header {

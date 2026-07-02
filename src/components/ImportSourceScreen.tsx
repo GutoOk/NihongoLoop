@@ -305,8 +305,9 @@ export default function ImportSourceScreen({
 
       <main className="flex-1 overflow-auto p-6 space-y-6">
         <div className="space-y-1.5">
-          <label className="field-label">Título da Fonte</label>
+          <label htmlFor="source-title" className="field-label">Título da Fonte</label>
           <input
+            id="source-title"
             type="text"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -323,6 +324,7 @@ export default function ImportSourceScreen({
               type="button"
               onClick={() => setType("text")}
               disabled={isProcessing}
+              aria-pressed={type === "text"}
               className={`flex-1 py-3 text-xs font-bold rounded-xl border flex items-center justify-center gap-2 transition-all disabled:opacity-50 ${type === "text" ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-[#E5E5E7] text-[#86868B] hover:border-[#1D1D1F]"}`}
             >
               <FileText className="w-4 h-4" /> Texto Puro
@@ -331,6 +333,7 @@ export default function ImportSourceScreen({
               type="button"
               onClick={() => setType("srt")}
               disabled={isProcessing}
+              aria-pressed={type === "srt"}
               className={`flex-1 py-3 text-xs font-bold rounded-xl border flex items-center justify-center gap-2 transition-all disabled:opacity-50 ${type === "srt" ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-white border-[#E5E5E7] text-[#86868B] hover:border-[#1D1D1F]"}`}
             >
               <Upload className="w-4 h-4" /> Legendas (SRT)
@@ -339,8 +342,9 @@ export default function ImportSourceScreen({
         </div>
 
         <div className="space-y-1.5 flex-1 flex flex-col min-h-[250px]">
-          <label className="field-label">Conteúdo (Cole o texto ou legenda)</label>
+          <label htmlFor="source-content" className="field-label">Conteúdo (Cole o texto ou legenda)</label>
           <textarea
+            id="source-content"
             value={content}
             onChange={(e) => setContent(e.target.value)}
             disabled={isProcessing}

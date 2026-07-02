@@ -26,7 +26,11 @@ export class ProgressRepository {
   static async upsertSentenceProgress(progress: Partial<SentenceProgress>): Promise<SentenceProgress | null> {
     if (!isSupabaseConfigured) return null;
     const enriched = { ...progress, user_id: progress.user_id || getUserId() };
-    const { data, error } = await supabase!.from('sentence_progress').upsert(enriched).select().maybeSingle();
+    const { data, error } = await supabase!
+      .from('sentence_progress')
+      .upsert(enriched, { onConflict: 'user_id,sentence_id' })
+      .select()
+      .maybeSingle();
     if (error) console.error(error);
     return data;
   }
@@ -64,7 +68,11 @@ export class ProgressRepository {
   static async upsertDictionaryProgress(progress: Partial<DictionaryProgress>): Promise<DictionaryProgress | null> {
     if (!isSupabaseConfigured) return null;
     const enriched = { ...progress, user_id: progress.user_id || getUserId() };
-    const { data, error } = await supabase!.from('dictionary_progress').upsert(enriched).select().maybeSingle();
+    const { data, error } = await supabase!
+      .from('dictionary_progress')
+      .upsert(enriched, { onConflict: 'user_id,dictionary_entry_id' })
+      .select()
+      .maybeSingle();
     if (error) {
       console.error(error);
       throw new Error(`Erro do Supabase ao salvar progresso de dicionario: ${error.message}`);

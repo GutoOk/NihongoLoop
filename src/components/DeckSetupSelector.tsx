@@ -51,8 +51,9 @@ export default function DeckSetupSelector({
   return (
     <div className="card-section space-y-5">
       <div className="space-y-1.5">
-        <label className="field-label">Filtrar por</label>
+        <label htmlFor="deck-filter-type" className="field-label">Filtrar por</label>
         <select
+          id="deck-filter-type"
           value={filterType}
           onChange={(e) => setFilterType(e.target.value)}
           className="form-select"
@@ -66,8 +67,9 @@ export default function DeckSetupSelector({
 
       {filterType === "source" && (
         <div className="space-y-1.5">
-          <label className="field-label">Fonte</label>
+          <label htmlFor="deck-source" className="field-label">Fonte</label>
           <select
+            id="deck-source"
             value={selectedSourceId}
             onChange={(e) => setSelectedSourceId(e.target.value)}
             className="form-select"
@@ -82,8 +84,9 @@ export default function DeckSetupSelector({
 
       {filterType === "type" && (
         <div className="space-y-1.5">
-          <label className="field-label">Tipo de Palavra</label>
+          <label htmlFor="deck-word-type" className="field-label">Tipo de Palavra</label>
           <select
+            id="deck-word-type"
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value)}
             className="form-select"
@@ -98,8 +101,9 @@ export default function DeckSetupSelector({
 
       {filterType === "level" && (
         <div className="space-y-1.5">
-          <label className="field-label">Nível JLPT</label>
+          <label htmlFor="deck-jlpt-level" className="field-label">Nível JLPT</label>
           <select
+            id="deck-jlpt-level"
             value={selectedLevel}
             onChange={(e) => setSelectedLevel(e.target.value)}
             className="form-select"
@@ -113,10 +117,11 @@ export default function DeckSetupSelector({
       )}
 
       <div className="space-y-1.5">
-        <label className="field-label">
+        <label htmlFor="deck-mode" className="field-label">
           {isQuiz ? "Modo" : "Direção dos Cartões"}
         </label>
         <select
+          id="deck-mode"
           value={mode}
           onChange={(e) => setMode(e.target.value)}
           className="form-select"
@@ -136,8 +141,9 @@ export default function DeckSetupSelector({
       </div>
 
       <div className="space-y-1.5">
-        <label className="field-label">Quantidade</label>
+        <label htmlFor="deck-limit" className="field-label">Quantidade</label>
         <select
+          id="deck-limit"
           value={limit}
           onChange={(e) => setLimit(Number(e.target.value))}
           className="form-select"

@@ -59,8 +59,9 @@ export default function StudySourceSelectorScreen({
           </div>
 
           <div className="space-y-1.5">
-            <label className="field-label">Escolha uma Fonte para Estudar</label>
+            <label htmlFor="study-source-select" className="field-label">Escolha uma Fonte para Estudar</label>
             <select
+              id="study-source-select"
               value={selectedSource}
               onChange={(e) => setSelectedSource(e.target.value)}
               className="form-select"
@@ -79,6 +80,7 @@ export default function StudySourceSelectorScreen({
               type="button"
               onClick={() => onStartStandard(selectedSource, "sentences")}
               disabled={!selectedSource}
+              aria-describedby={!selectedSource ? "study-source-required" : undefined}
               className="btn btn-primary"
             >
               <Play className="w-4 h-4 fill-current" />
@@ -88,11 +90,17 @@ export default function StudySourceSelectorScreen({
               type="button"
               onClick={() => onStartStandard(selectedSource, "words")}
               disabled={!selectedSource}
+              aria-describedby={!selectedSource ? "study-source-required" : undefined}
               className="btn bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               <BookOpen className="w-4 h-4 fill-current" />
               Palavras (Pt→Jp) + Quiz
             </button>
+            {!selectedSource && (
+              <p id="study-source-required" className="text-center text-[11px] font-semibold text-[#86868B]">
+                Escolha uma fonte para liberar o estudo padrão.
+              </p>
+            )}
           </div>
         </div>
 
@@ -117,8 +125,9 @@ export default function StudySourceSelectorScreen({
 
         <div className="pt-6 border-t border-[#E5E5E7] space-y-4">
           <div className="space-y-1.5">
-            <label className="field-label">Estudar um grupo</label>
+            <label htmlFor="study-group-select" className="field-label">Estudar um grupo</label>
             <select
+              id="study-group-select"
               value={selectedGroup}
               onChange={(e) => setSelectedGroup(e.target.value)}
               className="form-select"

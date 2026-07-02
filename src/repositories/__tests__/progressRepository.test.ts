@@ -50,12 +50,15 @@ describe('ProgressRepository', () => {
 
     await ProgressRepository.updateDictionaryProgressLog('dict-1', true);
 
-    expect(builder.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      dictionary_entry_id: 'dict-1',
-      correct_count: 6, // 5 + 1
-      wrong_count: 2,
-      seen_count: 8 // 7 + 1
-    }));
+    expect(builder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dictionary_entry_id: 'dict-1',
+        correct_count: 6, // 5 + 1
+        wrong_count: 2,
+        seen_count: 8 // 7 + 1
+      }),
+      { onConflict: 'user_id,dictionary_entry_id' },
+    );
   });
 
   it('updateDictionaryProgressLog correctly increments wrong counts', async () => {
@@ -79,11 +82,14 @@ describe('ProgressRepository', () => {
 
     await ProgressRepository.updateDictionaryProgressLog('dict-1', false);
 
-    expect(builder.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      dictionary_entry_id: 'dict-1',
-      correct_count: 5,
-      wrong_count: 3, // 2 + 1
-      seen_count: 8 // 7 + 1
-    }));
+    expect(builder.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dictionary_entry_id: 'dict-1',
+        correct_count: 5,
+        wrong_count: 3, // 2 + 1
+        seen_count: 8 // 7 + 1
+      }),
+      { onConflict: 'user_id,dictionary_entry_id' },
+    );
   });
 });

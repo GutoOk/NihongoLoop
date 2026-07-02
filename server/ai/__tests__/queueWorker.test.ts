@@ -226,6 +226,18 @@ describe('queueWorker persisted execution contract', () => {
     expect(body).not.toContain("'Falha terminal exige retry manual.'");
   });
 
+  it('keeps runs in review when terminal job problems remain', () => {
+    const completeBody = functionBody('complete_ai_job');
+    const failBody = functionBody('fail_ai_job_for_retry');
+    const helperBody = functionBody('finish_run_with_review_if_blocked');
+
+    expect(completeBody).toContain("status IN ('failed','needs_review')");
+    expect(completeBody).toContain('finish_run_with_review_if_blocked(current_run_id)');
+    expect(failBody).toContain('finish_run_with_review_if_blocked(current_run_id)');
+    expect(helperBody).toContain("SET status = 'needs_review'");
+    expect(helperBody).toContain("AND status IN ('pending','claimed','running','retry_wait')");
+  });
+
   it('uses unified sentence preparation orchestration', () => {
     const body = functionBody('create_or_resume_source_processing_run');
     expect(body).toContain("old.type = 'prepare_sentence'");

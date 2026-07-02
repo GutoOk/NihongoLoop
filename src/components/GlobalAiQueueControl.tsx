@@ -34,7 +34,7 @@ export function GlobalAiQueueControl() {
   const visibleJobs = jobs.filter(isVisibleQueueJob);
 
   const clearQueue = async () => {
-    if (!(await showConfirm('Zerar fila global', 'Isso vai remover da fila todos os jobs globais, incluindo pendentes, problemas, concluidos e cancelados historicos.'))) {
+    if (!(await showConfirm('Limpar fila global', 'Isso cancela itens ativos e remove pendências da fila global, incluindo problemas e histórico cancelável.'))) {
       return;
     }
     setIsClearing(true);
@@ -67,7 +67,7 @@ export function GlobalAiQueueControl() {
             className="inline-flex h-8 items-center justify-center gap-2 rounded-lg border border-rose-100 bg-white px-3 text-[11px] font-black uppercase tracking-wide text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
           >
             <Square className="h-3.5 w-3.5" />
-            Zerar fila
+            Limpar fila
           </button>
         </div>
       </div>
@@ -82,8 +82,8 @@ export function GlobalAiQueueControl() {
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <QueueMetric label="Pendentes" value={pending} />
         <QueueMetric label="Rodando" value={running} />
-        <QueueMetric label="Retry" value={retry} />
-        <QueueMetric label="Erros" value={error} />
+        <QueueMetric label="Aguardando nova tentativa" value={retry} />
+        <QueueMetric label="Precisa atenção" value={error} />
       </div>
 
       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">

@@ -130,7 +130,7 @@ export default function SourcePreparationPanel({
 
   const cancelPending = async () => {
     const scopeLabel = showGlobal ? 'global' : 'desta fonte';
-    if (!(await showConfirm('Zerar fila', `Isso vai remover da fila todos os jobs ${scopeLabel}, incluindo pendentes, problemas, concluidos e cancelados historicos.`))) {
+    if (!(await showConfirm('Limpar fila', `Isso cancela os itens ativos e remove pendencias da fila ${scopeLabel}, incluindo problemas e historico cancelavel.`))) {
       return;
     }
     setIsBusy(true);
@@ -208,10 +208,10 @@ export default function SourcePreparationPanel({
             <div className="space-y-1">
               <h2 className="flex items-center gap-2 text-lg font-black tracking-tight text-slate-900">
                 <Database className="h-5 w-5 text-indigo-600" />
-                Preparacao de IA da fonte
+                Preparacao da fonte
               </h2>
               <p className="max-w-2xl text-xs leading-relaxed text-slate-500">
-                Mostra a execucao persistida e enfileira lacunas em um job unico por frase.
+                Acompanhe pendencias, erros e conclusao antes de estudar esta fonte.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -254,7 +254,7 @@ export default function SourcePreparationPanel({
             </div>
           )}
 
-          <Panel title="Execucao persistida">
+          <Panel title="Andamento da preparacao">
             {run ? (
               <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-8">
                 <Metric label="Status" valueText={statusLabel(run.status)} />
@@ -262,11 +262,11 @@ export default function SourcePreparationPanel({
                 <Metric label="Pendentes" value={run.pending_jobs || 0} />
                 <Metric label="Rodando" value={run.running_jobs || 0} />
                 <Metric label="Concluidos" value={run.completed_jobs || 0} />
-                <Metric label="Retry" value={run.retry_jobs || 0} />
-                <Metric label="Revisao" value={run.needs_review_jobs || 0} />
+                <Metric label="Nova tentativa" value={run.retry_jobs || 0} />
+                <Metric label="Revisar" value={run.needs_review_jobs || 0} />
                 <Metric label="Falhas" value={run.failed_items || 0} />
                 <div className="sm:col-span-4 lg:col-span-8 rounded-lg bg-slate-50 p-3 text-xs font-semibold leading-relaxed text-slate-600">
-                  {run.current_step || 'Execucao criada. O worker persistente consome os jobs sem depender desta tela.'}
+                  {run.current_step || 'Preparacao criada. As tarefas continuam mesmo se voce sair desta tela.'}
                 </div>
               </div>
             ) : (
@@ -284,7 +284,7 @@ export default function SourcePreparationPanel({
                       small
                       onClick={() => resetLexicalAnalysis('invalid_only')}
                       disabled={isBusy || isRefreshing}
-                      title={busyTitle || 'Redefinir apenas spans invalidos.'}
+                      title={busyTitle || 'Redefinir apenas termos com posicao invalida.'}
                       label={`Corrigir termos invalidos (${lexicalSummary.eligible_invalid_only} frases)`}
                     />
                   )}
@@ -293,7 +293,7 @@ export default function SourcePreparationPanel({
                       small
                       onClick={() => resetLexicalAnalysis('all_non_reviewed')}
                       disabled={isBusy || isRefreshing}
-                      title={busyTitle || 'Redefinir termos nao revisados.'}
+                      title={busyTitle || 'Redefinir termos ainda nao revisados.'}
                       label="Reanalisar termos desta fonte"
                     />
                   )}
@@ -304,7 +304,7 @@ export default function SourcePreparationPanel({
                 <Metric label="Offsets invalidos" value={lexicalSummary.invalid_offset_sentences} />
                 <Metric label="Termos invalidos" value={lexicalSummary.invalid_offset_terms} />
                 <Metric label="Sem termos" value={lexicalSummary.without_terms_sentences} />
-                <Metric label="AI empty" value={lexicalSummary.ai_empty_sentences} />
+                <Metric label="Sem retorno" value={lexicalSummary.ai_empty_sentences} />
               </div>
             </Panel>
           )}
@@ -321,20 +321,20 @@ export default function SourcePreparationPanel({
             actions={
               <div className="flex flex-wrap gap-2">
                 <ToolbarButton small onClick={() => setShowGlobal((value) => !value)} label={showGlobal ? 'Ver fonte' : 'Ver global'} title={showGlobal ? 'Mostrar apenas a fonte.' : 'Mostrar fila global.'} />
-                <ToolbarButton small onClick={retryProblems} disabled={isBusy || isRefreshing || problemRunCount === 0} title={problemRunCount === 0 ? 'Sem problemas para retentar.' : busyTitle || 'Retentar problemas da run.'} icon={<RotateCcw className="h-3.5 w-3.5" />} label="Retentar problemas" />
-                <ToolbarButton small onClick={cancelPending} disabled={isBusy || isRefreshing || !hasRun || clearableQueueCount === 0} title={clearableQueueCount === 0 ? 'Sem jobs na fila para cancelar.' : busyTitle || 'Zerar fila.'} icon={<Square className="h-3.5 w-3.5" />} label={showGlobal ? 'Zerar fila global' : 'Zerar fila'} />
+                <ToolbarButton small onClick={retryProblems} disabled={isBusy || isRefreshing || problemRunCount === 0} title={problemRunCount === 0 ? 'Sem problemas para tentar novamente.' : busyTitle || 'Tentar novamente itens com problema.'} ariaLabel="Retentar problemas" icon={<RotateCcw className="h-3.5 w-3.5" />} label="Tentar novamente" />
+                <ToolbarButton small onClick={cancelPending} disabled={isBusy || isRefreshing || !hasRun || clearableQueueCount === 0} title={clearableQueueCount === 0 ? 'Sem itens na fila para cancelar.' : busyTitle || 'Limpar fila.'} ariaLabel={showGlobal ? 'Zerar fila global' : 'Zerar fila'} icon={<Square className="h-3.5 w-3.5" />} label={showGlobal ? 'Limpar fila global' : 'Limpar fila'} />
               </div>
             }
           >
             <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
               <Metric label="Pendentes" value={queueCounts.pending} />
               <Metric label="Rodando" value={queueCounts.running} />
-              <Metric label="Retry" value={queueCounts.retry} />
-              <Metric label="Revisao" value={queueCounts.review} />
+              <Metric label="Nova tentativa" value={queueCounts.retry} />
+              <Metric label="Revisar" value={queueCounts.review} />
               <Metric label="Concluidos" value={queueCounts.completed} />
               <Metric label="Erros" value={queueCounts.error} />
               <Metric label="Cancelados" value={queueCounts.cancelled} />
-              <Metric label="Travados" value={queueCounts.stuck} />
+              <Metric label="Sem resposta" value={queueCounts.stuck} />
             </div>
             {hiddenHistoricalJobs > 0 && visibleJobs.length > 0 && (
               <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs font-bold text-slate-600">
@@ -391,6 +391,7 @@ function ToolbarButton({
   primary,
   small,
   title,
+  ariaLabel,
 }: {
   onClick: () => void;
   icon?: React.ReactNode;
@@ -399,6 +400,7 @@ function ToolbarButton({
   primary?: boolean;
   small?: boolean;
   title?: string;
+  ariaLabel?: string;
 }) {
   const enabledClass = primary
     ? 'bg-indigo-600 text-white hover:bg-indigo-700'
@@ -408,6 +410,7 @@ function ToolbarButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={ariaLabel}
       className={`inline-flex items-center justify-center gap-2 rounded-lg font-black uppercase tracking-wide ${
         small ? 'h-8 px-2.5 text-[10px]' : 'h-10 px-3 text-xs'
       } ${disabled ? 'cursor-not-allowed border border-slate-200 bg-slate-200 text-slate-400' : enabledClass}`}
@@ -504,9 +507,9 @@ function statusLabel(status: AiJob['status'] | ProcessingRun['status']): string 
   if (status === 'planning') return 'planejando';
   if (status === 'paused') return 'pausado';
   if (status === 'running') return 'rodando';
-  if (status === 'retry_wait') return 'retry';
-  if (status === 'claimed') return 'reivindicado';
-  if (status === 'needs_review') return 'revisao';
+  if (status === 'retry_wait') return 'nova tentativa';
+  if (status === 'claimed') return 'em preparo';
+  if (status === 'needs_review') return 'revisar';
   if (status === 'completed' || status === 'applied') return 'concluido';
   if (status === 'error' || status === 'failed') return 'erro';
   if (status === 'cancelled') return 'cancelado';

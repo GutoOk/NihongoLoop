@@ -7,6 +7,10 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 DROP TABLE IF EXISTS study_session_items CASCADE;
 DROP TABLE IF EXISTS study_sessions CASCADE;
+DROP TABLE IF EXISTS flashcard_deck_items CASCADE;
+DROP TABLE IF EXISTS flashcard_daily_activity CASCADE;
+DROP TABLE IF EXISTS flashcard_settings CASCADE;
+DROP TABLE IF EXISTS flashcard_decks CASCADE;
 DROP TABLE IF EXISTS ai_model_prices CASCADE;
 DROP TABLE IF EXISTS ai_job_attempts CASCADE;
 DROP TABLE IF EXISTS ai_jobs CASCADE;
@@ -19,6 +23,8 @@ DROP TABLE IF EXISTS dictionary_senses CASCADE;
 DROP TABLE IF EXISTS dictionary_forms CASCADE;
 DROP TABLE IF EXISTS dictionary_entries CASCADE;
 DROP TABLE IF EXISTS processing_runs CASCADE;
+DROP TABLE IF EXISTS source_group_memberships CASCADE;
+DROP TABLE IF EXISTS source_groups CASCADE;
 DROP TABLE IF EXISTS sentences CASCADE;
 DROP TABLE IF EXISTS sources CASCADE;
 DROP TABLE IF EXISTS app_admins CASCADE;
@@ -353,6 +359,71 @@ CREATE TABLE study_session_items (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE flashcard_decks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  color TEXT NOT NULL,
+  config JSONB NOT NULL DEFAULT '{}'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE flashcard_settings (
+  user_id TEXT PRIMARY KEY,
+  daily_new_limit INTEGER NOT NULL DEFAULT 20 CHECK (daily_new_limit >= 0),
+  daily_review_limit INTEGER NOT NULL DEFAULT 0 CHECK (daily_review_limit >= 0),
+  desired_retention NUMERIC NOT NULL DEFAULT 0.9 CHECK (desired_retention >= 0.5 AND desired_retention <= 0.99),
+  autoplay_audio BOOLEAN NOT NULL DEFAULT FALSE,
+  show_examples BOOLEAN NOT NULL DEFAULT TRUE,
+  default_mode TEXT NOT NULL DEFAULT 'ja_pt',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE flashcard_daily_activity (
+  user_id TEXT NOT NULL,
+  activity_date DATE NOT NULL,
+  reviews INTEGER NOT NULL DEFAULT 0 CHECK (reviews >= 0),
+  new_cards INTEGER NOT NULL DEFAULT 0 CHECK (new_cards >= 0),
+  again INTEGER NOT NULL DEFAULT 0 CHECK (again >= 0),
+  sessions_count INTEGER NOT NULL DEFAULT 0 CHECK (sessions_count >= 0),
+  hour_histogram JSONB NOT NULL DEFAULT '[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]'::JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, activity_date)
+);
+
+CREATE TABLE flashcard_deck_items (
+  deck_id TEXT NOT NULL REFERENCES flashcard_decks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL,
+  item_type TEXT NOT NULL CHECK (item_type IN ('word', 'sentence')),
+  item_id TEXT NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (deck_id, item_type, item_id)
+);
+
+CREATE TABLE source_groups (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id TEXT NOT NULL,
+  parent_id UUID REFERENCES source_groups(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  color TEXT NOT NULL DEFAULT 'indigo',
+  position INTEGER NOT NULL DEFAULT 0 CHECK (position >= 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (parent_id IS NULL OR parent_id <> id)
+);
+
+CREATE TABLE source_group_memberships (
+  user_id TEXT NOT NULL,
+  group_id UUID NOT NULL REFERENCES source_groups(id) ON DELETE CASCADE,
+  source_id UUID NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (group_id, source_id)
+);
+
 CREATE TABLE app_admins (
   user_id UUID PRIMARY KEY,
   email TEXT,
@@ -423,6 +494,46 @@ $$;
 REVOKE ALL ON FUNCTION public.request_user_id(TEXT) FROM public;
 GRANT EXECUTE ON FUNCTION public.request_user_id(TEXT) TO authenticated, service_role;
 
+CREATE OR REPLACE FUNCTION public.save_source_study_offset(
+  p_source_id UUID,
+  p_offset INTEGER
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  request_user TEXT;
+  normalized_offset INTEGER := GREATEST(0, COALESCE(p_offset, 0));
+  updated_count INTEGER := 0;
+BEGIN
+  request_user := public.request_user_id(NULL);
+
+  IF NOT EXISTS (SELECT 1 FROM sources WHERE id = p_source_id AND user_id = request_user) THEN
+    RAISE EXCEPTION 'Fonte nao encontrada para usuario.';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtext('source_offset:' || request_user || ':' || p_source_id::TEXT));
+
+  UPDATE study_sessions
+  SET config = jsonb_build_object('offset', normalized_offset),
+      updated_at = NOW()
+  WHERE user_id = request_user
+    AND source_id = p_source_id
+    AND type = 'source_offset';
+
+  GET DIAGNOSTICS updated_count = ROW_COUNT;
+
+  IF updated_count = 0 THEN
+    INSERT INTO study_sessions(user_id, type, source_id, config)
+    VALUES (request_user, 'source_offset', p_source_id, jsonb_build_object('offset', normalized_offset));
+  END IF;
+
+  RETURN TRUE;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.touch_updated_at()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -477,6 +588,152 @@ CREATE TRIGGER tr_sentence_progress_touch BEFORE UPDATE ON sentence_progress FOR
 CREATE TRIGGER tr_dictionary_progress_touch BEFORE UPDATE ON dictionary_progress FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 CREATE TRIGGER tr_ai_jobs_touch BEFORE UPDATE ON ai_jobs FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
 CREATE TRIGGER tr_study_sessions_touch BEFORE UPDATE ON study_sessions FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+CREATE TRIGGER tr_flashcard_decks_touch BEFORE UPDATE ON flashcard_decks FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+CREATE TRIGGER tr_flashcard_settings_touch BEFORE UPDATE ON flashcard_settings FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+CREATE TRIGGER tr_flashcard_daily_activity_touch BEFORE UPDATE ON flashcard_daily_activity FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+CREATE TRIGGER tr_source_groups_touch BEFORE UPDATE ON source_groups FOR EACH ROW EXECUTE FUNCTION public.touch_updated_at();
+
+CREATE OR REPLACE FUNCTION public.flashcard_empty_hour_histogram()
+RETURNS JSONB
+LANGUAGE SQL
+STABLE
+AS $$
+  SELECT jsonb_agg(0 ORDER BY i) FROM generate_series(0, 23) AS i;
+$$;
+
+CREATE OR REPLACE FUNCTION public.flashcard_increment_hour_histogram(p_histogram JSONB, p_hour INTEGER)
+RETURNS JSONB
+LANGUAGE SQL
+STABLE
+AS $$
+  WITH normalized AS (
+    SELECT CASE
+      WHEN jsonb_typeof(p_histogram) = 'array' THEN
+        CASE WHEN jsonb_array_length(p_histogram) = 24 THEN p_histogram ELSE public.flashcard_empty_hour_histogram() END
+      ELSE public.flashcard_empty_hour_histogram()
+    END AS hist
+  )
+  SELECT jsonb_agg(
+    CASE
+      WHEN ordinality - 1 = GREATEST(0, LEAST(23, p_hour)) THEN COALESCE((value #>> '{}')::INTEGER, 0) + 1
+      ELSE COALESCE((value #>> '{}')::INTEGER, 0)
+    END
+    ORDER BY ordinality
+  )
+  FROM normalized, jsonb_array_elements(normalized.hist) WITH ORDINALITY;
+$$;
+
+CREATE OR REPLACE FUNCTION public.record_flashcard_daily_activity(
+  p_reviews INTEGER DEFAULT 0,
+  p_new_cards INTEGER DEFAULT 0,
+  p_again INTEGER DEFAULT 0,
+  p_timezone TEXT DEFAULT 'America/Sao_Paulo'
+)
+RETURNS public.flashcard_daily_activity
+LANGUAGE plpgsql
+SECURITY INVOKER
+AS $$
+DECLARE
+  request_user TEXT;
+  local_date DATE;
+  local_hour INTEGER;
+  updated_row public.flashcard_daily_activity;
+BEGIN
+  request_user := public.request_user_id(NULL);
+  local_date := (NOW() AT TIME ZONE COALESCE(NULLIF(p_timezone, ''), 'America/Sao_Paulo'))::DATE;
+  local_hour := EXTRACT(HOUR FROM (NOW() AT TIME ZONE COALESCE(NULLIF(p_timezone, ''), 'America/Sao_Paulo')))::INTEGER;
+
+  INSERT INTO public.flashcard_daily_activity(
+    user_id, activity_date, reviews, new_cards, again, sessions_count, hour_histogram
+  )
+  VALUES (
+    request_user,
+    local_date,
+    GREATEST(0, COALESCE(p_reviews, 0)),
+    GREATEST(0, COALESCE(p_new_cards, 0)),
+    GREATEST(0, COALESCE(p_again, 0)),
+    1,
+    public.flashcard_increment_hour_histogram(public.flashcard_empty_hour_histogram(), local_hour)
+  )
+  ON CONFLICT (user_id, activity_date)
+  DO UPDATE SET
+    reviews = flashcard_daily_activity.reviews + GREATEST(0, COALESCE(EXCLUDED.reviews, 0)),
+    new_cards = flashcard_daily_activity.new_cards + GREATEST(0, COALESCE(EXCLUDED.new_cards, 0)),
+    again = flashcard_daily_activity.again + GREATEST(0, COALESCE(EXCLUDED.again, 0)),
+    sessions_count = flashcard_daily_activity.sessions_count + 1,
+    hour_histogram = public.flashcard_increment_hour_histogram(flashcard_daily_activity.hour_histogram, local_hour),
+    updated_at = NOW()
+  RETURNING * INTO updated_row;
+
+  RETURN updated_row;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.save_flashcard_deck(
+  p_deck_id TEXT,
+  p_name TEXT,
+  p_color TEXT,
+  p_config JSONB DEFAULT '{}'::JSONB,
+  p_items JSONB DEFAULT '[]'::JSONB
+)
+RETURNS public.flashcard_decks
+LANGUAGE plpgsql
+SECURITY INVOKER
+AS $$
+DECLARE
+  request_user TEXT;
+  saved_row public.flashcard_decks;
+  item JSONB;
+  item_kind TEXT;
+  item_id TEXT;
+  item_position INTEGER := 0;
+BEGIN
+  request_user := public.request_user_id(NULL);
+
+  IF NULLIF(p_deck_id, '') IS NULL THEN
+    RAISE EXCEPTION 'flashcard deck id is required';
+  END IF;
+
+  INSERT INTO public.flashcard_decks(id, user_id, name, color, config)
+  VALUES (
+    p_deck_id,
+    request_user,
+    COALESCE(NULLIF(BTRIM(p_name), ''), 'Baralho'),
+    COALESCE(NULLIF(BTRIM(p_color), ''), 'indigo'),
+    COALESCE(p_config, '{}'::JSONB)
+  )
+  ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+    color = EXCLUDED.color,
+    config = EXCLUDED.config,
+    updated_at = NOW()
+  WHERE public.flashcard_decks.user_id = request_user OR public.is_app_admin()
+  RETURNING * INTO saved_row;
+
+  IF saved_row.id IS NULL THEN
+    RAISE EXCEPTION 'flashcard deck not found or not owned by current user';
+  END IF;
+
+  DELETE FROM public.flashcard_deck_items
+  WHERE deck_id = saved_row.id
+    AND (user_id = request_user OR public.is_app_admin());
+
+  FOR item IN SELECT * FROM jsonb_array_elements(COALESCE(p_items, '[]'::JSONB))
+  LOOP
+    item_kind := item->>'item_type';
+    item_id := item->>'item_id';
+    IF item_kind IN ('word', 'sentence') AND NULLIF(item_id, '') IS NOT NULL THEN
+      INSERT INTO public.flashcard_deck_items(deck_id, user_id, item_type, item_id, position)
+      VALUES (saved_row.id, request_user, item_kind, item_id, item_position)
+      ON CONFLICT (deck_id, item_type, item_id) DO UPDATE SET
+        position = EXCLUDED.position;
+      item_position := item_position + 1;
+    END IF;
+  END LOOP;
+
+  RETURN saved_row;
+END;
+$$;
 
 CREATE OR REPLACE FUNCTION public.get_ai_queue_health()
 RETURNS JSONB
@@ -1427,6 +1684,65 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.finish_run_with_review_if_blocked(p_run_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  has_active BOOLEAN := FALSE;
+  has_problem BOOLEAN := FALSE;
+BEGIN
+  IF p_run_id IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM ai_jobs
+    WHERE run_id = p_run_id
+      AND status IN ('pending','claimed','running','retry_wait')
+  ) INTO has_active;
+
+  IF has_active THEN
+    RETURN FALSE;
+  END IF;
+
+  SELECT EXISTS (
+    SELECT 1 FROM ai_jobs
+    WHERE run_id = p_run_id
+      AND status IN ('failed','needs_review')
+  ) INTO has_problem;
+
+  IF NOT has_problem THEN
+    RETURN FALSE;
+  END IF;
+
+  UPDATE processing_run_stages s
+  SET status = 'needs_review',
+      completed_at = NULL,
+      blocked_reason = COALESCE(blocked_reason, 'Ha jobs com falha ou revisao pendente.'),
+      updated_at = NOW()
+  WHERE s.run_id = p_run_id
+    AND EXISTS (
+      SELECT 1 FROM ai_jobs j
+      WHERE j.stage_id = s.id
+        AND j.status IN ('failed','needs_review')
+    );
+
+  UPDATE processing_runs
+  SET status = 'needs_review',
+      current_step = 'Processamento pausado: ha jobs com falha ou revisao pendente.',
+      finished_at = NOW(),
+      updated_at = NOW()
+  WHERE id = p_run_id
+    AND cancel_requested = FALSE
+    AND status IN ('pending','planning','running','paused','needs_review');
+
+  RETURN TRUE;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.cancel_ai_jobs_by_run(
   p_run_id UUID,
   p_user_id TEXT
@@ -2252,6 +2568,11 @@ BEGIN
     SET
       completed_jobs = completed_jobs + 1,
       status = CASE
+        WHEN EXISTS (
+          SELECT 1 FROM ai_jobs
+          WHERE stage_id = current_stage_id
+            AND status IN ('failed','needs_review')
+        ) THEN 'needs_review'
         WHEN NOT EXISTS (
           SELECT 1 FROM ai_jobs
           WHERE stage_id = current_stage_id
@@ -2260,6 +2581,11 @@ BEGIN
         ELSE status
       END,
       completed_at = CASE
+        WHEN EXISTS (
+          SELECT 1 FROM ai_jobs
+          WHERE stage_id = current_stage_id
+            AND status IN ('failed','needs_review')
+        ) THEN NULL
         WHEN NOT EXISTS (
           SELECT 1 FROM ai_jobs
           WHERE stage_id = current_stage_id
@@ -2271,6 +2597,9 @@ BEGIN
   END IF;
 
   PERFORM refresh_processing_run_snapshot(current_run_id);
+  IF public.finish_run_with_review_if_blocked(current_run_id) THEN
+    RETURN;
+  END IF;
 
   IF current_run_id IS NOT NULL
     AND current_source_id IS NOT NULL
@@ -3163,6 +3492,7 @@ BEGIN
   END IF;
 
   PERFORM refresh_processing_run_snapshot(current_run_id);
+  PERFORM public.finish_run_with_review_if_blocked(current_run_id);
 END;
 $$;
 
@@ -4332,6 +4662,10 @@ GRANT EXECUTE ON FUNCTION public.apply_sentence_lexical_analysis_result(UUID, TE
 
 
 REVOKE ALL ON FUNCTION public.get_ai_queue_health() FROM public;
+REVOKE ALL ON FUNCTION public.save_source_study_offset(UUID, INTEGER) FROM public;
+REVOKE ALL ON FUNCTION public.record_flashcard_daily_activity(INTEGER, INTEGER, INTEGER, TEXT) FROM public;
+REVOKE ALL ON FUNCTION public.save_flashcard_deck(TEXT, TEXT, TEXT, JSONB, JSONB) FROM public;
+REVOKE ALL ON FUNCTION public.finish_run_with_review_if_blocked(UUID) FROM public;
 REVOKE ALL ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID, INTEGER, JSONB) FROM public;
 REVOKE ALL ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) FROM public;
 REVOKE ALL ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) FROM public;
@@ -4367,6 +4701,10 @@ REVOKE ALL ON FUNCTION public.recover_expired_ai_job_leases(INTEGER, INTEGER) FR
 REVOKE ALL ON FUNCTION public.verify_ai_queue_reset() FROM public;
 REVOKE ALL ON FUNCTION public.bootstrap_app_admin(TEXT) FROM public;
 GRANT EXECUTE ON FUNCTION public.get_ai_queue_health() TO service_role;
+GRANT EXECUTE ON FUNCTION public.save_source_study_offset(UUID, INTEGER) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.record_flashcard_daily_activity(INTEGER, INTEGER, INTEGER, TEXT) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.save_flashcard_deck(TEXT, TEXT, TEXT, JSONB, JSONB) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.finish_run_with_review_if_blocked(UUID) TO service_role;
 GRANT EXECUTE ON FUNCTION public.claim_ai_jobs(TEXT, TEXT[], INTEGER, INTEGER, TEXT, UUID, INTEGER, JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.enqueue_ai_jobs_bulk(JSONB) TO service_role;
 GRANT EXECUTE ON FUNCTION public.create_or_resume_source_processing_run(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated, service_role;
@@ -4416,7 +4754,8 @@ BEGIN
     'dictionary_forms', 'dictionary_senses', 'sentence_terms',
     'processing_run_stages', 'sentence_progress', 'dictionary_progress', 'ai_jobs',
     'ai_job_attempts', 'ai_model_prices', 'schema_versions',
-    'study_sessions', 'study_session_items'
+    'study_sessions', 'study_session_items', 'source_groups', 'source_group_memberships',
+    'flashcard_decks', 'flashcard_settings', 'flashcard_daily_activity', 'flashcard_deck_items'
   ]
   LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', tbl);
@@ -4430,6 +4769,88 @@ BEGIN
     EXECUTE format('CREATE POLICY "app admin delete %1$I" ON %1$I FOR DELETE TO authenticated USING (public.is_app_admin())', tbl);
   END LOOP;
 END $$;
+
+CREATE POLICY "source_groups select own" ON source_groups
+  FOR SELECT TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "source_groups insert own" ON source_groups
+  FOR INSERT TO authenticated WITH CHECK (
+    (user_id = auth.uid()::TEXT OR public.is_app_admin())
+    AND (
+      parent_id IS NULL
+      OR parent_id IN (
+        SELECT id FROM source_groups
+        WHERE user_id = auth.uid()::TEXT OR public.is_app_admin()
+      )
+    )
+  );
+CREATE POLICY "source_groups update own" ON source_groups
+  FOR UPDATE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin())
+  WITH CHECK (
+    (user_id = auth.uid()::TEXT OR public.is_app_admin())
+    AND (
+      parent_id IS NULL
+      OR parent_id IN (
+        SELECT id FROM source_groups
+        WHERE user_id = auth.uid()::TEXT OR public.is_app_admin()
+      )
+    )
+  );
+CREATE POLICY "source_groups delete own" ON source_groups
+  FOR DELETE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+
+CREATE POLICY "source_group_memberships select own" ON source_group_memberships
+  FOR SELECT TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "source_group_memberships insert own" ON source_group_memberships
+  FOR INSERT TO authenticated WITH CHECK (
+    (user_id = auth.uid()::TEXT OR public.is_app_admin())
+    AND EXISTS (
+      SELECT 1 FROM source_groups sg
+      WHERE sg.id = group_id
+        AND (sg.user_id = auth.uid()::TEXT OR public.is_app_admin())
+    )
+    AND EXISTS (
+      SELECT 1 FROM sources src
+      WHERE src.id = source_id
+        AND (src.user_id = auth.uid()::TEXT OR public.is_app_admin())
+    )
+  );
+CREATE POLICY "source_group_memberships update own" ON source_group_memberships
+  FOR UPDATE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin())
+  WITH CHECK (
+    (user_id = auth.uid()::TEXT OR public.is_app_admin())
+    AND EXISTS (
+      SELECT 1 FROM source_groups sg
+      WHERE sg.id = group_id
+        AND (sg.user_id = auth.uid()::TEXT OR public.is_app_admin())
+    )
+    AND EXISTS (
+      SELECT 1 FROM sources src
+      WHERE src.id = source_id
+        AND (src.user_id = auth.uid()::TEXT OR public.is_app_admin())
+    )
+  );
+CREATE POLICY "source_group_memberships delete own" ON source_group_memberships
+  FOR DELETE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+
+CREATE POLICY "flashcard_decks select own" ON flashcard_decks FOR SELECT TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_decks insert own" ON flashcard_decks FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_decks update own" ON flashcard_decks FOR UPDATE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin()) WITH CHECK (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_decks delete own" ON flashcard_decks FOR DELETE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+
+CREATE POLICY "flashcard_settings select own" ON flashcard_settings FOR SELECT TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_settings insert own" ON flashcard_settings FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_settings update own" ON flashcard_settings FOR UPDATE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin()) WITH CHECK (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_settings delete own" ON flashcard_settings FOR DELETE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+
+CREATE POLICY "flashcard_daily_activity select own" ON flashcard_daily_activity FOR SELECT TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_daily_activity insert own" ON flashcard_daily_activity FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_daily_activity update own" ON flashcard_daily_activity FOR UPDATE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin()) WITH CHECK (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_daily_activity delete own" ON flashcard_daily_activity FOR DELETE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+
+CREATE POLICY "flashcard_deck_items select own" ON flashcard_deck_items FOR SELECT TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_deck_items insert own" ON flashcard_deck_items FOR INSERT TO authenticated WITH CHECK (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_deck_items update own" ON flashcard_deck_items FOR UPDATE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin()) WITH CHECK (user_id = auth.uid()::TEXT OR public.is_app_admin());
+CREATE POLICY "flashcard_deck_items delete own" ON flashcard_deck_items FOR DELETE TO authenticated USING (user_id = auth.uid()::TEXT OR public.is_app_admin());
 
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon;
@@ -4452,8 +4873,13 @@ CREATE INDEX idx_sentence_terms_form ON sentence_terms(dictionary_form_id);
 CREATE INDEX idx_sentence_terms_sense ON sentence_terms(dictionary_sense_id);
 CREATE INDEX idx_sentence_progress_sentence ON sentence_progress(sentence_id);
 CREATE INDEX idx_dictionary_progress_entry ON dictionary_progress(dictionary_entry_id);
-CREATE UNIQUE INDEX uk_ai_jobs_active_input ON ai_jobs(user_id, type, target_type, target_id, input_hash)
-  WHERE status IN ('pending','claimed','running','retry_wait');
+CREATE INDEX idx_source_groups_user_parent_position ON source_groups(user_id, parent_id, position, name);
+CREATE INDEX idx_source_group_memberships_user_source ON source_group_memberships(user_id, source_id);
+CREATE INDEX idx_source_group_memberships_user_group ON source_group_memberships(user_id, group_id);
+CREATE INDEX idx_flashcard_decks_user_created ON flashcard_decks(user_id, created_at DESC);
+CREATE INDEX idx_flashcard_daily_activity_user_date ON flashcard_daily_activity(user_id, activity_date DESC);
+CREATE INDEX idx_flashcard_deck_items_user_deck_position ON flashcard_deck_items(user_id, deck_id, position);
+CREATE INDEX idx_flashcard_deck_items_lookup ON flashcard_deck_items(user_id, item_type, item_id);
 CREATE INDEX idx_ai_jobs_queue ON ai_jobs(status, type, priority DESC, created_at)
   WHERE status IN ('pending','retry_wait');
 CREATE INDEX idx_ai_jobs_user_status ON ai_jobs(user_id, status, type, created_at);

@@ -139,7 +139,7 @@ export default function HomeScreen({ onNavigate }: HomeScreenProps) {
         </div>
       </header>
 
-      <main className="flex-1 max-w-xl w-full mx-auto px-6 py-6 space-y-5">
+      <main className="flex-1 min-h-0 overflow-auto max-w-xl w-full mx-auto px-6 py-6 space-y-5">
         <section className="bg-white border border-[#E5E5E7] p-5 rounded-2xl shadow-sm space-y-3">
           <div className="space-y-1">
             <h2 className="text-base font-black text-[#1D1D1F]">

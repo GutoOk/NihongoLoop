@@ -608,19 +608,39 @@ function withLeaseHeartbeat<T>(
   work: () => Promise<T>,
 ): Promise<T> {
   const intervalMs = Math.max(5000, Math.floor(leaseSeconds * 1000 / 3));
-  const timer = setInterval(() => {
-    client.rpc("heartbeat_ai_job", {
-      p_job_id: jobId,
-      p_worker_id: workerId,
-      p_lease_seconds: leaseSeconds,
-    }).then(({ error }) => {
+  let consecutiveFailures = 0;
+  let rejectHeartbeat: ((error: Error) => void) | null = null;
+  const heartbeatFailure = new Promise<never>((_, reject) => {
+    rejectHeartbeat = reject;
+  });
+  const recordHeartbeatFailure = (error: unknown) => {
+    consecutiveFailures += 1;
+    console.error("[ai-worker] heartbeat failed", { jobId, error });
+    if (consecutiveFailures >= 3) {
+      rejectHeartbeat?.(new Error("Heartbeat do job falhou repetidamente; lease nao e mais confiavel."));
+    }
+  };
+  const sendHeartbeat = async () => {
+    try {
+      const { error } = await client.rpc("heartbeat_ai_job", {
+        p_job_id: jobId,
+        p_worker_id: workerId,
+        p_lease_seconds: leaseSeconds,
+      });
       if (error) {
-        console.error("[ai-worker] heartbeat failed", { jobId, error });
+        recordHeartbeatFailure(error);
+      } else {
+        consecutiveFailures = 0;
       }
-    });
+    } catch (error) {
+      recordHeartbeatFailure(error);
+    }
+  };
+  const timer = setInterval(() => {
+    void sendHeartbeat();
   }, intervalMs);
 
-  return work().finally(() => clearInterval(timer));
+  return Promise.race([work(), heartbeatFailure]).finally(() => clearInterval(timer));
 }
 
 export async function processTranslateSentenceJob(

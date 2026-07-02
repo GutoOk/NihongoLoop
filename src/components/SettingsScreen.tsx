@@ -156,10 +156,11 @@ export default function SettingsScreen({ onBack }: SettingsScreenProps) {
           ].map(({ label, key, min, max, step, unit, default: def }) => (
             <div key={key} className="space-y-1">
               <div className="flex justify-between items-baseline">
-                <label className="text-xs font-bold text-[#1D1D1F]">{label}</label>
+                <label htmlFor={`setting-${key}`} className="text-xs font-bold text-[#1D1D1F]">{label}</label>
                 <span className="text-[10px] font-mono text-[#86868B]">{settings[key] ?? def}{unit}</span>
               </div>
               <input
+                id={`setting-${key}`}
                 type="range"
                 min={min}
                 max={max}
@@ -173,8 +174,9 @@ export default function SettingsScreen({ onBack }: SettingsScreenProps) {
 
           <div className="pt-4 border-t border-[#E5E5E7] space-y-3">
             <div className="space-y-1.5">
-              <label className="field-label">Voz - Japonês</label>
+              <label htmlFor="voice-ja-select" className="field-label">Voz - Japonês</label>
               <select
+                id="voice-ja-select"
                 value={settings.voiceJa1 || ""}
                 onChange={(e) => handleChange("voiceJa1", e.target.value)}
                 className="form-select text-xs"
@@ -194,8 +196,9 @@ export default function SettingsScreen({ onBack }: SettingsScreenProps) {
             </div>
 
             <div className="space-y-1.5">
-              <label className="field-label">Voz - Português</label>
+              <label htmlFor="voice-pt-select" className="field-label">Voz - Português</label>
               <select
+                id="voice-pt-select"
                 value={settings.voicePt || ""}
                 onChange={(e) => handleChange("voicePt", e.target.value)}
                 className="form-select text-xs"

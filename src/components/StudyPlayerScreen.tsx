@@ -386,7 +386,7 @@ export default function StudyPlayerScreen({
             if ((!terms || terms.length === 0) && config.sourceId) {
               const { TermDetectionService } =
                 await import("../services/termDetectionService");
-              await TermDetectionService.detectWordsInSource(config.sourceId);
+              await TermDetectionService.detectWordsInSentences(sourceSentIds);
               terms = await TermRepository.getBySentences(sourceSentIds);
             }
 
@@ -890,7 +890,8 @@ export default function StudyPlayerScreen({
             SpeechService.stop();
             onBack();
           }}
-          className="p-2 -ml-2 text-slate-400 hover:text-slate-900 transition-colors"
+          className="tap-icon -ml-2 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-50 transition-colors"
+          aria-label="Fechar estudo"
         >
           <X className="w-6 h-6" />
         </button>
@@ -900,8 +901,9 @@ export default function StudyPlayerScreen({
         <div className="flex items-center gap-3">
           <button
             onClick={() => setShowLegendModal(true)}
-            className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"
+            className="tap-icon rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors"
             title="Legenda de Cores"
+            aria-label="Abrir legenda de cores"
             id="btn-show-legend"
           >
             <Info className="w-5 h-5" />
@@ -910,7 +912,9 @@ export default function StudyPlayerScreen({
             <>
               <button
                 onClick={handleToggleDifficulty}
-                className={`text-slate-300 hover:text-slate-600 transition-colors ${item.isDifficult ? "text-rose-500 hover:text-rose-600" : ""}`}
+                className={`tap-icon rounded-lg text-slate-300 hover:text-slate-600 hover:bg-slate-50 transition-colors ${item.isDifficult ? "text-rose-500 hover:text-rose-600" : ""}`}
+                aria-label={item.isDifficult ? "Remover marcação difícil" : "Marcar como difícil"}
+                aria-pressed={Boolean(item.isDifficult)}
               >
                 <AlertCircle
                   className={`w-5 h-5 ${item.isDifficult ? "fill-current" : ""}`}
@@ -918,7 +922,9 @@ export default function StudyPlayerScreen({
               </button>
               <button
                 onClick={handleToggleFavorite}
-                className={`text-slate-300 hover:text-slate-600 transition-colors ${item.isFavorite ? "text-amber-500 hover:text-amber-600" : ""}`}
+                className={`tap-icon rounded-lg text-slate-300 hover:text-slate-600 hover:bg-slate-50 transition-colors ${item.isFavorite ? "text-amber-500 hover:text-amber-600" : ""}`}
+                aria-label={item.isFavorite ? "Remover dos favoritos" : "Adicionar aos favoritos"}
+                aria-pressed={Boolean(item.isFavorite)}
               >
                 <Star
                   className={`w-5 h-5 ${item.isFavorite ? "fill-current" : ""}`}
@@ -928,18 +934,21 @@ export default function StudyPlayerScreen({
           )}
           <button
             onClick={togglePictureInPicture}
-            className={`p-1.5 transition-colors ${
+            className={`tap-icon rounded-lg transition-colors ${
               isPipActive ? "text-indigo-600 hover:text-indigo-700 font-bold" : "text-slate-400 hover:text-slate-600"
             }`}
             title="Picture in Picture (Mini-tela)"
+            aria-label={isPipActive ? "Desativar mini-tela" : "Ativar mini-tela"}
+            aria-pressed={isPipActive}
             id="btn-toggle-pip"
           >
             <PictureInPicture className="w-5 h-5" />
           </button>
           <button
             onClick={handleStartEditCurrentItem}
-            className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors"
+            className="tap-icon rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
             title="Editar Ficha Atual"
+            aria-label="Editar ficha atual"
             id="btn-edit-active-item"
           >
             <Edit2 className="w-5 h-5" />
@@ -947,7 +956,7 @@ export default function StudyPlayerScreen({
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col justify-center items-center px-6 text-center space-y-8 select-none">
+      <main className="flex-1 min-h-0 overflow-y-auto flex flex-col justify-center items-center px-6 py-6 text-center space-y-8 select-none">
         <div className="w-full space-y-2">
           <div
             className={`${item.type === "word" ? "text-4xl" : "text-3xl"} font-black tracking-tight text-slate-900 break-words leading-tight`}
@@ -985,13 +994,15 @@ export default function StudyPlayerScreen({
             id="study-btn-prev"
             onClick={prevItem}
             disabled={currentIndex === 0}
-            className="p-3 text-slate-400 hover:text-indigo-600 disabled:opacity-20 transition-colors"
+            className="tap-icon rounded-full text-slate-400 hover:text-indigo-600 hover:bg-white disabled:opacity-20 transition-colors"
+            aria-label="Item anterior"
           >
             <Rewind className="w-6 h-6" />
           </button>
           <button
             id="study-btn-play"
             onClick={togglePlay}
+            aria-label={isPlaying ? "Pausar áudio" : "Reproduzir áudio"}
             className="w-16 h-16 bg-indigo-600 hover:bg-indigo-700 shrink-0 hover:scale-105 active:scale-95 text-white rounded-full flex items-center justify-center transition-all shadow-[0_10px_25px_rgba(99,102,241,0.25)]"
           >
             {isPlaying ? (
@@ -1004,7 +1015,8 @@ export default function StudyPlayerScreen({
             id="study-btn-next"
             onClick={nextItem}
             disabled={currentIndex === items.length - 1}
-            className="p-3 text-slate-400 hover:text-indigo-600 disabled:opacity-20 transition-colors"
+            className="tap-icon rounded-full text-slate-400 hover:text-indigo-600 hover:bg-white disabled:opacity-20 transition-colors"
+            aria-label="Próximo item"
           >
             <FastForward className="w-6 h-6" />
           </button>

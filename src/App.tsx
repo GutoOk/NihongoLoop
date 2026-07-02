@@ -168,12 +168,12 @@ export default function App() {
 
   return (
     <div
-      className="w-full min-h-screen bg-[#F5F5F7] flex justify-center items-stretch font-sans antialiased text-[#1D1D1F]"
+      className="w-full h-dvh overflow-hidden bg-[#F5F5F7] flex justify-center items-stretch font-sans antialiased text-[#1D1D1F]"
       id="nihongo_app_root"
     >
       {/* Device containment frame simulation for desktop and full-fluid flow globally */}
       <div
-        className={`w-full max-w-lg min-h-screen bg-white relative border-x border-[#E5E5E7] flex flex-col justify-stretch overflow-hidden ${!FULLSCREEN_STUDY_SCREENS.includes(nav.screen) ? 'pb-16' : ''}`}
+        className="w-full max-w-lg h-dvh min-h-0 bg-white relative border-x border-[#E5E5E7] flex flex-col justify-stretch overflow-hidden"
       >
         {!isSupabaseConfigured && (
           <div className="bg-amber-100 text-amber-900 px-4 py-2 text-xs font-bold text-center border-b border-amber-200 shrink-0">
@@ -188,7 +188,7 @@ export default function App() {
             {nav.screen === "home" && (
             <div
               key="home"
-              className="flex-1 flex flex-col"
+              className="flex-1 min-h-0 flex flex-col"
             >
               <HomeScreen
                 onNavigate={handleNavigate}
@@ -197,7 +197,7 @@ export default function App() {
             )}
 
           {nav.screen === "import_source" && (
-            <div key="import_source" className="flex-1 flex flex-col">
+            <div key="import_source" className="flex-1 min-h-0 flex flex-col">
               <ImportSourceScreen
                 onBack={handleGoBack}
                 onImportComplete={(sourceId) =>
@@ -208,7 +208,7 @@ export default function App() {
           )}
 
           {nav.screen === "sources" && (
-            <div key="sources" className="flex-1 flex flex-col">
+            <div key="sources" className="flex-1 min-h-0 flex flex-col">
               <SourcesScreen
                 onBack={handleGoBack}
                 onNavigateImport={() => handleNavigate("import_source")}
@@ -249,7 +249,7 @@ export default function App() {
           )}
 
           {nav.screen === "reading" && (
-            <div key="reading" className="flex-1 flex flex-col">
+            <div key="reading" className="flex-1 min-h-0 flex flex-col">
               <ReadingScreen
                 sourceId={nav.params.sourceId}
                 onBack={handleGoBack}
@@ -259,7 +259,7 @@ export default function App() {
           )}
 
           {nav.screen === "study" && (
-            <div key="study" className="flex-1 flex flex-col">
+            <div key="study" className="flex-1 min-h-0 flex flex-col">
               <StudySourceSelectorScreen
                 onBack={handleGoBack}
                 onStartStandard={(sourceId, mode) =>
@@ -284,7 +284,7 @@ export default function App() {
           )}
 
           {nav.screen === "standard_study" && (
-            <div key="standard_study" className="flex-1 flex flex-col">
+            <div key="standard_study" className="flex-1 min-h-0 flex flex-col">
               <StandardStudyFlowContainer
                 sourceId={nav.params.sourceId}
                 mode={nav.params.mode}
@@ -295,7 +295,7 @@ export default function App() {
           )}
 
           {nav.screen === "study_setup" && (
-            <div key="study_setup" className="flex-1 flex flex-col">
+            <div key="study_setup" className="flex-1 min-h-0 flex flex-col">
               <StudySetupScreen
                 onBack={handleGoBack}
                 onStartSession={(config) =>
@@ -306,7 +306,7 @@ export default function App() {
           )}
 
           {nav.screen === "study_player" && (
-            <div key="study_player" className="flex-1 flex flex-col">
+            <div key="study_player" className="flex-1 min-h-0 flex flex-col">
               <StudyPlayerScreen
                 config={nav.params.config}
                 onBack={handleGoBack}
@@ -316,7 +316,7 @@ export default function App() {
           )}
 
           {nav.screen === "dictionary" && (
-            <div key="dictionary" className="flex-1 flex flex-col">
+            <div key="dictionary" className="flex-1 min-h-0 flex flex-col">
               <DictionaryScreen
                 onBack={handleGoBack}
                 onSelectEntry={(entryId) =>
@@ -327,7 +327,7 @@ export default function App() {
           )}
 
           {nav.screen === "dictionary_entry" && (
-            <div key="dictionary_entry" className="flex-1 flex flex-col">
+            <div key="dictionary_entry" className="flex-1 min-h-0 flex flex-col">
               <DictionaryEntryScreen
                 entryId={nav.params.entryId}
                 onBack={handleGoBack}
@@ -367,7 +367,7 @@ export default function App() {
           )}
 
           {nav.screen === "statistics" && (
-            <div key="statistics" className="flex-1 flex flex-col">
+            <div key="statistics" className="flex-1 min-h-0 flex flex-col">
               <StatisticsScreen
                 onBack={handleGoBack}
                 onNavigate={handleNavigate}
@@ -376,13 +376,13 @@ export default function App() {
           )}
 
           {nav.screen === "quiz" && (
-            <div key="quiz" className="flex-1 flex flex-col">
+            <div key="quiz" className="flex-1 min-h-0 flex flex-col">
               <QuizScreen onBack={handleGoBack} />
             </div>
           )}
 
           {nav.screen === "flashcards" && (
-            <div key="flashcards" className="flex-1 flex flex-col">
+            <div key="flashcards" className="flex-1 min-h-0 flex flex-col">
               <FlashcardScreen onBack={handleGoBack} onNavigate={handleNavigate} />
             </div>
           )}
@@ -390,7 +390,7 @@ export default function App() {
           {nav.screen === "settings" && (
             <div
               key="settings"
-              className="flex-1 flex flex-col"
+              className="flex-1 min-h-0 flex flex-col"
             >
               <SettingsScreen onBack={handleGoBack} />
             </div>
@@ -400,7 +400,7 @@ export default function App() {
 
         {/* Persistent Bottom Bar */}
         {!FULLSCREEN_STUDY_SCREENS.includes(nav.screen) && (
-          <nav className="absolute bottom-0 inset-x-0 h-16 bg-white border-t border-[#E5E5E7] flex px-2 z-50">
+          <nav className="app-bottom-nav shrink-0 bg-white border-t border-[#E5E5E7] flex px-2 z-50">
             {BOTTOM_NAV_ITEMS.map(({ screen, label, Icon }) => {
               const isActive = nav.screen === screen;
               return (

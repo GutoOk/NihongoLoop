@@ -13,7 +13,7 @@ import { AiJobRepository } from "../repositories";
 import { AiJob } from "../types";
 import { useModal } from "./ModalProvider";
 import { GlobalAiQueueControl } from "./GlobalAiQueueControl";
-import { getJobPreview, isVisibleQueueJob } from "./sourcePreparation/jobDisplay";
+import { getJobHumanName, getJobPreview, isVisibleQueueJob } from "./sourcePreparation/jobDisplay";
 
 const CANCELLABLE_JOB_STATUSES: AiJob["status"][] = [
   "pending",
@@ -145,7 +145,7 @@ export default function PendingAiScreen({ onBack }: { onBack: () => void }) {
                    </div>
                    
                    {canCancel && (
-                     <button onClick={(e) => cancelSingleJob(job.id, e)} className="p-1.5 bg-rose-50 text-rose-500 hover:bg-rose-100 rounded-md transition-colors" title="Cancelar job">
+                     <button onClick={(e) => cancelSingleJob(job.id, e)} className="tap-icon-sm bg-rose-50 text-rose-500 hover:bg-rose-100 rounded-md transition-colors" title="Cancelar job" aria-label={`Cancelar ${getJobHumanName(job.type)}`}>
                        <Square className="w-3.5 h-3.5" />
                      </button>
                    )}

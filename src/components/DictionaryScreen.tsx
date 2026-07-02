@@ -193,10 +193,11 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
       <header className="sticky top-0 z-10 shrink-0 bg-white shadow-sm border-b border-[#E5E5E7] p-4">
         <div className="flex items-center justify-between mx-auto max-w-6xl w-full">
           <div className="flex items-center gap-3">
-            <button
-              onClick={onBack}
-              className="mr-2 rounded-full p-2 hover:bg-[#F5F5F7] transition-colors"
-            >
+          <button
+            onClick={onBack}
+            className="tap-icon mr-2 rounded-full hover:bg-[#F5F5F7] transition-colors"
+            aria-label="Voltar"
+          >
               <ArrowLeft className="h-5 w-5 text-[#86868B]" />
             </button>
             <div className="flex items-center justify-center p-2 rounded-xl bg-orange-100 ring-1 ring-orange-200">
@@ -214,8 +215,9 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
           
           <button
             onClick={handleClearDictionary}
-            className="flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-600 shadow-sm transition-colors hover:bg-rose-50"
+            className="tap-icon rounded-xl border border-rose-200 bg-white px-3 text-xs font-bold text-rose-600 shadow-sm transition-colors hover:bg-rose-50 sm:gap-2"
             title="Limpar permanentemente todos os verbetes salvos"
+            aria-label="Limpar dicionário"
           >
             <Trash2 className="h-4 w-4" />
             <span className="hidden sm:inline">Limpar dicionário</span>
@@ -224,6 +226,7 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
 
         <div className="mx-auto mt-4 max-w-6xl w-full flex flex-col items-center gap-3 sm:flex-row">
           <select
+            aria-label="Filtrar por fonte"
             value={sourceFilter}
             onChange={(e) => setSourceFilter(e.target.value)}
             className="w-full rounded-xl border border-[#E5E5E7] bg-slate-50 px-3 py-1.5 font-bold text-[#1D1D1F] outline-none"
@@ -236,6 +239,7 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
             ))}
           </select>
           <select
+            aria-label="Filtrar por tipo de palavra"
             value={typeFilter}
             onChange={(e) => setTypeFilter(e.target.value)}
             className="w-full rounded-xl border border-[#E5E5E7] bg-slate-50 px-3 py-1.5 font-bold text-[#86868B] outline-none"
@@ -248,6 +252,7 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
             ))}
           </select>
           <select
+            aria-label="Filtrar por nível JLPT"
             value={levelFilter}
             onChange={(e) => setLevelFilter(e.target.value)}
             className="w-full rounded-xl border border-[#E5E5E7] bg-slate-50 px-3 py-1.5 font-bold text-[#86868B] outline-none"
@@ -265,27 +270,32 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
         </div>
       </header>
 
-      <div className="mx-4 mt-3 mb-1 bg-white border border-[#E5E5E7] rounded-2xl p-4 shadow-sm space-y-4 shrink-0 max-w-6xl self-center w-full">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-1">
+      <details className="mx-4 mt-3 mb-1 bg-white border border-[#E5E5E7] rounded-2xl p-4 shadow-sm space-y-4 shrink-0 max-w-6xl self-center w-full">
+        <summary className="flex cursor-pointer list-none flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1 pr-2">
             <h2 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-widest text-[#1D1D1F]">
               <Cpu className="h-4 w-4 text-indigo-600" />
-              Completar Dicionário com IA
+              Completar pendências com IA
             </h2>
             <p className="text-[11px] leading-relaxed text-[#86868B]">
-              Enriqueça os verbetes pendentes no dicionário.
+              Abra para enviar verbetes pendentes e acompanhar a fila.
             </p>
           </div>
+          <span className="text-[10px] font-black uppercase tracking-widest text-indigo-600">
+            Abrir painel
+          </span>
+        </summary>
+        <div className="mt-4 space-y-4">
           <button
             onClick={handleAddToQueue}
             disabled={isQueuing || pendingCount === 0}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black uppercase tracking-wide text-white hover:bg-indigo-700 disabled:opacity-50 sm:w-auto"
           >
-            {isQueuing ? "Adicionando..." : "Adicionar à Fila global"}
+            {isQueuing ? "Adicionando..." : `Adicionar pendentes (${pendingCount})`}
           </button>
+          <GlobalAiQueueControl />
         </div>
-        <GlobalAiQueueControl />
-      </div>
+      </details>
 
       <div className="flex-1 overflow-auto p-4 mx-auto max-w-6xl w-full">
         {loading ? (
@@ -380,16 +390,18 @@ export default function DictionaryScreen({ onBack }: { onBack: () => void }) {
                    {(entry.status === "error" || entry.status === "completed" || entry.status === "reviewed") && (
                       <button
                         onClick={(e) => retryPending(entry.id, e)}
-                        className="rounded-lg bg-indigo-50 p-1.5 text-indigo-600 hover:bg-indigo-100 transition-colors"
+                        className="tap-icon-sm rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
                         title="Reenviar para preenchimento por IA"
+                        aria-label={`Reenviar ${entry.lemma} para preenchimento por IA`}
                       >
                          <RotateCcw className="h-4 w-4" />
                       </button>
                    )}
                    <button
                      onClick={(e) => deleteEntry(entry.id, e)}
-                     className="rounded-lg bg-rose-50 p-1.5 text-rose-600 hover:bg-rose-100 transition-colors"
+                     className="tap-icon-sm rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors"
                      title="Remover do dicionário"
+                     aria-label={`Remover ${entry.lemma} do dicionário`}
                    >
                      <Trash2 className="h-4 w-4" />
                    </button>

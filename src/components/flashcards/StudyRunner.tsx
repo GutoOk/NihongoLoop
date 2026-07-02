@@ -277,12 +277,14 @@ export default function StudyRunner({
         </div>
         <div className="flex items-center gap-1">
           <button onClick={toggleFavorite} disabled={isSaving} title="Favoritar (F)"
-            className={`p-1.5 rounded-lg transition-colors ${current.isFavorite ? "text-yellow-500" : "text-gray-300 hover:text-yellow-500"}`}>
+            aria-label={current.isFavorite ? "Remover flashcard dos favoritos" : "Favoritar flashcard"}
+            aria-pressed={Boolean(current.isFavorite)}
+            className={`tap-icon-sm rounded-lg transition-colors ${current.isFavorite ? "text-yellow-500" : "text-gray-300 hover:text-yellow-500"}`}>
             <Star className={`w-4 h-4 ${current.isFavorite ? "fill-yellow-500" : ""}`} />
           </button>
-          <button onClick={() => setEditing(true)} disabled={isSaving} title="Editar (E)" className="p-1.5 text-gray-300 hover:text-indigo-500 rounded-lg transition-colors disabled:opacity-50"><Edit2 className="w-4 h-4" /></button>
-          <button onClick={suspend} disabled={isSaving} title="Suspender (S)" className="p-1.5 text-gray-300 hover:text-rose-500 rounded-lg transition-colors disabled:opacity-50"><EyeOff className="w-4 h-4" /></button>
-          <button onClick={() => setShowHelp((v) => !v)} title="Atalhos" className="p-1.5 text-gray-300 hover:text-gray-600 rounded-lg transition-colors"><Keyboard className="w-4 h-4" /></button>
+          <button onClick={() => setEditing(true)} disabled={isSaving} title="Editar (E)" aria-label="Editar flashcard" className="tap-icon-sm text-gray-300 hover:text-indigo-500 rounded-lg transition-colors disabled:opacity-50"><Edit2 className="w-4 h-4" /></button>
+          <button onClick={suspend} disabled={isSaving} title="Suspender (S)" aria-label="Suspender flashcard" className="tap-icon-sm text-gray-300 hover:text-rose-500 rounded-lg transition-colors disabled:opacity-50"><EyeOff className="w-4 h-4" /></button>
+          <button onClick={() => setShowHelp((v) => !v)} title="Atalhos" aria-label={showHelp ? "Ocultar atalhos" : "Mostrar atalhos"} aria-pressed={showHelp} className="tap-icon-sm text-gray-300 hover:text-gray-600 rounded-lg transition-colors"><Keyboard className="w-4 h-4" /></button>
         </div>
       </div>
 
@@ -323,6 +325,7 @@ export default function StudyRunner({
             <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
               {hideText ? (
                 <button onClick={(e) => { e.stopPropagation(); playAudio(); }}
+                  aria-label="Reproduzir áudio"
                   className="w-24 h-24 rounded-full bg-indigo-50 hover:bg-indigo-100 text-indigo-500 flex items-center justify-center transition-colors">
                   <Volume2 className="w-10 h-10" />
                 </button>
@@ -330,6 +333,7 @@ export default function StudyRunner({
                 <div className="flex flex-col items-center gap-4">
                   <p className="text-5xl font-black text-gray-900 leading-tight tracking-tight text-center">{entry.lemma}</p>
                   <button onClick={(e) => { e.stopPropagation(); playAudio(); }}
+                    aria-label="Reproduzir áudio"
                     className="p-3 bg-gray-50 hover:bg-indigo-50 text-gray-400 hover:text-indigo-500 rounded-full transition-colors">
                     <Play className="w-5 h-5 fill-current" />
                   </button>
@@ -354,6 +358,7 @@ export default function StudyRunner({
                 {entry.kana && entry.kana !== entry.lemma && <p className="text-lg text-gray-500 font-bold">{entry.kana}</p>}
                 {entry.romaji && <p className="text-xs font-mono text-gray-400 uppercase tracking-widest">{entry.romaji}</p>}
                 <button onClick={(e) => { e.stopPropagation(); playAudio(); }}
+                  aria-label="Reproduzir áudio"
                   className="my-1 p-2.5 bg-gray-50 hover:bg-indigo-50 text-gray-400 hover:text-indigo-500 rounded-full inline-flex transition-colors">
                   <Play className="w-4 h-4 fill-current" />
                 </button>
@@ -396,6 +401,7 @@ export default function StudyRunner({
         <div className="shrink-0 flex gap-2">
           {historyRef.current.length > 0 && (
             <button onClick={undo} disabled={isSaving} title="Desfazer (U)"
+              aria-label="Desfazer resposta anterior"
               className="px-4 py-4 bg-white border-2 border-gray-200 hover:bg-gray-50 rounded-2xl text-gray-500 transition-all active:scale-95 disabled:opacity-50">
               <RotateCcw className="w-5 h-5" />
             </button>

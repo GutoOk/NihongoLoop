@@ -25,9 +25,10 @@ export class StudySessionRepository {
         .eq('source_id', sourceId)
         .eq('type', 'source_offset')
         .eq('user_id', getUserId())
-        .maybeSingle();
-      if (error || !data) return 0;
-      return (data.config as { offset?: number })?.offset ?? 0;
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (error || !data?.[0]) return 0;
+      return (data[0].config as { offset?: number })?.offset ?? 0;
     } catch {
       return 0;
     }
@@ -37,28 +38,11 @@ export class StudySessionRepository {
     if (isE2EMockMode()) return true;
     if (!isSupabaseConfigured) return false;
     try {
-      const userId = getUserId();
-      const { data: existing } = await supabase!
-        .from('study_sessions')
-        .select('id')
-        .eq('source_id', sourceId)
-        .eq('type', 'source_offset')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (existing) {
-        const { error } = await supabase!
-          .from('study_sessions')
-          .update({ config: { offset }, updated_at: new Date().toISOString() })
-          .eq('id', existing.id)
-          .eq('user_id', userId);
-        return !error;
-      } else {
-        const { error } = await supabase!
-          .from('study_sessions')
-          .insert({ user_id: userId, type: 'source_offset', source_id: sourceId, config: { offset } });
-        return !error;
-      }
+      const { data, error } = await supabase!.rpc('save_source_study_offset', {
+        p_source_id: sourceId,
+        p_offset: offset,
+      });
+      return !error && data !== false;
     } catch {
       return false;
     }
